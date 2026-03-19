@@ -1,19 +1,22 @@
 /**
- * @file data/default-user/extensions/STNE/ui.js
+ * @file data/default-user/extensions/canonize/ui.js
  * @architectural-role HTML Builder
  * @description
- * Builds and returns HTML strings for the STNE wizard modal.
+ * Builds and returns HTML strings for the Canonize wizard modal, the
+ * extensions settings panel, and the prompt-editor popup modal.
  * All runtime values are received as parameters so this module carries no
  * imports and remains a pure HTML factory with no side effects.
  * @core-principles
- * 1. OWNS only the static structure of the modal; contains no logic.
+ * 1. OWNS only the static structure of the modal and settings panel; contains no logic.
  * 2. MUST NOT import from index.js or any ST module — caller passes all
  *    runtime values as arguments.
  * 3. IS NOT responsible for injecting the HTML into the DOM; that is done
- *    by injectModal() in index.js.
+ *    by injectModal() / injectSettingsPanel() in index.js.
  * @api-declaration
  * Exported symbols:
  *   buildModalHTML() → string
+ *   buildPromptModalHTML() → string
+ *   buildSettingsHTML(settings, escapeHtml) → string
  * @contract
  *   assertions:
  *     purity: pure # No side effects; same inputs always produce same output.
@@ -22,11 +25,7 @@
  */
 
 /**
- * Returns the full modal HTML for the STNE review wizard (4 steps).
- * Step 1: Narrative Hooks editor (pre-populated from committed state; refresh button).
- * Step 2: Lorebook Workshop (ingester + freeform tabs).
- * Step 3: Narrative Memory Workshop (RAG cards + raw view).
- * Step 4: Review & Commit.
+ * Returns the full modal HTML for the Canonize review wizard (4 steps).
  * @returns {string}
  */
 export function buildModalHTML() {
@@ -166,10 +165,10 @@ export function buildModalHTML() {
       </div>
 
       <div id="stne-recovery-guide" class="stne-warn stne-recovery-guide stne-hidden">
-        <strong>STNE Commit Interrupted</strong>
+        <strong>Canonize Commit Interrupted</strong>
         <ol>
           <li>Check which steps above failed.</li>
-          <li>Verify your connection profile in <strong>Settings &rarr; STNE</strong>.</li>
+          <li>Verify your connection profile in <strong>Settings &rarr; Canonize</strong>.</li>
           <li>Click <strong>Finalize</strong> again to retry only the failed steps.</li>
           <li>You can safely close — lorebook changes are preserved until next sync.</li>
         </ol>
@@ -190,3 +189,142 @@ export function buildModalHTML() {
 </div>`;
 }
 
+/**
+ * Returns the HTML for the prompt-editor popup overlay.
+ * The caller populates #stne-pm-title, #stne-pm-textarea, and wires buttons.
+ * @returns {string}
+ */
+export function buildPromptModalHTML() {
+    return `
+<div id="stne-pm-overlay" class="stne-overlay stne-pm-overlay stne-hidden">
+  <div id="stne-pm-modal" class="stne-modal stne-pm-modal" role="dialog" aria-modal="true">
+    <div class="stne-section-header">
+      <h3 id="stne-pm-title" class="stne-title"></h3>
+      <button id="stne-pm-reset" class="stne-btn stne-btn-secondary stne-btn-sm">Reset to Default</button>
+    </div>
+    <textarea id="stne-pm-textarea" class="stne-textarea stne-pm-textarea" spellcheck="false"></textarea>
+    <div class="stne-buttons stne-wizard-footer">
+      <button id="stne-pm-close" class="stne-btn stne-btn-secondary">Close</button>
+    </div>
+  </div>
+</div>`;
+}
+
+/**
+ * Returns the HTML for the Canonize extensions settings panel.
+ * @param {object}   settings   Current extension settings object (read-only snapshot).
+ * @param {Function} escapeHtml HTML-escape utility passed from caller.
+ * @returns {string}
+ */
+export function buildSettingsHTML(settings, escapeHtml) {
+    const s = settings;
+    const ragContents      = s.ragContents      ?? 'summary+full';
+    const ragSummarySource = s.ragSummarySource ?? 'defined';
+    const enableRag        = s.enableRag        ?? false;
+    const hasSummary       = ragContents !== 'full';
+    const isDefinedHere    = ragSummarySource === 'defined';
+
+    return `
+<div id="stne-settings" class="extension_settings">
+  <div class="inline-drawer">
+    <div class="inline-drawer-toggle inline-drawer-header">
+      <b>Canonize</b>
+      <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+    </div>
+    <div class="inline-drawer-content">
+      <div class="stne-settings-group">
+
+        <!-- ── Summary / Lorebook ── -->
+        <div class="stne-settings-row">
+          <label for="stne-set-profile">Summary Connection Profile</label>
+          <select id="stne-set-profile" class="text_pole"></select>
+        </div>
+
+        <div class="stne-settings-inline-row">
+          <label for="stne-set-sync-from-turn">Begin sync from turn</label>
+          <input id="stne-set-sync-from-turn" type="number" min="1" step="1"
+                 value="${escapeHtml(String(s.syncFromTurn ?? 1))}">
+        </div>
+
+        <div class="stne-settings-inline-row">
+          <label for="stne-set-lorebook-sync-start">Lorebook sync start</label>
+          <select id="stne-set-lorebook-sync-start" class="stne-select stne-settings-select-sm">
+            <option value="syncTurn"  ${(s.lorebookSyncStart ?? 'syncTurn') === 'syncTurn'  ? 'selected' : ''}>From selected turn</option>
+            <option value="lastSync"  ${(s.lorebookSyncStart ?? 'syncTurn') === 'lastSync'  ? 'selected' : ''}>From last sync point</option>
+          </select>
+        </div>
+
+        <div class="stne-settings-row stne-settings-prompt-row">
+          <button id="stne-edit-summary-prompt"  class="stne-btn stne-btn-secondary">Edit Summary Prompt</button>
+          <button id="stne-edit-lorebook-prompt" class="stne-btn stne-btn-secondary">Edit Lorebook Sync Prompt</button>
+        </div>
+
+        <!-- ── RAG Settings ── -->
+        <div class="stne-settings-section-header">RAG Settings</div>
+
+        <div class="stne-settings-row">
+          <label class="stne-checkbox-label">
+            <input id="stne-set-enable-rag" type="checkbox" ${enableRag ? 'checked' : ''}>
+            <span>Enable Narrative Memory (RAG)</span>
+          </label>
+        </div>
+
+        <div id="stne-rag-settings-body" class="stne-settings-subgroup ${enableRag ? '' : 'stne-disabled'}">
+
+          <div class="stne-settings-inline-row">
+            <label for="stne-set-rag-separator">Separator</label>
+            <input id="stne-set-rag-separator" type="text" class="stne-input stne-settings-input-wide"
+                   placeholder="e.g. ** {{turn_number}} **"
+                   value="${escapeHtml(s.ragSeparator ?? '')}">
+          </div>
+          <small class="stne-settings-hint">Template vars: <code>{{turn_number}}</code>, <code>{{char_name}}</code>, <code>{{turn_range}}</code>. Default: <code>***</code></small>
+
+          <div class="stne-settings-inline-row">
+            <label for="stne-set-rag-contents">RAG Contents</label>
+            <select id="stne-set-rag-contents" class="stne-select stne-settings-select-sm">
+              <option value="summary+full" ${ragContents === 'summary+full' ? 'selected' : ''}>Summary + Full Content</option>
+              <option value="summary"      ${ragContents === 'summary'      ? 'selected' : ''}>Summary Only</option>
+              <option value="full"         ${ragContents === 'full'         ? 'selected' : ''}>Full Content Only</option>
+            </select>
+          </div>
+
+          <div id="stne-rag-summary-source-row" class="stne-settings-inline-row ${hasSummary ? '' : 'stne-hidden'}">
+            <label for="stne-set-rag-summary-source">Summary Source</label>
+            <select id="stne-set-rag-summary-source" class="stne-select stne-settings-select-sm">
+              <option value="defined" ${isDefinedHere ? 'selected' : ''}>Defined Here</option>
+              <option value="qvink"   ${!isDefinedHere ? 'selected' : ''}>Qvink</option>
+            </select>
+          </div>
+
+          <div id="stne-rag-ai-controls" class="stne-settings-subgroup ${(hasSummary && isDefinedHere) ? '' : 'stne-disabled'}">
+
+            <div class="stne-settings-row">
+              <label for="stne-set-rag-profile">RAG Connection Profile</label>
+              <select id="stne-set-rag-profile" class="text_pole"></select>
+            </div>
+
+            <div class="stne-settings-inline-row">
+              <label for="stne-set-rag-max-tokens">Max Tokens</label>
+              <input id="stne-set-rag-max-tokens" type="number" min="1"
+                     value="${escapeHtml(String(s.ragMaxTokens ?? 100))}">
+            </div>
+
+            <div class="stne-settings-inline-row">
+              <label for="stne-set-rag-chunk-size">Chunk Size (pairs)</label>
+              <input id="stne-set-rag-chunk-size" type="number" min="1" max="10" step="1"
+                     value="${escapeHtml(String(s.ragChunkSize ?? 2))}">
+            </div>
+
+            <div class="stne-settings-row stne-settings-prompt-row">
+              <button id="stne-edit-classifier-prompt" class="stne-btn stne-btn-secondary">Edit Classifier Prompt</button>
+            </div>
+
+          </div><!-- /stne-rag-ai-controls -->
+
+        </div><!-- /stne-rag-settings-body -->
+
+      </div>
+    </div>
+  </div>
+</div>`;
+}

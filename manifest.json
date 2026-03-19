@@ -5,9 +5,9 @@
     "optional": [],
     "js": "index.js",
     "css": "style.css",
-    "author": "[Your Name/GitHub Handle]",
+    "author": "ZapoVerde",
     "version": "0.9.0",
-    "homePage": "https://github.com/[Your-GitHub-Handle]/SillyTavern-Canonize",
+    "homePage": "https://github.com/ZapoVerde/SillyTavern-Canonize",
     "auto_update": true,
     "i18n": {
         "en-us": "i18n/en-us.json"

@@ -766,6 +766,110 @@
     opacity: 0.7;
 }
 
+/* ─── Prompt Editor Modal ────────────────────────────────────────────────── */
+
+/* Sits above the wizard modal so it can be opened from settings */
+.stne-pm-overlay {
+    z-index: calc(var(--stne-z-modal) + 10);
+}
+
+.stne-pm-modal {
+    max-width: 700px;
+}
+
+.stne-pm-textarea {
+    height: 420px;
+    font-size: 0.8rem;
+    font-family: monospace;
+    line-height: 1.45;
+    resize: vertical;
+}
+
+/* ─── Settings Panel Additions ───────────────────────────────────────────── */
+
+/* Inline row: label on the left, input/select on the right */
+.stne-settings-inline-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--stne-gap);
+}
+
+.stne-settings-inline-row label {
+    font-size: 0.8rem;
+    color: var(--stne-text-muted);
+    flex-shrink: 0;
+}
+
+.stne-settings-inline-row input[type="number"],
+.stne-settings-inline-row input[type="text"] {
+    background: var(--stne-input-bg);
+    color: var(--stne-text);
+    border: 1px solid var(--stne-input-border);
+    border-radius: var(--stne-input-radius);
+    padding: var(--stne-input-pad);
+    font-size: 0.85rem;
+    font-family: inherit;
+}
+
+.stne-settings-inline-row input[type="number"] {
+    width: 68px;
+    text-align: center;
+}
+
+.stne-settings-inline-row input[type="text"].stne-settings-input-wide {
+    width: 180px;
+}
+
+.stne-settings-inline-row input:focus {
+    outline: none;
+    border-color: var(--stne-btn-primary-bg);
+}
+
+/* Compact select for inline rows */
+.stne-settings-select-sm {
+    width: auto;
+    min-width: 140px;
+    background: var(--stne-input-bg);
+    color: var(--stne-text);
+    border: 1px solid var(--stne-input-border);
+    border-radius: var(--stne-input-radius);
+    padding: var(--stne-input-pad);
+    font-size: 0.82rem;
+}
+
+/* Row of prompt-edit buttons */
+.stne-settings-prompt-row {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--stne-gap-sm);
+}
+
+/* Hint text beneath inputs */
+.stne-settings-hint {
+    font-size: 0.74rem;
+    color: var(--stne-text-muted);
+    opacity: 0.8;
+    line-height: 1.4;
+}
+
+.stne-settings-hint code {
+    font-family: monospace;
+    background: rgba(255,255,255,0.06);
+    padding: 0 3px;
+    border-radius: 2px;
+}
+
+/* Checkbox label alignment */
+.stne-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--stne-text);
+    cursor: pointer;
+}
+
 /* ─── Mobile ──────────────────────────────────────────────────────────────── */
 
 @media (max-width: 600px) {

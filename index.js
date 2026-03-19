@@ -22,7 +22,7 @@
 import { generateRaw, saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup } from '../../../../script.js';
 import { extension_settings } from '../../../extensions.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
-import { buildModalHTML } from './ui.js';
+import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML } from './ui.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,7 @@ const DEFAULT_CONCURRENCY = 5;
 const HOOKS_START         = '<!-- STNE_HOOKS_START -->';
 const HOOKS_END           = '<!-- STNE_HOOKS_END -->';
 
-const DEFAULT_FACT_FINDER_PROMPT = `
+const DEFAULT_LOREBOOK_SYNC_PROMPT = `
 [SYSTEM: TASK — LOREBOOK CURATOR]
 You are reviewing a session transcript and the current lorebook entries for a character.
 Your job is to suggest targeted updates to existing entries and identify new concepts
@@ -107,15 +107,25 @@ TARGET TURNS:
 `;
 
 const SETTINGS_DEFAULTS = Object.freeze({
-    chunkEveryN:          20,
-    hookseekerHorizon:    70,
-    autoSync:             true,
-    profileId:            null,
-    ragProfileId:         null,
-    ragMaxTokens:         100,
-    ragClassifierPrompt:  DEFAULT_RAG_CLASSIFIER_PROMPT,
-    factFinderPrompt:     DEFAULT_FACT_FINDER_PROMPT,
-    hookseekerPrompt:     DEFAULT_HOOKSEEKER_PROMPT,
+    chunkEveryN:           20,
+    hookseekerHorizon:     70,
+    autoSync:              true,
+    profileId:             null,
+    // Summary / Lorebook
+    syncFromTurn:          1,
+    lorebookSyncStart:     'syncTurn',   // 'syncTurn' | 'lastSync'
+    lastLorebookSyncAt:    null,         // non-system message count at last lorebook sync
+    lorebookSyncPrompt:    DEFAULT_LOREBOOK_SYNC_PROMPT,
+    hookseekerPrompt:      DEFAULT_HOOKSEEKER_PROMPT,
+    // RAG
+    enableRag:             false,
+    ragSeparator:          '',           // prepended to each chunk; default '***' when blank
+    ragContents:           'summary+full', // 'summary+full' | 'summary' | 'full'
+    ragSummarySource:      'defined',    // 'defined' | 'qvink'
+    ragProfileId:          null,
+    ragMaxTokens:          100,
+    ragChunkSize:          2,            // pairs per chunk when source='defined'
+    ragClassifierPrompt:   DEFAULT_RAG_CLASSIFIER_PROMPT,
 });
 
 // ─── Session State ─────────────────────────────────────────────────────────────
@@ -184,6 +194,28 @@ function initSettings() {
         SETTINGS_DEFAULTS,
         extension_settings[EXT_NAME],
     );
+    const s = extension_settings[EXT_NAME];
+    // ── Migrate removed keys ───────────────────────────────────────────────
+    // factFinderPrompt → lorebookSyncPrompt
+    if (s.factFinderPrompt !== undefined && s.lorebookSyncPrompt === DEFAULT_LOREBOOK_SYNC_PROMPT) {
+        s.lorebookSyncPrompt = s.factFinderPrompt;
+    }
+    delete s.factFinderPrompt;
+    // ragSummaryOnly + useQvink → ragContents + ragSummarySource
+    if (s.ragSummaryOnly !== undefined || s.useQvink !== undefined) {
+        const wasSummaryOnly = s.ragSummaryOnly ?? false;
+        const wasQvink       = s.useQvink       ?? false;
+        if (wasSummaryOnly) {
+            s.ragContents = 'summary';
+        } else if (!s.ragContents || s.ragContents === 'summary+full') {
+            s.ragContents = 'summary+full';
+        }
+        if (wasQvink && s.ragSummarySource === 'defined') {
+            s.ragSummarySource = 'qvink';
+        }
+        delete s.ragSummaryOnly;
+        delete s.useQvink;
+    }
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -311,37 +343,50 @@ function buildProsePairs(messages) {
 
 /**
  * Builds the final RAG document from the workshop chunk state.
- * When ragSummaryOnly is ON, writes only the header list (no dialogue body).
+ * Each chunk is prefixed with the separator template (default '***').
+ * ragContents controls whether summary header, full content, or both are emitted.
  * @param {Array} ragChunks
  * @returns {string}
  */
 function buildRagDocument(ragChunks) {
     if (!ragChunks.length) return '';
-    if (getSettings().ragSummaryOnly) {
-        return ragChunks
-            .map(c => `[Event ${c.chunkIndex + 1}]: ${c.header}`)
-            .join('\n\n');
-    }
-    return ragChunks
-        .map(c => `### ${c.header}\n\n${c.content}`)
-        .join('\n\n***\n\n');
+    const settings    = getSettings();
+    const contents    = settings.ragContents    ?? 'summary+full';
+    const sepTemplate = settings.ragSeparator?.trim() || '***';
+    const ctx         = SillyTavern.getContext();
+    const charName    = ctx?.characters?.[ctx?.characterId]?.name ?? '';
+
+    return ragChunks.map(c => {
+        const sep = interpolate(sepTemplate, {
+            turn_number: String(c.chunkIndex + 1),
+            turn_range:  c.turnLabel,
+            char_name:   charName,
+        });
+        const parts = [sep];
+        if (contents !== 'full')    parts.push(c.header);   // summary
+        if (contents !== 'summary') parts.push(c.content);  // full content
+        return parts.filter(Boolean).join('\n\n');
+    }).join('\n\n');
 }
 
 /**
  * Builds the _ragChunks state array from the staged prose pairs.
- * Qvink mode: 1:1 mapping. Standard mode: 2-pair sliding window.
+ * Qvink mode: forced 1-pair windows, headers from qvink_memory metadata.
+ * Defined mode: ragChunkSize-pair sliding windows, headers from AI classifier.
  * @param {Array} pairs
  * @returns {Array}
  */
 function buildRagChunks(pairs) {
-    const chunks   = [];
-    const useQvink = getSettings().useQvink;
+    const chunks    = [];
+    const settings  = getSettings();
+    const useQvink  = (settings.ragSummarySource ?? 'defined') === 'qvink';
+    const chunkSize = useQvink ? 1 : Math.max(1, settings.ragChunkSize ?? 2);
 
     for (let i = 0; i < pairs.length; i++) {
-        const window = useQvink ? pairs.slice(i, i + 1) : pairs.slice(i, i + 2);
-        const turnA  = i + 1;
-        const turnB  = Math.min(i + 2, pairs.length);
-        const turnLabel = useQvink
+        const window    = pairs.slice(i, i + chunkSize);
+        const turnA     = i + 1;
+        const turnB     = Math.min(i + chunkSize, pairs.length);
+        const turnLabel = chunkSize === 1
             ? `Turn ${turnA}`
             : (turnA === turnB
                 ? `Chunk ${i + 1} (Turn ${turnA})`
@@ -412,7 +457,8 @@ async function ragFireChunk(chunkIndex) {
 
     try {
         const contextPairs = _stagedProsePairs.slice(Math.max(0, chunkIndex - lookback), chunkIndex);
-        const windowSize   = getSettings().useQvink ? 1 : 2;
+        const settings_    = getSettings();
+        const windowSize   = (settings_.ragSummarySource ?? 'defined') === 'qvink' ? 1 : Math.max(1, settings_.ragChunkSize ?? 2);
         const targetPairs  = _stagedProsePairs.slice(chunkIndex, Math.min(chunkIndex + windowSize, _splitPairIdx));
         const header       = await runRagClassifierCall(summaryAtCall, contextPairs, targetPairs);
 
@@ -506,6 +552,8 @@ async function runRagClassifierCall(summaryText, contextPairs, targetPairs) {
     return generateWithRagProfile(prompt);
 }
 
+// ─── Lorebook Sync Call ────────────────────────────────────────────────────────
+
 /**
  * UTF-8–safe base64 encoding for the /api/files/upload payload.
  * @param {string} str
@@ -591,12 +639,12 @@ async function generateWithRagProfile(prompt) {
 }
 
 /**
- * Fires the Fact-Finder AI call. Requires _lorebookData to be loaded.
+ * Fires the Lorebook Sync AI call. Requires _lorebookData to be loaded.
  * @param {string} transcript
  * @returns {Promise<string>}
  */
-async function runFactFinderCall(transcript) {
-    const prompt = interpolate(getSettings().factFinderPrompt || DEFAULT_FACT_FINDER_PROMPT, {
+async function runLorebookSyncCall(transcript) {
+    const prompt = interpolate(getSettings().lorebookSyncPrompt || DEFAULT_LOREBOOK_SYNC_PROMPT, {
         lorebook_entries: formatLorebookEntries(_lorebookData),
         transcript,
     });
@@ -1770,6 +1818,7 @@ async function onConfirmClick() {
 function injectModal() {
     if ($('#stne-overlay').length) return;
     $('body').append(buildModalHTML());
+    $('body').append(buildPromptModalHTML());
 
     // Step 1 — Hooks Workshop
     $('#stne-regen-hooks').on('click', onRegenHooksClick);
@@ -1972,9 +2021,19 @@ async function runStneSync(char, messages) {
     let ledgerOk = false;
 
     try {
+        const settings = getSettings();
+
         // ── 1. Build turn window ──────────────────────────────────────────────
-        const allPairs    = buildProsePairs(messages);
-        const windowSize  = getSettings().chunkEveryN ?? 20;
+        // Filter messages to those at or after syncFromTurn (1-based non-system count)
+        const syncFrom = Math.max(1, settings.syncFromTurn ?? 1);
+        let nsIdx = 0;
+        const messagesFromTurn = messages.filter(m => {
+            if (!m.is_system) nsIdx++;
+            return m.is_system || nsIdx >= syncFrom;
+        });
+
+        const allPairs    = buildProsePairs(messagesFromTurn);
+        const windowSize  = settings.chunkEveryN ?? 20;
         const windowPairs = allPairs.slice(-windowSize);
 
         if (!windowPairs.length) {
@@ -1982,12 +2041,27 @@ async function runStneSync(char, messages) {
             return;
         }
 
-        // Build a transcript from only the window messages for AI calls
-        const windowMessages = windowPairs.flatMap(p => [p.user, p.ai]);
-        const transcript     = buildTranscript(windowMessages);
+        // Build hookseeker transcript from the rolling window
+        const windowMessages  = windowPairs.flatMap(p => [p.user, p.ai]);
+        const hooksTranscript = buildTranscript(windowMessages);
+
+        // Build lorebook transcript — optionally from last sync point
+        let lbTranscript;
+        if (settings.lorebookSyncStart === 'lastSync' && settings.lastLorebookSyncAt != null) {
+            const lastAt = settings.lastLorebookSyncAt;
+            let nsIdx2 = 0;
+            const messagesFromLastSync = messages.filter(m => {
+                if (!m.is_system) nsIdx2++;
+                return m.is_system || nsIdx2 > lastAt;
+            });
+            const lbPairs = buildProsePairs(messagesFromLastSync);
+            lbTranscript  = buildTranscript(lbPairs.flatMap(p => [p.user, p.ai]));
+        } else {
+            lbTranscript = hooksTranscript;
+        }
 
         // ── 2. Ensure lorebook is loaded ──────────────────────────────────────
-        const lbName = getSettings().lorebookName || char.name;
+        const lbName = settings.lorebookName || char.name;
         if (_lorebookName !== lbName || !_lorebookData) {
             _lorebookName  = lbName;
             _lorebookData  = await lbEnsureLorebook(_lorebookName);
@@ -1999,12 +2073,12 @@ async function runStneSync(char, messages) {
             await fetchOrBootstrapLedger(char.avatar);
         }
 
-        // ── 4. Fire Fact-Finder + Hookseeker in parallel ──────────────────────
-        let factFinderText, hookseekerText;
+        // ── 4. Fire Lorebook Sync + Hookseeker in parallel ────────────────────
+        let lorebookSyncText, hookseekerText;
         try {
-            [factFinderText, hookseekerText] = await Promise.all([
-                runFactFinderCall(transcript),
-                runHookseekerCall(transcript),
+            [lorebookSyncText, hookseekerText] = await Promise.all([
+                runLorebookSyncCall(lbTranscript),
+                runHookseekerCall(hooksTranscript),
             ]);
         } catch (err) {
             console.error('[STNE] AI calls failed:', err);
@@ -2012,10 +2086,10 @@ async function runStneSync(char, messages) {
             return; // cannot proceed without AI output
         }
 
-        // ── 5. Apply Fact-Finder: parse → enrich → auto-apply → save ─────────
+        // ── 5. Apply Lorebook Sync: parse → enrich → auto-apply → save ────────
         try {
             const preLorebook = structuredClone(_lorebookData);
-            const suggestions = parseLbSuggestions(factFinderText);
+            const suggestions = parseLbSuggestions(lorebookSyncText);
 
             // Reset suggestion list for this sync cycle (no carry-forward)
             _lorebookSuggestions = [];
@@ -2056,6 +2130,9 @@ async function runStneSync(char, messages) {
             }
             _lorebookDelta = { createdUids, modifiedEntries };
             lbOk = true;
+            // Track the sync point for 'lastSync' mode
+            getSettings().lastLorebookSyncAt = nonSystemCount;
+            saveSettingsDebounced();
             console.log(`[STNE] Lorebook updated: ${createdUids.length} created, ${Object.keys(modifiedEntries).length} modified.`);
         } catch (err) {
             console.error('[STNE] Lorebook update failed:', err);
@@ -2077,6 +2154,9 @@ async function runStneSync(char, messages) {
         }
 
         // ── 7. Build, classify, and upload RAG chunks ─────────────────────────
+        if (!settings.enableRag) {
+            console.log('[STNE] RAG disabled — skipping chunk build and upload.');
+        } else
         try {
             // Set module state for ragFireChunk/ragDrainQueue machinery
             _stagedProsePairs      = windowPairs;
@@ -2238,24 +2318,98 @@ async function runHealer(char, _chatFileName) {
     }
 }
 
+// ─── Prompt Modal ─────────────────────────────────────────────────────────────
+
+/**
+ * Opens the prompt-editor popup for a given settings key.
+ * Changes are saved live on input; the modal is closed with the Close button
+ * or by clicking the overlay backdrop.
+ * @param {string} settingsKey  Key in extension_settings[EXT_NAME] to read/write.
+ * @param {string} title        Title displayed in the modal header.
+ * @param {string} defaultValue Value used by the "Reset to Default" button.
+ */
+function openPromptModal(settingsKey, title, defaultValue) {
+    const $overlay  = $('#stne-pm-overlay');
+    const $textarea = $('#stne-pm-textarea');
+    const $titleEl  = $('#stne-pm-title');
+    const $reset    = $('#stne-pm-reset');
+    const $close    = $('#stne-pm-close');
+
+    $titleEl.text(title);
+    $textarea.val(getSettings()[settingsKey] ?? defaultValue);
+
+    // Unbind any previous open's handlers before re-binding
+    $textarea.off('input.pm');
+    $reset.off('click.pm');
+    $close.off('click.pm');
+    $overlay.off('click.pm');
+
+    $textarea.on('input.pm', function () {
+        getSettings()[settingsKey] = $(this).val();
+        saveSettingsDebounced();
+    });
+
+    $reset.on('click.pm', function () {
+        getSettings()[settingsKey] = defaultValue;
+        $textarea.val(defaultValue);
+        saveSettingsDebounced();
+    });
+
+    const closePromptModal = () => $overlay.addClass('stne-hidden');
+    $close.on('click.pm', closePromptModal);
+    $overlay.on('click.pm', function (e) {
+        if (e.target === this) closePromptModal();
+    });
+
+    $overlay.removeClass('stne-hidden');
+    requestAnimationFrame(() => $textarea[0]?.focus());
+}
+
 // ─── Settings Panel ───────────────────────────────────────────────────────────
 
 function bindSettingsHandlers() {
-    $('#stne-set-auto-sync').on('change', function () {
-        getSettings().autoSync = $(this).prop('checked');
+    // ── Summary / Lorebook ────────────────────────────────────────────────────
+    $('#stne-set-sync-from-turn').on('input', function () {
+        const val = Math.max(1, parseInt($(this).val()) || 1);
+        getSettings().syncFromTurn = val;
         saveSettingsDebounced();
     });
 
-    $('#stne-set-chunk-every-n').on('input', function () {
-        const val = Math.max(1, parseInt($(this).val()) || 20);
-        getSettings().chunkEveryN = val;
+    $('#stne-set-lorebook-sync-start').on('change', function () {
+        getSettings().lorebookSyncStart = $(this).val();
         saveSettingsDebounced();
     });
 
-    $('#stne-set-hookseeker-horizon').on('input', function () {
-        const val = Math.max(1, parseInt($(this).val()) || 70);
-        getSettings().hookseekerHorizon = val;
+    $('#stne-edit-summary-prompt').on('click', () =>
+        openPromptModal('hookseekerPrompt', 'Edit Summary Prompt', DEFAULT_HOOKSEEKER_PROMPT));
+
+    $('#stne-edit-lorebook-prompt').on('click', () =>
+        openPromptModal('lorebookSyncPrompt', 'Edit Lorebook Sync Prompt', DEFAULT_LOREBOOK_SYNC_PROMPT));
+
+    // ── RAG ───────────────────────────────────────────────────────────────────
+    $('#stne-set-enable-rag').on('change', function () {
+        getSettings().enableRag = $(this).prop('checked');
         saveSettingsDebounced();
+        $('#stne-rag-settings-body').toggleClass('stne-disabled', !getSettings().enableRag);
+    });
+
+    $('#stne-set-rag-separator').on('input', function () {
+        getSettings().ragSeparator = $(this).val();
+        saveSettingsDebounced();
+    });
+
+    $('#stne-set-rag-contents').on('change', function () {
+        getSettings().ragContents = $(this).val();
+        saveSettingsDebounced();
+        const hasSummary = $(this).val() !== 'full';
+        $('#stne-rag-summary-source-row').toggleClass('stne-hidden', !hasSummary);
+        updateRagAiControlsVisibility();
+    });
+
+    $('#stne-set-rag-summary-source').on('change', function () {
+        getSettings().ragSummarySource = $(this).val();
+        saveSettingsDebounced();
+        updateRagAiControlsVisibility();
     });
 
     $('#stne-set-rag-max-tokens').on('input', function () {
@@ -2266,36 +2420,16 @@ function bindSettingsHandlers() {
         }
     });
 
-    $('#stne-set-fact-finder-prompt').on('input', function () {
-        getSettings().factFinderPrompt = $(this).val();
-        saveSettingsDebounced();
-    });
-    $('#stne-reset-fact-finder-prompt').on('click', function () {
-        getSettings().factFinderPrompt = DEFAULT_FACT_FINDER_PROMPT;
-        $('#stne-set-fact-finder-prompt').val(DEFAULT_FACT_FINDER_PROMPT);
+    $('#stne-set-rag-chunk-size').on('input', function () {
+        const val = Math.max(1, parseInt($(this).val()) || 2);
+        getSettings().ragChunkSize = val;
         saveSettingsDebounced();
     });
 
-    $('#stne-set-hookseeker-prompt').on('input', function () {
-        getSettings().hookseekerPrompt = $(this).val();
-        saveSettingsDebounced();
-    });
-    $('#stne-reset-hookseeker-prompt').on('click', function () {
-        getSettings().hookseekerPrompt = DEFAULT_HOOKSEEKER_PROMPT;
-        $('#stne-set-hookseeker-prompt').val(DEFAULT_HOOKSEEKER_PROMPT);
-        saveSettingsDebounced();
-    });
+    $('#stne-edit-classifier-prompt').on('click', () =>
+        openPromptModal('ragClassifierPrompt', 'Edit Classifier Prompt', DEFAULT_RAG_CLASSIFIER_PROMPT));
 
-    $('#stne-set-rag-classifier-prompt').on('input', function () {
-        getSettings().ragClassifierPrompt = $(this).val();
-        saveSettingsDebounced();
-    });
-    $('#stne-reset-rag-classifier-prompt').on('click', function () {
-        getSettings().ragClassifierPrompt = DEFAULT_RAG_CLASSIFIER_PROMPT;
-        $('#stne-set-rag-classifier-prompt').val(DEFAULT_RAG_CLASSIFIER_PROMPT);
-        saveSettingsDebounced();
-    });
-
+    // ── Connection profiles ───────────────────────────────────────────────────
     try {
         ConnectionManagerRequestService.handleDropdown(
             '#stne-set-profile',
@@ -2323,64 +2457,22 @@ function bindSettingsHandlers() {
     }
 }
 
+/**
+ * Shows/hides the RAG AI controls subgroup based on current ragContents and
+ * ragSummarySource settings. Called on init and on dropdown changes.
+ */
+function updateRagAiControlsVisibility() {
+    const s = getSettings();
+    const hasSummary    = (s.ragContents ?? 'summary+full') !== 'full';
+    const isDefinedHere = (s.ragSummarySource ?? 'defined') === 'defined';
+    $('#stne-rag-ai-controls').toggleClass('stne-disabled', !(hasSummary && isDefinedHere));
+}
+
 function injectSettingsPanel() {
     if ($('#stne-settings').length) return;
-    const s = getSettings();
-    const html = `
-<div id="stne-settings" class="extension_settings">
-  <div class="inline-drawer">
-    <div class="inline-drawer-toggle inline-drawer-header">
-      <b>STNE — Narrative Engine</b>
-      <div class="inline-drawer-icon fa-solid fa-circle-chevron-down"></div>
-    </div>
-    <div class="inline-drawer-content">
-
-      <label>Connection Profile</label>
-      <select id="stne-set-profile"></select>
-
-      <label>RAG Profile</label>
-      <select id="stne-set-rag-profile"></select>
-
-      <label>RAG Max Tokens</label>
-      <input id="stne-set-rag-max-tokens" type="number" min="1"
-             value="${escapeHtml(String(s.ragMaxTokens ?? 100))}" />
-
-      <label>Sync every N turns</label>
-      <input id="stne-set-chunk-every-n" type="number" min="1"
-             value="${escapeHtml(String(s.chunkEveryN ?? 20))}" />
-
-      <label>Hookseeker horizon (turns)</label>
-      <input id="stne-set-hookseeker-horizon" type="number" min="1"
-             value="${escapeHtml(String(s.hookseekerHorizon ?? 70))}" />
-
-      <label class="checkbox_label">
-        <input id="stne-set-auto-sync" type="checkbox" ${s.autoSync ? 'checked' : ''} />
-        <span>Auto-sync on every Nth turn</span>
-      </label>
-
-      <div class="stne-prompt-editor">
-        <label>Fact Finder Prompt</label>
-        <textarea id="stne-set-fact-finder-prompt" rows="6">${escapeHtml(s.factFinderPrompt ?? DEFAULT_FACT_FINDER_PROMPT)}</textarea>
-        <button id="stne-reset-fact-finder-prompt" class="stne-btn stne-btn-sm">Reset to Default</button>
-      </div>
-
-      <div class="stne-prompt-editor">
-        <label>Hookseeker Prompt</label>
-        <textarea id="stne-set-hookseeker-prompt" rows="6">${escapeHtml(s.hookseekerPrompt ?? DEFAULT_HOOKSEEKER_PROMPT)}</textarea>
-        <button id="stne-reset-hookseeker-prompt" class="stne-btn stne-btn-sm">Reset to Default</button>
-      </div>
-
-      <div class="stne-prompt-editor">
-        <label>RAG Classifier Prompt</label>
-        <textarea id="stne-set-rag-classifier-prompt" rows="6">${escapeHtml(s.ragClassifierPrompt ?? DEFAULT_RAG_CLASSIFIER_PROMPT)}</textarea>
-        <button id="stne-reset-rag-classifier-prompt" class="stne-btn stne-btn-sm">Reset to Default</button>
-      </div>
-
-    </div>
-  </div>
-</div>`;
-    $('#extensions_settings').append(html);
+    $('#extensions_settings').append(buildSettingsHTML(getSettings(), escapeHtml));
     bindSettingsHandlers();
+    updateRagAiControlsVisibility();
 }
 
 // ─── Event Handlers ───────────────────────────────────────────────────────────
