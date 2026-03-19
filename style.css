@@ -785,6 +785,29 @@
     resize: vertical;
 }
 
+.stne-pm-vars {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 6px;
+    min-height: 0;
+}
+
+.stne-pm-vars:empty {
+    display: none;
+}
+
+.stne-pm-var {
+    font-size: 0.75rem;
+    font-family: monospace;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: rgba(255 255 255 / 0.08);
+    border: 1px solid rgba(255 255 255 / 0.15);
+    opacity: 0.8;
+    user-select: all;
+}
+
 /* ─── Settings Panel Additions ───────────────────────────────────────────── */
 
 /* Inline row: label on the left, input/select on the right */

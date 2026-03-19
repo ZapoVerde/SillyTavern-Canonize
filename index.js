@@ -658,9 +658,10 @@ async function runLorebookSyncCall(transcript) {
  * @param {string} transcript
  * @returns {Promise<string>}
  */
-async function runHookseekerCall(transcript) {
+async function runHookseekerCall(transcript, prevSummary = '') {
     const prompt = interpolate(getSettings().hookseekerPrompt || DEFAULT_HOOKSEEKER_PROMPT, {
         transcript,
+        prev_summary: prevSummary,
     });
     return generateWithProfile(prompt);
 }
@@ -1354,7 +1355,7 @@ function onRegenHooksClick() {
     const hooksId  = ++_hooksGenId;
     const horizon  = getSettings().hookseekerHorizon ?? 70;
     const transcript = buildModalTranscript(horizon);
-    runHookseekerCall(transcript)
+    runHookseekerCall(transcript, _priorSituation)
         .then(text => {
             if (_hooksGenId !== hooksId) return;
             $('#stne-situation-text').val(text.trim());
@@ -2105,7 +2106,7 @@ async function runStneSync(char, messages) {
         try {
             [lorebookSyncText, hookseekerText] = await Promise.all([
                 runLorebookSyncCall(lbTranscript),
-                runHookseekerCall(hooksTranscript),
+                runHookseekerCall(hooksTranscript, _priorSituation),
             ]);
         } catch (err) {
             console.error('[STNE] AI calls failed:', err);
@@ -2367,15 +2368,17 @@ async function runHealer(char, _chatFileName) {
  * @param {string} title        Title displayed in the modal header.
  * @param {string} defaultValue Value used by the "Reset to Default" button.
  */
-function openPromptModal(settingsKey, title, defaultValue) {
+function openPromptModal(settingsKey, title, defaultValue, vars = []) {
     const $overlay  = $('#stne-pm-overlay');
     const $textarea = $('#stne-pm-textarea');
     const $titleEl  = $('#stne-pm-title');
     const $reset    = $('#stne-pm-reset');
     const $close    = $('#stne-pm-close');
+    const $vars     = $('#stne-pm-vars');
 
     $titleEl.text(title);
     $textarea.val(getSettings()[settingsKey] ?? defaultValue);
+    $vars.html(vars.map(v => `<code class="stne-pm-var">{{${v}}}</code>`).join(' '));
 
     // Unbind any previous open's handlers before re-binding
     $textarea.off('input.pm');
@@ -2402,6 +2405,7 @@ function openPromptModal(settingsKey, title, defaultValue) {
     $overlay.on('click.pm', function (e) {
         if (e.target === this) closePromptModal(e);
     });
+    $overlay.on('mousedown.pm', e => e.stopPropagation());
 
     $overlay.removeClass('stne-hidden');
     requestAnimationFrame(() => $textarea[0]?.focus());
@@ -2440,10 +2444,12 @@ function bindSettingsHandlers() {
     });
 
     $('#stne-edit-summary-prompt').on('click', () =>
-        openPromptModal('hookseekerPrompt', 'Edit Summary Prompt', DEFAULT_HOOKSEEKER_PROMPT));
+        openPromptModal('hookseekerPrompt', 'Edit Summary Prompt', DEFAULT_HOOKSEEKER_PROMPT,
+            ['transcript', 'prev_summary']));
 
     $('#stne-edit-lorebook-prompt').on('click', () =>
-        openPromptModal('lorebookSyncPrompt', 'Edit Lorebook Sync Prompt', DEFAULT_LOREBOOK_SYNC_PROMPT));
+        openPromptModal('lorebookSyncPrompt', 'Edit Lorebook Sync Prompt', DEFAULT_LOREBOOK_SYNC_PROMPT,
+            ['lorebook_entries', 'transcript']));
 
     // ── RAG ───────────────────────────────────────────────────────────────────
     $('#stne-set-enable-rag').on('change', function () {
@@ -2486,7 +2492,8 @@ function bindSettingsHandlers() {
     });
 
     $('#stne-edit-classifier-prompt').on('click', () =>
-        openPromptModal('ragClassifierPrompt', 'Edit Classifier Prompt', DEFAULT_RAG_CLASSIFIER_PROMPT));
+        openPromptModal('ragClassifierPrompt', 'Edit Classifier Prompt', DEFAULT_RAG_CLASSIFIER_PROMPT,
+            ['summary', 'context_block', 'target_turns']));
 
     // ── Connection profiles ───────────────────────────────────────────────────
     try {

@@ -202,6 +202,7 @@ export function buildPromptModalHTML() {
       <h3 id="stne-pm-title" class="stne-title"></h3>
       <button id="stne-pm-reset" class="stne-btn stne-btn-secondary stne-btn-sm">Reset to Default</button>
     </div>
+    <div id="stne-pm-vars" class="stne-pm-vars"></div>
     <textarea id="stne-pm-textarea" class="stne-textarea stne-pm-textarea" spellcheck="false"></textarea>
     <div class="stne-buttons stne-wizard-footer">
       <button id="stne-pm-close" class="stne-btn stne-btn-secondary">Close</button>
@@ -269,10 +270,10 @@ export function buildSettingsHTML(settings, escapeHtml) {
         </div>
 
         <div class="stne-settings-inline-row">
-          <label for="stne-set-lorebook-sync-start">Lorebook sync start ${tip('"From selected turn": each sync always processes from the Begin sync turn value. "From last sync point": only new turns since the last successful lorebook sync are processed — avoids re-analysing old content.')}</label>
+          <label for="stne-set-lorebook-sync-start">Lorebook sync start ${tip('"From latest turn": each sync processes from the Begin sync turn value. "From sync point": only new turns since the last successful lorebook sync are processed — avoids re-analysing old content.')}</label>
           <select id="stne-set-lorebook-sync-start" class="stne-select stne-settings-select-sm">
-            <option value="syncTurn"  ${(s.lorebookSyncStart ?? 'syncTurn') === 'syncTurn'  ? 'selected' : ''}>From selected turn</option>
-            <option value="lastSync"  ${(s.lorebookSyncStart ?? 'syncTurn') === 'lastSync'  ? 'selected' : ''}>From last sync point</option>
+            <option value="syncTurn"  ${(s.lorebookSyncStart ?? 'syncTurn') === 'syncTurn'  ? 'selected' : ''}>From latest turn</option>
+            <option value="lastSync"  ${(s.lorebookSyncStart ?? 'syncTurn') === 'lastSync'  ? 'selected' : ''}>From sync point</option>
           </select>
         </div>
 
