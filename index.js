@@ -2355,10 +2355,13 @@ function openPromptModal(settingsKey, title, defaultValue) {
         saveSettingsDebounced();
     });
 
-    const closePromptModal = () => $overlay.addClass('stne-hidden');
+    const closePromptModal = (e) => {
+        e?.stopPropagation();
+        $overlay.addClass('stne-hidden');
+    };
     $close.on('click.pm', closePromptModal);
     $overlay.on('click.pm', function (e) {
-        if (e.target === this) closePromptModal();
+        if (e.target === this) closePromptModal(e);
     });
 
     $overlay.removeClass('stne-hidden');
@@ -2372,6 +2375,18 @@ function bindSettingsHandlers() {
     $('#stne-set-sync-from-turn').on('input', function () {
         const val = Math.max(1, parseInt($(this).val()) || 1);
         getSettings().syncFromTurn = val;
+        saveSettingsDebounced();
+    });
+
+    $('#stne-set-chunk-every-n').on('input', function () {
+        const val = Math.max(1, parseInt($(this).val()) || 20);
+        getSettings().chunkEveryN = val;
+        saveSettingsDebounced();
+    });
+
+    $('#stne-set-hookseeker-horizon').on('input', function () {
+        const val = Math.max(1, parseInt($(this).val()) || 70);
+        getSettings().hookseekerHorizon = val;
         saveSettingsDebounced();
     });
 

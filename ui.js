@@ -224,6 +224,9 @@ export function buildSettingsHTML(settings, escapeHtml) {
     const hasSummary       = ragContents !== 'full';
     const isDefinedHere    = ragSummarySource === 'defined';
 
+    // Shorthand for the info icon — keeps the template readable
+    const tip = (text) => `<span class="stne-info-icon" title="${escapeHtml(text)}">&#9432;</span>`;
+
     return `
 <div id="stne-settings" class="extension_settings">
   <div class="inline-drawer">
@@ -236,18 +239,30 @@ export function buildSettingsHTML(settings, escapeHtml) {
 
         <!-- ── Summary / Lorebook ── -->
         <div class="stne-settings-row">
-          <label for="stne-set-profile">Summary Connection Profile</label>
+          <label for="stne-set-profile">Summary Connection Profile ${tip('AI connection used for narrative hook (summary) and lorebook sync calls. Leave blank to use the global connection.')}</label>
           <select id="stne-set-profile" class="text_pole"></select>
         </div>
 
         <div class="stne-settings-inline-row">
-          <label for="stne-set-sync-from-turn">Begin sync from turn</label>
+          <label for="stne-set-sync-from-turn">Begin sync from turn ${tip('The first turn included in all processing. Turns before this number are ignored. Useful for skipping prologues or resetting sync mid-story.')}</label>
           <input id="stne-set-sync-from-turn" type="number" min="1" step="1"
                  value="${escapeHtml(String(s.syncFromTurn ?? 1))}">
         </div>
 
         <div class="stne-settings-inline-row">
-          <label for="stne-set-lorebook-sync-start">Lorebook sync start</label>
+          <label for="stne-set-chunk-every-n">Turns between updates ${tip('How many new turns trigger an auto-sync. Also sets the rolling window size — each sync analyses this many of the most recent turns for lorebook and summary.')}</label>
+          <input id="stne-set-chunk-every-n" type="number" min="1" step="1"
+                 value="${escapeHtml(String(s.chunkEveryN ?? 20))}">
+        </div>
+
+        <div class="stne-settings-inline-row">
+          <label for="stne-set-hookseeker-horizon">Summary horizon (turns) ${tip('How many of the most recent turns are fed to the narrative hook / summary generator. Higher values give richer context at the cost of more tokens. Typically 50–100.')}</label>
+          <input id="stne-set-hookseeker-horizon" type="number" min="1" step="1"
+                 value="${escapeHtml(String(s.hookseekerHorizon ?? 70))}">
+        </div>
+
+        <div class="stne-settings-inline-row">
+          <label for="stne-set-lorebook-sync-start">Lorebook sync start ${tip('"From selected turn": each sync always processes from the Begin sync turn value. "From last sync point": only new turns since the last successful lorebook sync are processed — avoids re-analysing old content.')}</label>
           <select id="stne-set-lorebook-sync-start" class="stne-select stne-settings-select-sm">
             <option value="syncTurn"  ${(s.lorebookSyncStart ?? 'syncTurn') === 'syncTurn'  ? 'selected' : ''}>From selected turn</option>
             <option value="lastSync"  ${(s.lorebookSyncStart ?? 'syncTurn') === 'lastSync'  ? 'selected' : ''}>From last sync point</option>
@@ -255,8 +270,10 @@ export function buildSettingsHTML(settings, escapeHtml) {
         </div>
 
         <div class="stne-settings-row stne-settings-prompt-row">
-          <button id="stne-edit-summary-prompt"  class="stne-btn stne-btn-secondary">Edit Summary Prompt</button>
-          <button id="stne-edit-lorebook-prompt" class="stne-btn stne-btn-secondary">Edit Lorebook Sync Prompt</button>
+          <button id="stne-edit-summary-prompt"  class="stne-btn stne-btn-secondary"
+                  title="Edit the prompt template sent to the AI when generating the narrative hook / scenario summary.">Edit Summary Prompt</button>
+          <button id="stne-edit-lorebook-prompt" class="stne-btn stne-btn-secondary"
+                  title="Edit the prompt template used when asking the AI to suggest lorebook entry updates and new entries.">Edit Lorebook Sync Prompt</button>
         </div>
 
         <!-- ── RAG Settings ── -->
@@ -265,22 +282,22 @@ export function buildSettingsHTML(settings, escapeHtml) {
         <div class="stne-settings-row">
           <label class="stne-checkbox-label">
             <input id="stne-set-enable-rag" type="checkbox" ${enableRag ? 'checked' : ''}>
-            <span>Enable Narrative Memory (RAG)</span>
+            <span>Enable Narrative Memory (RAG) ${tip('When enabled, each sync builds a structured memory document from the transcript and uploads it to the SillyTavern Data Bank as a character attachment for vector retrieval.')}</span>
           </label>
         </div>
 
         <div id="stne-rag-settings-body" class="stne-settings-subgroup ${enableRag ? '' : 'stne-disabled'}">
 
           <div class="stne-settings-inline-row">
-            <label for="stne-set-rag-separator">Separator</label>
+            <label for="stne-set-rag-separator">Separator ${tip('Template string prepended to every memory chunk in the RAG document. Supports {{turn_number}}, {{char_name}}, {{turn_range}}. Leave blank to use the default *** divider.')}</label>
             <input id="stne-set-rag-separator" type="text" class="stne-input stne-settings-input-wide"
                    placeholder="e.g. ** {{turn_number}} **"
                    value="${escapeHtml(s.ragSeparator ?? '')}">
           </div>
-          <small class="stne-settings-hint">Template vars: <code>{{turn_number}}</code>, <code>{{char_name}}</code>, <code>{{turn_range}}</code>. Default: <code>***</code></small>
+          <small class="stne-settings-hint">Vars: <code>{{turn_number}}</code>, <code>{{char_name}}</code>, <code>{{turn_range}}</code> &mdash; blank defaults to <code>***</code></small>
 
           <div class="stne-settings-inline-row">
-            <label for="stne-set-rag-contents">RAG Contents</label>
+            <label for="stne-set-rag-contents">RAG Contents ${tip('"Summary + Full Content": AI-generated header plus raw dialogue. "Summary Only": compact header list, no dialogue. "Full Content Only": raw dialogue with no headers.')}</label>
             <select id="stne-set-rag-contents" class="stne-select stne-settings-select-sm">
               <option value="summary+full" ${ragContents === 'summary+full' ? 'selected' : ''}>Summary + Full Content</option>
               <option value="summary"      ${ragContents === 'summary'      ? 'selected' : ''}>Summary Only</option>
@@ -289,7 +306,7 @@ export function buildSettingsHTML(settings, escapeHtml) {
           </div>
 
           <div id="stne-rag-summary-source-row" class="stne-settings-inline-row ${hasSummary ? '' : 'stne-hidden'}">
-            <label for="stne-set-rag-summary-source">Summary Source</label>
+            <label for="stne-set-rag-summary-source">Summary Source ${tip('"Defined Here": uses the AI classifier prompt below to generate semantic headers per chunk. "Qvink": reads headers directly from qvink_memory metadata on each AI message — no extra AI calls, forces 1-pair chunks.')}</label>
             <select id="stne-set-rag-summary-source" class="stne-select stne-settings-select-sm">
               <option value="defined" ${isDefinedHere ? 'selected' : ''}>Defined Here</option>
               <option value="qvink"   ${!isDefinedHere ? 'selected' : ''}>Qvink</option>
@@ -299,24 +316,25 @@ export function buildSettingsHTML(settings, escapeHtml) {
           <div id="stne-rag-ai-controls" class="stne-settings-subgroup ${(hasSummary && isDefinedHere) ? '' : 'stne-disabled'}">
 
             <div class="stne-settings-row">
-              <label for="stne-set-rag-profile">RAG Connection Profile</label>
+              <label for="stne-set-rag-profile">RAG Connection Profile ${tip('AI connection used for chunk classification calls. Falls back to the Summary profile, then the global connection.')}</label>
               <select id="stne-set-rag-profile" class="text_pole"></select>
             </div>
 
             <div class="stne-settings-inline-row">
-              <label for="stne-set-rag-max-tokens">Max Tokens</label>
+              <label for="stne-set-rag-max-tokens">Max Tokens ${tip('Maximum tokens the classifier may produce per chunk. Keep low (50–150) to prevent runaway outputs; raise if responses are cut off.')}</label>
               <input id="stne-set-rag-max-tokens" type="number" min="1"
                      value="${escapeHtml(String(s.ragMaxTokens ?? 100))}">
             </div>
 
             <div class="stne-settings-inline-row">
-              <label for="stne-set-rag-chunk-size">Chunk Size (pairs)</label>
+              <label for="stne-set-rag-chunk-size">Chunk Size (pairs) ${tip('Number of turn-pairs grouped into each memory chunk when using AI classification. Larger chunks give more context per header but produce fewer total chunks. Qvink mode always uses 1.')}</label>
               <input id="stne-set-rag-chunk-size" type="number" min="1" max="10" step="1"
                      value="${escapeHtml(String(s.ragChunkSize ?? 2))}">
             </div>
 
             <div class="stne-settings-row stne-settings-prompt-row">
-              <button id="stne-edit-classifier-prompt" class="stne-btn stne-btn-secondary">Edit Classifier Prompt</button>
+              <button id="stne-edit-classifier-prompt" class="stne-btn stne-btn-secondary"
+                      title="Edit the prompt used to generate a semantic header for each memory chunk.">Edit Classifier Prompt</button>
             </div>
 
           </div><!-- /stne-rag-ai-controls -->

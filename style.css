@@ -845,6 +845,22 @@
     gap: var(--stne-gap-sm);
 }
 
+/* Info icon (ℹ) shown next to setting labels */
+.stne-info-icon {
+    display: inline-block;
+    font-size: 0.78rem;
+    color: var(--stne-text-muted);
+    opacity: 0.65;
+    cursor: help;
+    margin-left: 3px;
+    vertical-align: middle;
+    line-height: 1;
+}
+
+.stne-info-icon:hover {
+    opacity: 1;
+}
+
 /* Hint text beneath inputs */
 .stne-settings-hint {
     font-size: 0.74rem;
