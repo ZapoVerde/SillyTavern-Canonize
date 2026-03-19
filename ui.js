@@ -261,6 +261,13 @@ export function buildSettingsHTML(settings, escapeHtml) {
                  value="${escapeHtml(String(s.hookseekerHorizon ?? 70))}">
         </div>
 
+        <div class="stne-settings-row">
+          <label class="stne-checkbox-label">
+            <input id="stne-set-prune-on-sync" type="checkbox" ${(s.pruneOnSync ?? false) ? 'checked' : ''}>
+            <span>Rolling trim ${tip('After each successful sync, delete all turns before the rolling window edge from chat history. Canonized content is already preserved in your lorebook, summary, and RAG — keeping only the active window prevents context bloat over long stories. Irreversible: enable only if you do not need the raw turns after syncing.')}</span>
+          </label>
+        </div>
+
         <div class="stne-settings-inline-row">
           <label for="stne-set-lorebook-sync-start">Lorebook sync start ${tip('"From selected turn": each sync always processes from the Begin sync turn value. "From last sync point": only new turns since the last successful lorebook sync are processed — avoids re-analysing old content.')}</label>
           <select id="stne-set-lorebook-sync-start" class="stne-select stne-settings-select-sm">

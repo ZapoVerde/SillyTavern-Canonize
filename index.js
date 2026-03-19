@@ -19,7 +19,7 @@
  *   - Ledger node committed after each successful sync
  */
 
-import { generateRaw, saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup } from '../../../../script.js';
+import { generateRaw, saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup, deleteMessage } from '../../../../script.js';
 import { extension_settings } from '../../../extensions.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
 import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML } from './ui.js';
@@ -117,6 +117,8 @@ const SETTINGS_DEFAULTS = Object.freeze({
     lastLorebookSyncAt:    null,         // non-system message count at last lorebook sync
     lorebookSyncPrompt:    DEFAULT_LOREBOOK_SYNC_PROMPT,
     hookseekerPrompt:      DEFAULT_HOOKSEEKER_PROMPT,
+    // Rolling trim
+    pruneOnSync:           false,        // delete canonized turns after each sync
     // RAG
     enableRag:             false,
     ragSeparator:          '',           // prepended to each chunk; default '***' when blank
@@ -1989,6 +1991,31 @@ async function openReviewModal() {
 // ─── STNE Core ────────────────────────────────────────────────────────────────
 
 /**
+ * Deletes all chat messages that fall before `windowFirstMsg` in the `messages`
+ * snapshot. Messages are deleted highest-index first so array indices stay valid.
+ * Resets syncFromTurn to 1 when it would otherwise point into deleted territory.
+ * @param {object[]} messages      Full chat snapshot from the sync trigger.
+ * @param {object}   windowFirstMsg The first message object in the rolling window.
+ */
+async function pruneCanonizedTurns(messages, windowFirstMsg) {
+    const pruneUpTo = messages.indexOf(windowFirstMsg);
+    if (pruneUpTo <= 0) {
+        console.log('[STNE] Rolling trim: window starts at message 0 — nothing to prune.');
+        return;
+    }
+    console.log(`[STNE] Rolling trim: deleting ${pruneUpTo} message(s) before window start.`);
+    for (let i = pruneUpTo - 1; i >= 0; i--) {
+        await deleteMessage(i);
+    }
+    // syncFromTurn is now stale — the messages it pointed at are gone
+    if ((getSettings().syncFromTurn ?? 1) > 1) {
+        getSettings().syncFromTurn = 1;
+        saveSettingsDebounced();
+    }
+    console.log('[STNE] Rolling trim complete.');
+}
+
+/**
  * Fires every chunkEveryN turns (MESSAGE_RECEIVED handler).
  * Executes the full background sync pipeline:
  *   1. Derive the current turn window (last chunkEveryN pairs)
@@ -2230,6 +2257,18 @@ async function runStneSync(char, messages) {
             console.log(`[STNE] Sync partial: lb=${lbOk} hooks=${hooksOk} rag=${!!ragUrl} ledger=${ledgerOk}`);
         }
 
+        // ── 10. Rolling trim ──────────────────────────────────────────────────
+        // Only prune when both lorebook and hookseeker succeeded — canonized
+        // content must be safely committed before the source turns are deleted.
+        if (settings.pruneOnSync && lbOk && hooksOk && windowPairs.length > 0) {
+            try {
+                await pruneCanonizedTurns(messages, windowPairs[0].user);
+            } catch (err) {
+                console.error('[STNE] Rolling trim failed:', err);
+                toastr.warning(`STNE: Rolling trim failed — ${err.message}`);
+            }
+        }
+
     } finally {
         _syncInProgress = false;
     }
@@ -2392,6 +2431,11 @@ function bindSettingsHandlers() {
 
     $('#stne-set-lorebook-sync-start').on('change', function () {
         getSettings().lorebookSyncStart = $(this).val();
+        saveSettingsDebounced();
+    });
+
+    $('#stne-set-prune-on-sync').on('change', function () {
+        getSettings().pruneOnSync = $(this).prop('checked');
         saveSettingsDebounced();
     });
 
