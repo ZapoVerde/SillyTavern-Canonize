@@ -116,7 +116,8 @@ const SETTINGS_DEFAULTS = Object.freeze({
     lorebookSyncStart:     'syncTurn',   // 'syncTurn' | 'lastSync'
     lastLorebookSyncAt:    null,         // non-system message count at last lorebook sync
     lorebookSyncPrompt:    DEFAULT_LOREBOOK_SYNC_PROMPT,
-    hookseekerPrompt:      DEFAULT_HOOKSEEKER_PROMPT,
+    hookseekerPrompt:          DEFAULT_HOOKSEEKER_PROMPT,
+    hookseekerTrailingPrompt:  '',
     // Rolling trim
     pruneOnSync:           false,        // delete canonized turns after each sync
     // RAG
@@ -127,6 +128,7 @@ const SETTINGS_DEFAULTS = Object.freeze({
     ragProfileId:          null,
     ragMaxTokens:          100,
     ragChunkSize:          2,            // pairs per chunk when source='defined'
+    ragChunkOverlap:       0,            // 0=none | 1=1-turn | 2=2-turn (defined mode only)
     ragClassifierPrompt:   DEFAULT_RAG_CLASSIFIER_PROMPT,
 });
 
@@ -383,32 +385,65 @@ function buildRagChunks(pairs) {
     const settings  = getSettings();
     const useQvink  = (settings.ragSummarySource ?? 'defined') === 'qvink';
     const chunkSize = useQvink ? 1 : Math.max(1, settings.ragChunkSize ?? 2);
+    const overlap   = useQvink ? 0 : Math.max(0, settings.ragChunkOverlap ?? 0);
 
-    for (let i = 0; i < pairs.length; i++) {
-        const window    = pairs.slice(i, i + chunkSize);
-        const turnA     = i + 1;
-        const turnB     = Math.min(i + chunkSize, pairs.length);
-        const turnLabel = chunkSize === 1
-            ? `Turn ${turnA}`
-            : (turnA === turnB
-                ? `Chunk ${i + 1} (Turn ${turnA})`
-                : `Chunk ${i + 1} (Turns ${turnA}–${turnB})`);
+    if (overlap === 0) {
+        // Non-overlapping: advance by chunkSize each step
+        for (let i = 0; i < pairs.length; i += chunkSize) {
+            const window    = pairs.slice(i, i + chunkSize);
+            const turnA     = i + 1;
+            const turnB     = Math.min(i + chunkSize, pairs.length);
+            const turnLabel = chunkSize === 1
+                ? `Turn ${turnA}`
+                : (turnA === turnB
+                    ? `Chunk ${chunks.length + 1} (Turn ${turnA})`
+                    : `Chunk ${chunks.length + 1} (Turns ${turnA}–${turnB})`);
 
-        const content = window
-            .map(p => `[${p.user.name.toUpperCase()}]\n${p.user.mes}\n\n[${p.ai.name.toUpperCase()}]\n${p.ai.mes}`)
-            .join('\n\n');
+            const content = window
+                .map(p => `[${p.user.name.toUpperCase()}]\n${p.user.mes}\n\n[${p.ai.name.toUpperCase()}]\n${p.ai.mes}`)
+                .join('\n\n');
 
-        const qvinkText = useQvink ? (pairs[i].ai?.extra?.qvink_memory?.memory || null) : null;
+            const qvinkText = useQvink ? (pairs[i].ai?.extra?.qvink_memory?.memory || null) : null;
 
-        chunks.push({
-            chunkIndex: i,
-            pairStart:  i,
-            turnLabel,
-            content,
-            header:  qvinkText || turnLabel,
-            status:  (useQvink && qvinkText) ? 'complete' : 'pending',
-            genId:   0,
-        });
+            chunks.push({
+                chunkIndex: chunks.length,
+                pairStart:  i,
+                pairEnd:    Math.min(i + chunkSize, pairs.length),
+                turnLabel,
+                content,
+                header:  qvinkText || turnLabel,
+                status:  (useQvink && qvinkText) ? 'complete' : 'pending',
+                genId:   0,
+            });
+        }
+    } else {
+        // Overlapping: step = 1 new pair per chunk; each chunk includes `overlap` prior pairs
+        // chunk at position i covers pairs[max(0, i - overlap) .. i] inclusive
+        const startIdx = Math.max(0, overlap - 1);
+        for (let i = startIdx; i < pairs.length; i++) {
+            const sliceFrom = Math.max(0, i - overlap);
+            const window    = pairs.slice(sliceFrom, i + 1);
+            const turnA     = sliceFrom + 1;
+            const turnB     = i + 1;
+            const turnLabel = turnA === turnB
+                ? `Chunk ${chunks.length + 1} (Turn ${turnA})`
+                : `Chunk ${chunks.length + 1} (Turns ${turnA}–${turnB})`;
+
+            const content = window
+                .map(p => `[${p.user.name.toUpperCase()}]\n${p.user.mes}\n\n[${p.ai.name.toUpperCase()}]\n${p.ai.mes}`)
+                .join('\n\n');
+
+            chunks.push({
+                chunkIndex: chunks.length,
+                pairStart:  sliceFrom,
+                pairEnd:    i + 1,
+                turnLabel,
+                content,
+                header:  turnLabel,
+                status:  'pending',
+                genId:   0,
+            });
+        }
     }
     return chunks;
 }
@@ -458,10 +493,10 @@ async function ragFireChunk(chunkIndex) {
     renderRagCard(chunkIndex);
 
     try {
-        const contextPairs = _stagedProsePairs.slice(Math.max(0, chunkIndex - lookback), chunkIndex);
-        const settings_    = getSettings();
-        const windowSize   = (settings_.ragSummarySource ?? 'defined') === 'qvink' ? 1 : Math.max(1, settings_.ragChunkSize ?? 2);
-        const targetPairs  = _stagedProsePairs.slice(chunkIndex, Math.min(chunkIndex + windowSize, _splitPairIdx));
+        const pairStart    = chunk.pairStart ?? chunkIndex;
+        const pairEnd      = chunk.pairEnd   ?? (pairStart + 1);
+        const contextPairs = _stagedProsePairs.slice(Math.max(0, pairStart - lookback), pairStart);
+        const targetPairs  = _stagedProsePairs.slice(pairStart, Math.min(pairEnd, _splitPairIdx));
         const header       = await runRagClassifierCall(summaryAtCall, contextPairs, targetPairs);
 
         const globalStale = _ragGlobalGenId !== globalGenId;
@@ -659,10 +694,13 @@ async function runLorebookSyncCall(transcript) {
  * @returns {Promise<string>}
  */
 async function runHookseekerCall(transcript, prevSummary = '') {
-    const prompt = interpolate(getSettings().hookseekerPrompt || DEFAULT_HOOKSEEKER_PROMPT, {
+    const s = getSettings();
+    let prompt = interpolate(s.hookseekerPrompt || DEFAULT_HOOKSEEKER_PROMPT, {
         transcript,
         prev_summary: prevSummary,
     });
+    const trailing = (s.hookseekerTrailingPrompt ?? '').trim();
+    if (trailing) prompt = prompt + '\n\n' + trailing;
     return generateWithProfile(prompt);
 }
 
@@ -2405,7 +2443,6 @@ function openPromptModal(settingsKey, title, defaultValue, vars = []) {
     $overlay.on('click.pm', function (e) {
         if (e.target === this) closePromptModal(e);
     });
-    $overlay.on('mousedown.pm', e => e.stopPropagation());
 
     $overlay.removeClass('stne-hidden');
     requestAnimationFrame(() => $textarea[0]?.focus());
@@ -2440,6 +2477,11 @@ function bindSettingsHandlers() {
 
     $('#stne-set-prune-on-sync').on('change', function () {
         getSettings().pruneOnSync = $(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
+    $('#stne-hookseeker-trailing-prompt').on('input', function () {
+        getSettings().hookseekerTrailingPrompt = $(this).val();
         saveSettingsDebounced();
     });
 
@@ -2488,6 +2530,11 @@ function bindSettingsHandlers() {
     $('#stne-set-rag-chunk-size').on('input', function () {
         const val = Math.max(1, parseInt($(this).val()) || 2);
         getSettings().ragChunkSize = val;
+        saveSettingsDebounced();
+    });
+
+    $('#stne-set-rag-chunk-overlap').on('change', function () {
+        getSettings().ragChunkOverlap = parseInt($(this).val()) || 0;
         saveSettingsDebounced();
     });
 

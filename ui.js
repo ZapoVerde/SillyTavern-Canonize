@@ -284,6 +284,13 @@ export function buildSettingsHTML(settings, escapeHtml) {
                   title="Edit the prompt template used when asking the AI to suggest lorebook entry updates and new entries.">Edit Lorebook Sync Prompt</button>
         </div>
 
+        <div class="stne-settings-row">
+          <label for="stne-hookseeker-trailing-prompt">Summary trailing prompt ${tip('Extra instructions appended after the transcript when running the summarizer. Use this to add context-specific guidance without editing the full prompt template.')}</label>
+          <textarea id="stne-hookseeker-trailing-prompt" class="stne-input" rows="4"
+                    placeholder="e.g. Pay special attention to …"
+                    style="width:100%;resize:vertical;">${escapeHtml(s.hookseekerTrailingPrompt ?? '')}</textarea>
+        </div>
+
         <!-- ── RAG Settings ── -->
         <div class="stne-settings-section-header">RAG Settings</div>
 
@@ -338,6 +345,15 @@ export function buildSettingsHTML(settings, escapeHtml) {
               <label for="stne-set-rag-chunk-size">Chunk Size (pairs) ${tip('Number of turn-pairs grouped into each memory chunk when using AI classification. Larger chunks give more context per header but produce fewer total chunks. Qvink mode always uses 1.')}</label>
               <input id="stne-set-rag-chunk-size" type="number" min="1" max="10" step="1"
                      value="${escapeHtml(String(s.ragChunkSize ?? 2))}">
+            </div>
+
+            <div class="stne-settings-inline-row">
+              <label for="stne-set-rag-chunk-overlap">Chunk Overlap ${tip('How many turns each chunk shares with the previous one. None: non-overlapping windows (step = chunk size). 1-turn: each chunk adds 1 new turn with 1 prior turn included. 2-turn: each chunk adds 1 new turn with 2 prior turns included.')}</label>
+              <select id="stne-set-rag-chunk-overlap" class="text_pole">
+                <option value="0" ${(s.ragChunkOverlap ?? 0) === 0 ? 'selected' : ''}>No overlap</option>
+                <option value="1" ${(s.ragChunkOverlap ?? 0) === 1 ? 'selected' : ''}>1-turn overlap</option>
+                <option value="2" ${(s.ragChunkOverlap ?? 0) === 2 ? 'selected' : ''}>2-turn overlap</option>
+              </select>
             </div>
 
             <div class="stne-settings-row stne-settings-prompt-row">
