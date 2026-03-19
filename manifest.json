@@ -1,0 +1,15 @@
+{
+    "display_name": "Canonize",
+    "loading_order": 10,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "[Your Name/GitHub Handle]",
+    "version": "0.9.0",
+    "homePage": "https://github.com/[Your-GitHub-Handle]/SillyTavern-Canonize",
+    "auto_update": true,
+    "i18n": {
+        "en-us": "i18n/en-us.json"
+    }
+}

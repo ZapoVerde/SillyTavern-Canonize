@@ -1,0 +1,787 @@
+/**
+ * @file data/default-user/extensions/STNE/style.css
+ * STNE — Narrative Engine modal and settings panel styles.
+ * All magic values (colours, dimensions, spacing) are declared as custom
+ * properties in :root so they can be overridden by ST themes.
+ */
+
+/* ─── Design Tokens ──────────────────────────────────────────────────────── */
+
+:root {
+    --stne-overlay-bg:         rgba(0, 0, 0, 0.65);
+    --stne-modal-bg:           var(--black-tinted, #1a1a2e);
+    --stne-modal-border:       var(--border-color-light, #444);
+    --stne-modal-radius:       8px;
+    --stne-modal-width:        95%;
+    --stne-modal-max-width:    640px;
+    --stne-modal-pad:          20px;
+    --stne-gap:                12px;
+    --stne-gap-sm:             6px;
+
+    --stne-text:               var(--SmartThemeBodyColorText, #e0e0e0);
+    --stne-text-muted:         var(--SmartThemeBodyColorSecondary, #999);
+
+    --stne-input-bg:           var(--black-tinted-extra, #111);
+    --stne-input-border:       var(--border-color-light, #444);
+    --stne-input-radius:       4px;
+    --stne-input-pad:          6px 8px;
+    --stne-textarea-h:         130px;
+    --stne-textarea-h-tall:    210px;
+    --stne-settings-textarea-h: 80px;
+
+    --stne-suggestions-bg:     rgba(255, 255, 255, 0.03);
+    --stne-suggestions-border: var(--border-color-light, #444);
+
+    --stne-warn-fg:            #f0c040;
+    --stne-warn-bg:            rgba(240, 192, 64, 0.12);
+
+    --stne-error-fg:           #e05555;
+    --stne-error-bg:           rgba(224, 85, 85, 0.12);
+
+    --stne-btn-radius:         4px;
+    --stne-btn-pad:            6px 14px;
+    --stne-btn-font:           0.85rem;
+    --stne-btn-primary-bg:     var(--SmartThemeBlurTintColor, #5c85d6);
+    --stne-btn-primary-fg:     #ffffff;
+    --stne-btn-success-fg:     #6bbf6b;
+
+    --stne-z-modal:            9999;
+}
+
+/* ─── Utility ────────────────────────────────────────────────────────────── */
+
+.stne-hidden {
+    display: none !important;
+}
+
+/* ─── Overlay & Modal Shell ──────────────────────────────────────────────── */
+
+.stne-overlay {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    background: var(--stne-overlay-bg);
+    z-index: var(--stne-z-modal);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    overflow-y: auto;
+    padding: 40px 20px;
+    box-sizing: border-box;
+}
+
+.stne-modal {
+    background: var(--stne-modal-bg);
+    border: 1px solid var(--stne-modal-border);
+    border-radius: var(--stne-modal-radius);
+    width: var(--stne-modal-width);
+    max-width: var(--stne-modal-max-width);
+    padding: var(--stne-modal-pad);
+    display: flex;
+    flex-direction: column;
+    gap: var(--stne-gap);
+    color: var(--stne-text);
+}
+
+/* ─── Step Panels ────────────────────────────────────────────────────────── */
+
+.stne-step {
+    display: flex;
+    flex-direction: column;
+    gap: var(--stne-gap);
+}
+
+.stne-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--stne-text);
+}
+
+/* ─── Section Headers (label + spinner + regen button) ───────────────────── */
+
+.stne-section-header {
+    display: flex;
+    align-items: center;
+    gap: var(--stne-gap-sm);
+}
+
+.stne-section-header .stne-label {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.stne-section-spin {
+    font-size: 0.75rem;
+    color: var(--stne-text-muted);
+}
+
+/* ─── Labels ─────────────────────────────────────────────────────────────── */
+
+.stne-label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--stne-text-muted);
+    margin-bottom: 2px;
+}
+
+/* ─── Suggestions Box ────────────────────────────────────────────────────── */
+
+.stne-suggestions-box {
+    min-height: 52px;
+    background: var(--stne-suggestions-bg);
+    border: 1px solid var(--stne-suggestions-border);
+    border-radius: var(--stne-input-radius);
+    padding: var(--stne-input-pad);
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--stne-text);
+}
+
+.stne-suggestions-box pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    color: inherit;
+}
+
+/* ─── Textareas ──────────────────────────────────────────────────────────── */
+
+.stne-textarea {
+    width: 100%;
+    height: var(--stne-textarea-h);
+    resize: vertical;
+    box-sizing: border-box;
+    background: var(--stne-input-bg);
+    color: var(--stne-text);
+    border: 1px solid var(--stne-input-border);
+    border-radius: var(--stne-input-radius);
+    padding: var(--stne-input-pad);
+    font-size: 0.85rem;
+    font-family: inherit;
+    line-height: 1.45;
+}
+
+.stne-textarea-tall {
+    height: var(--stne-textarea-h-tall);
+}
+
+.stne-textarea:focus {
+    outline: none;
+    border-color: var(--stne-btn-primary-bg);
+}
+
+.stne-textarea:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+#stne-rag-raw {
+    height: auto;
+    min-height: var(--stne-textarea-h-tall);
+    overflow-y: auto; 
+    resize: none;
+}
+
+/* ─── Turns Row ──────────────────────────────────────────────────────────── */
+
+.stne-turns-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.stne-turns-row .stne-label {
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.stne-turns-input {
+    width: 68px;
+    background: var(--stne-input-bg);
+    color: var(--stne-text);
+    border: 1px solid var(--stne-input-border);
+    border-radius: var(--stne-input-radius);
+    padding: var(--stne-input-pad);
+    font-size: 0.85rem;
+    text-align: center;
+}
+
+.stne-turns-input:focus {
+    outline: none;
+    border-color: var(--stne-btn-primary-bg);
+}
+
+/* ─── Warnings & Errors ──────────────────────────────────────────────────── */
+
+.stne-warn {
+    font-size: 0.8rem;
+    color: var(--stne-warn-fg);
+    background: var(--stne-warn-bg);
+    border-radius: var(--stne-input-radius);
+    padding: 4px 10px;
+}
+
+.stne-recovery-guide ol {
+    margin: 6px 0 0 1.2em;
+    padding: 0;
+    line-height: 1.7;
+}
+
+.stne-error-banner {
+    font-size: 0.82rem;
+    color: var(--stne-error-fg);
+    background: var(--stne-error-bg);
+    border-radius: var(--stne-input-radius);
+    padding: 8px 10px;
+    line-height: 1.4;
+}
+
+.stne-error-inline {
+    font-size: 0.82rem;
+    color: var(--stne-error-fg);
+}
+
+/* ─── Buttons ────────────────────────────────────────────────────────────── */
+
+.stne-buttons {
+    display: flex;
+    gap: var(--stne-gap-sm);
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.stne-wizard-footer {
+    border-top: 1px solid var(--stne-modal-border);
+    padding-top: var(--stne-gap);
+    margin-top: var(--stne-gap);
+}
+
+.stne-btn {
+    padding: var(--stne-btn-pad);
+    border-radius: var(--stne-btn-radius);
+    cursor: pointer;
+    font-size: var(--stne-btn-font);
+    border: 1px solid transparent;
+    transition: opacity 0.15s ease;
+    white-space: nowrap;
+}
+
+.stne-btn:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+}
+
+.stne-btn-primary {
+    background: var(--stne-btn-primary-bg);
+    color: var(--stne-btn-primary-fg);
+    border-color: var(--stne-btn-primary-bg);
+}
+
+.stne-btn-primary:not(:disabled):hover {
+    opacity: 0.85;
+}
+
+.stne-btn-secondary {
+    background: transparent;
+    color: var(--stne-text);
+    border-color: var(--stne-modal-border);
+}
+
+.stne-btn-secondary:not(:disabled):hover {
+    border-color: var(--stne-text-muted);
+}
+
+.stne-btn-danger {
+    background: rgba(224, 85, 85, 0.15);
+    color: var(--stne-error-fg);
+    border-color: rgba(224, 85, 85, 0.3);
+}
+
+.stne-btn-danger:not(:disabled):hover {
+    background: rgba(224, 85, 85, 0.25);
+    border-color: var(--stne-error-fg);
+}
+
+.stne-btn-success {
+    background: rgba(60, 180, 60, 0.15);
+    color: var(--stne-btn-success-fg);
+    border-color: rgba(60, 180, 60, 0.35);
+}
+
+.stne-btn-success:not(:disabled):hover {
+    background: rgba(60, 180, 60, 0.28);
+    border-color: var(--stne-btn-success-fg);
+}
+
+.stne-btn-inline {
+    padding: 2px 8px;
+    font-size: 0.78rem;
+    margin-left: 8px;
+    vertical-align: middle;
+}
+
+.stne-btn-sm {
+    padding: 2px 8px;
+    font-size: 0.78rem;
+}
+
+/* ─── Settings Panel ─────────────────────────────────────────────────────── */
+
+.stne-settings-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--stne-gap);
+    padding: 4px 0 8px;
+}
+
+.stne-settings-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.stne-settings-row label {
+    font-size: 0.8rem;
+    color: var(--stne-text-muted);
+}
+
+.stne-settings-row input[type="number"] {
+    width: 68px;
+    background: var(--stne-input-bg);
+    color: var(--stne-text);
+    border: 1px solid var(--stne-input-border);
+    border-radius: var(--stne-input-radius);
+    padding: var(--stne-input-pad);
+    font-size: 0.85rem;
+}
+
+.stne-settings-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.stne-settings-textarea {
+    width: 100%;
+    height: var(--stne-settings-textarea-h);
+    resize: vertical;
+    box-sizing: border-box;
+    background: var(--stne-input-bg);
+    color: var(--stne-text);
+    border: 1px solid var(--stne-input-border);
+    border-radius: var(--stne-input-radius);
+    padding: var(--stne-input-pad);
+    font-size: 0.75rem;
+    font-family: monospace;
+    line-height: 1.4;
+}
+
+.stne-settings-textarea:focus,
+.stne-settings-row input[type="number"]:focus {
+    outline: none;
+    border-color: var(--stne-btn-primary-bg);
+}
+
+/* ─── Tab Bar ────────────────────────────────────────────────────────────── */
+
+.stne-tab-bar {
+    display: flex;
+    gap: 2px;
+    border-bottom: 1px solid var(--stne-modal-border);
+    margin-bottom: 4px;
+}
+
+.stne-tab-btn {
+    padding: 5px 14px;
+    border-radius: var(--stne-btn-radius) var(--stne-btn-radius) 0 0;
+    cursor: pointer;
+    font-size: var(--stne-btn-font);
+    border: 1px solid transparent;
+    border-bottom: none;
+    background: transparent;
+    color: var(--stne-text-muted);
+    transition: color 0.15s ease, background 0.15s ease;
+}
+
+.stne-tab-btn:hover {
+    color: var(--stne-text);
+}
+
+.stne-tab-active {
+    background: var(--stne-modal-bg);
+    color: var(--stne-text);
+    border-color: var(--stne-modal-border);
+    position: relative;
+    bottom: -1px;
+}
+
+.stne-tab-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--stne-gap);
+}
+
+/* ─── Select & Text Input ────────────────────────────────────────────────── */
+
+.stne-select,
+.stne-input {
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--stne-input-bg);
+    color: var(--stne-text);
+    border: 1px solid var(--stne-input-border);
+    border-radius: var(--stne-input-radius);
+    padding: var(--stne-input-pad);
+    font-size: 0.85rem;
+    font-family: inherit;
+}
+
+.stne-select:focus,
+.stne-input:focus {
+    outline: none;
+    border-color: var(--stne-btn-primary-bg);
+}
+
+/* ─── Ingester Diff Viewer ────────────────────────────────────────────────── */
+
+.stne-ingester-diff {
+    min-height: var(--stne-textarea-h);
+    max-height: calc(var(--stne-textarea-h) * 2);
+    overflow-y: auto;
+    background: var(--stne-input-bg);
+    border: 1px solid var(--stne-input-border);
+    border-radius: var(--stne-input-radius);
+    padding: var(--stne-input-pad);
+    font-size: 0.85rem;
+    font-family: inherit;
+    line-height: 1.45;
+    color: var(--stne-text);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.stne-diff-del {
+    background: rgba(220, 60, 60, 0.35);
+    color: #ffd0d0;
+    text-decoration: line-through;
+}
+
+.stne-diff-ins {
+    background: rgba(60, 180, 60, 0.35);
+    color: #d0ffd0;
+}
+
+/* ─── Left-aligned button row ────────────────────────────────────────────── */
+
+.stne-buttons-left {
+    justify-content: flex-start;
+}
+
+/* ─── Split button row (left group / right group) ────────────────────────── */
+
+.stne-buttons-split {
+    justify-content: space-between;
+}
+
+.stne-btn-group {
+    display: flex;
+    gap: var(--stne-gap-sm);
+}
+
+/* ─── Select + adjacent nav button ──────────────────────────────────────── */
+
+.stne-select-with-nav {
+    display: flex;
+    gap: var(--stne-gap-sm);
+    align-items: stretch;
+}
+
+.stne-select-with-nav .stne-select {
+    flex: 1;
+    min-width: 0;
+}
+
+/* ─── Commit Receipts Panel ──────────────────────────────────────────────── */
+
+.stne-receipts {
+    border: 1px solid var(--stne-modal-border);
+    border-radius: var(--stne-input-radius);
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.stne-receipts-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--stne-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 8px;
+}
+
+.stne-receipts-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.stne-receipt-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.stne-receipt-item {
+    font-size: 0.83rem;
+    line-height: 1.4;
+}
+
+.stne-receipt-item.success {
+    color: #6bbf6b;
+}
+
+.stne-receipt-item.failure {
+    color: var(--stne-error-fg);
+}
+
+.stne-receipt-hint {
+    font-size: 0.76rem;
+    color: var(--stne-text-muted);
+    padding-left: 16px;
+}
+
+/* ─── Settings Section Headers ───────────────────────────────────────────── */
+
+.stne-settings-subgroup {
+    display: flex;
+    flex-direction: column;
+    gap: var(--stne-gap);
+    padding-left: 12px;
+    border-left: 2px solid var(--stne-modal-border);
+    transition: opacity 0.15s ease;
+}
+
+.stne-settings-subgroup.stne-disabled {
+    opacity: 0.38;
+    pointer-events: none;
+}
+
+.stne-settings-section-header {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--stne-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 8px 0 2px;
+    border-top: 1px solid var(--stne-modal-border);
+    margin-top: 4px;
+}
+
+/* ─── RAG Workshop (Step 4) ──────────────────────────────────────────────── */
+
+.stne-mode-note {
+    font-size: 0.82rem;
+    color: var(--stne-text-muted, #888);
+    margin-bottom: 0.6em;
+}
+
+.stne-rag-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.stne-rag-card {
+    border: 1px solid var(--stne-modal-border);
+    border-radius: var(--stne-input-radius);
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.02);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: border-color 0.15s ease;
+}
+
+.stne-rag-card[data-status="stale"] {
+    border-color: rgba(240, 192, 64, 0.45);
+}
+
+.stne-rag-card[data-status="in-flight"] {
+    border-color: rgba(92, 133, 214, 0.45);
+}
+
+.stne-rag-card-header-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.stne-rag-card-header {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.82rem;
+    font-weight: 500;
+    resize: none;
+    overflow: hidden;
+    height: auto;
+    min-height: 1.6em;
+    line-height: 1.4;
+    padding: 3px 6px;
+    box-sizing: border-box;
+    font-family: inherit;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.stne-rag-card-header:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.stne-rag-card-spinner {
+    font-size: 0.72rem;
+    color: var(--stne-text-muted);
+    flex-shrink: 0;
+}
+
+.stne-rag-queue-label {
+    font-size: 0.7rem;
+    color: var(--stne-text-muted);
+    flex-shrink: 0;
+    font-style: italic;
+}
+
+.stne-rag-card-body {
+    font-size: 0.78rem;
+    color: var(--stne-text-muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
+    max-height: 110px;
+    overflow-y: auto;
+    border-top: 1px solid var(--stne-modal-border);
+    padding-top: 6px;
+}
+
+/* Detached raw textarea amber border */
+#stne-rag-raw.stne-rag-detached {
+    border-color: var(--stne-warn-fg);
+}
+
+/* ─── Step 5 RAG Panel ───────────────────────────────────────────────────── */
+
+.stne-rag-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.stne-rag-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    max-height: 116px;
+    overflow-y: auto;
+    padding: 5px 8px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--stne-modal-border);
+    border-radius: var(--stne-input-radius);
+}
+
+.stne-rag-item {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    white-space: normal; 
+    word-break: break-word;
+}
+
+.stne-rag-item--existing  { color: var(--stne-text-muted); }
+.stne-rag-item--pending   { color: #6bbf6b; font-weight: 500; }
+.stne-rag-item--duplicate { color: var(--stne-warn-fg); font-weight: 500; }
+
+/* ─── Auto-trigger Banner ────────────────────────────────────────────────── */
+
+.stne-autotrigger-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 9998;   /* below --stne-z-modal: 9999 */
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    background: var(--stne-warn-bg);
+    border-bottom: 1px solid var(--stne-warn-fg);
+    color: var(--stne-warn-fg);
+    font-size: 0.85rem;
+    box-sizing: border-box;
+}
+
+.stne-autotrigger-banner i {
+    flex-shrink: 0;
+}
+
+#stne-autotrigger-msg {
+    flex: 1;
+}
+
+#stne-autotrigger-open {
+    padding: 3px 12px;
+    border-radius: var(--stne-btn-radius);
+    border: 1px solid var(--stne-warn-fg);
+    background: transparent;
+    color: var(--stne-warn-fg);
+    font-size: 0.82rem;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+#stne-autotrigger-open:hover {
+    background: rgba(240, 192, 64, 0.2);
+}
+
+#stne-autotrigger-dismiss {
+    background: transparent;
+    border: none;
+    color: var(--stne-warn-fg);
+    font-size: 0.9rem;
+    cursor: pointer;
+    flex-shrink: 0;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+#stne-autotrigger-dismiss:hover {
+    opacity: 0.7;
+}
+
+/* ─── Mobile ──────────────────────────────────────────────────────────────── */
+
+@media (max-width: 600px) {
+    :root {
+        --stne-modal-pad: 12px;
+        --stne-modal-width: 100%;
+        --stne-modal-radius: 0px;
+    }
+
+    .stne-overlay {
+        padding: 12px 0 0;
+    }
+
+    .stne-turns-row {
+        flex-wrap: wrap;
+    }
+
+
+}
