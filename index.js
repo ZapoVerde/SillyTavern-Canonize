@@ -166,6 +166,7 @@ let _ragGlobalGenId        = 0;
 let _ragInFlightCount      = 0;
 let _ragCallQueue          = [];
 let _stagedProsePairs      = [];
+let _stagedPairOffset      = 0;   // pairs preceding _stagedProsePairs[0] in the full chat
 let _lastSummaryUsedForRag = null;
 let _splitPairIdx          = 0;
 
@@ -431,7 +432,7 @@ function buildRagDocument(ragChunks) {
  * @param {Array} pairs
  * @returns {Array}
  */
-function buildRagChunks(pairs) {
+function buildRagChunks(pairs, pairOffset = 0) {
     const chunks    = [];
     const settings  = getSettings();
     const useQvink  = (settings.ragSummarySource ?? 'defined') === 'qvink';
@@ -442,8 +443,8 @@ function buildRagChunks(pairs) {
         // Non-overlapping: advance by chunkSize each step
         for (let i = 0; i < pairs.length; i += chunkSize) {
             const window    = pairs.slice(i, i + chunkSize);
-            const turnA     = i + 1;
-            const turnB     = Math.min(i + chunkSize, pairs.length);
+            const turnA     = pairOffset + i + 1;
+            const turnB     = pairOffset + Math.min(i + chunkSize, pairs.length);
             const turnRange = turnA === turnB ? `Turn ${turnA}` : `Turns ${turnA}–${turnB}`;
 
             const content = window
@@ -474,8 +475,8 @@ function buildRagChunks(pairs) {
         for (let i = 0; i < pairs.length; i++) {
             const sliceFrom = Math.max(0, i - overlap);
             const window    = pairs.slice(sliceFrom, i + 1);
-            const turnA     = sliceFrom + 1;
-            const turnB     = i + 1;
+            const turnA     = pairOffset + sliceFrom + 1;
+            const turnB     = pairOffset + i + 1;
             const turnRange = turnA === turnB ? `Turn ${turnA}` : `Turns ${turnA}–${turnB}`;
 
             const content = window
@@ -1561,10 +1562,12 @@ function onEnterRagWorkshop() {
         let windowPairs;
         if (!headNode) {
             // No prior commits — use all pairs up to buffer boundary
-            windowPairs = allPairs;
+            windowPairs       = allPairs;
+            _stagedPairOffset = 0;
         } else {
             // Anchor to the committed head: classify the gap from ledger head to buffer boundary
             const pairStartIdx = allPairs.findIndex(p => p.validIdx >= headNode.sequenceNum);
+            _stagedPairOffset  = pairStartIdx === -1 ? 0 : pairStartIdx;
             windowPairs        = pairStartIdx === -1 ? [] : allPairs.slice(pairStartIdx);
         }
         if (windowPairs.length > 0) {
@@ -1585,7 +1588,7 @@ function onEnterRagWorkshop() {
         const archivePairs = _stagedProsePairs.slice(0, _splitPairIdx);
         console.log(`[CNZ-DBG] onEnterRagWorkshop: building chunks from scratch — archivePairs.length=${archivePairs.length}`);
         if (archivePairs.length > 0) {
-            _ragChunks = buildRagChunks(archivePairs);
+            _ragChunks = buildRagChunks(archivePairs, _stagedPairOffset);
             _splitIndexWhenRagBuilt = _splitPairIdx;
             console.log(`[CNZ-DBG] onEnterRagWorkshop: built ${_ragChunks.length} chunks covering validIdx 0–${_splitPairIdx - 1}`);
             // Labels haven't been rendered yet (no prior sync ran) — render the
@@ -1598,7 +1601,7 @@ function onEnterRagWorkshop() {
             toastr.warning('Sync window has changed — Narrative Memory chunks will be rebuilt.');
             const archivePairs = _stagedProsePairs.slice(0, _splitPairIdx);
             console.log(`[CNZ-DBG] onEnterRagWorkshop: rebuilding chunks (splitIdx changed ${_splitIndexWhenRagBuilt}→${_splitPairIdx}) — archivePairs.length=${archivePairs.length}`);
-            _ragChunks = buildRagChunks(archivePairs);
+            _ragChunks = buildRagChunks(archivePairs, _stagedPairOffset);
             _splitIndexWhenRagBuilt = _splitPairIdx;
         } else {
             console.log(`[CNZ-DBG] onEnterRagWorkshop: reusing ${_ragChunks.length} existing chunks`);
@@ -2505,12 +2508,15 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         // After the allPairs/hookPairs rebuild, ragPairs and hookPairs cover the same range.
         const headNodeForRag = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
         let ragPairs;
+        let ragPairOffset = 0;
         if (!headNodeForRag || coverAll) {
             ragPairs = allPairs;
+            // offset stays 0 — ragPairs starts at the beginning of allPairs
         } else {
             // allPairs already trimmed to trailingBufferBoundary; find first uncommitted pair.
             const firstUncommittedSeq = headNodeForRag.sequenceNum;
             const pairStartIdx        = allPairs.findIndex(p => p.validIdx >= firstUncommittedSeq);
+            ragPairOffset             = pairStartIdx === -1 ? 0 : pairStartIdx;
             ragPairs                  = pairStartIdx === -1 ? [] : allPairs.slice(pairStartIdx);
         }
         // ── DEBUG: previous chunk (ledger head) and RAG window ────────────────
@@ -2631,11 +2637,12 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         try {
             // Set module state for ragFireChunk/ragDrainQueue machinery
             _stagedProsePairs      = ragPairs;
+            _stagedPairOffset      = ragPairOffset;
             _splitPairIdx          = ragPairs.length;      // all gap pairs are archive
             _ragGlobalGenId++;                             // invalidate any stale callbacks
             _ragInFlightCount      = 0;
             _ragCallQueue          = [];
-            _ragChunks             = buildRagChunks(ragPairs);
+            _ragChunks             = buildRagChunks(ragPairs, ragPairOffset);
             _lastSummaryUsedForRag = hookseekerText.trim();
 
             // Pre-populate headers from chat file — skips AI for already-classified chunks
@@ -3297,6 +3304,7 @@ function onChatChanged() {
         _ledgerManifest    = null;
         _lastKnownAvatar   = char?.avatar ?? null;
         _stagedProsePairs  = [];
+        _stagedPairOffset  = 0;
         _splitPairIdx      = 0;
         _ragChunks         = [];
         _splitIndexWhenRagBuilt = null;
