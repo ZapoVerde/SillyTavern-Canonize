@@ -204,6 +204,10 @@ export function buildPromptModalHTML() {
     </div>
     <div id="stne-pm-vars" class="stne-pm-vars"></div>
     <textarea id="stne-pm-textarea" class="stne-textarea stne-pm-textarea" spellcheck="false"></textarea>
+    <div id="stne-pm-trailing-section" class="stne-pm-trailing-section stne-hidden">
+      <label class="stne-label stne-pm-trailing-label" for="stne-pm-trailing-textarea">Trailing prompt</label>
+      <textarea id="stne-pm-trailing-textarea" class="stne-textarea stne-pm-trailing-textarea" spellcheck="false" placeholder="e.g. Pay special attention to …"></textarea>
+    </div>
     <div class="stne-buttons stne-wizard-footer">
       <button id="stne-pm-close" class="stne-btn stne-btn-secondary">Close</button>
     </div>

@@ -2431,36 +2431,60 @@ async function runHealer(char, _chatFileName) {
  * Opens the prompt-editor popup for a given settings key.
  * Changes are saved live on input; the modal is closed with the Close button
  * or by clicking the overlay backdrop.
- * @param {string} settingsKey  Key in extension_settings[EXT_NAME] to read/write.
- * @param {string} title        Title displayed in the modal header.
- * @param {string} defaultValue Value used by the "Reset to Default" button.
+ * @param {string}      settingsKey        Key in extension_settings[EXT_NAME] to read/write.
+ * @param {string}      title              Title displayed in the modal header.
+ * @param {string}      defaultValue       Value used by the "Reset to Default" button.
+ * @param {string[]}    vars               Template variable names to display as badges.
+ * @param {string|null} trailingPromptKey  Optional settings key for a trailing prompt shown below the main textarea.
  */
-function openPromptModal(settingsKey, title, defaultValue, vars = []) {
-    const $overlay  = $('#stne-pm-overlay');
-    const $textarea = $('#stne-pm-textarea');
-    const $titleEl  = $('#stne-pm-title');
-    const $reset    = $('#stne-pm-reset');
-    const $close    = $('#stne-pm-close');
-    const $vars     = $('#stne-pm-vars');
+function openPromptModal(settingsKey, title, defaultValue, vars = [], trailingPromptKey = null) {
+    const $overlay         = $('#stne-pm-overlay');
+    const $textarea        = $('#stne-pm-textarea');
+    const $titleEl         = $('#stne-pm-title');
+    const $reset           = $('#stne-pm-reset');
+    const $close           = $('#stne-pm-close');
+    const $vars            = $('#stne-pm-vars');
+    const $trailingSection = $('#stne-pm-trailing-section');
+    const $trailingArea    = $('#stne-pm-trailing-textarea');
 
     $titleEl.text(title);
     $textarea.val(getSettings()[settingsKey] ?? defaultValue);
     $vars.html(vars.map(v => `<code class="stne-pm-var">{{${v}}}</code>`).join(' '));
 
+    if (trailingPromptKey) {
+        $trailingArea.val(getSettings()[trailingPromptKey] ?? '');
+        $trailingSection.removeClass('stne-hidden');
+    } else {
+        $trailingSection.addClass('stne-hidden');
+    }
+
     // Unbind any previous open's handlers before re-binding
     $textarea.off('input.pm');
+    $trailingArea.off('input.pm');
     $reset.off('click.pm');
     $close.off('click.pm');
     $overlay.off('click.pm');
+    $('#stne-pm-modal').off('click.pm').on('click.pm', e => e.stopPropagation());
 
     $textarea.on('input.pm', function () {
         getSettings()[settingsKey] = $(this).val();
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
+    if (trailingPromptKey) {
+        $trailingArea.on('input.pm', function () {
+            getSettings()[trailingPromptKey] = $(this).val();
+            saveSettingsDebounced(); updateDirtyIndicator();
+        });
+    }
+
     $reset.on('click.pm', function () {
         getSettings()[settingsKey] = defaultValue;
         $textarea.val(defaultValue);
+        if (trailingPromptKey) {
+            getSettings()[trailingPromptKey] = '';
+            $trailingArea.val('');
+        }
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
@@ -2588,7 +2612,7 @@ function bindSettingsHandlers() {
 
     $('#stne-edit-summary-prompt').on('click', () =>
         openPromptModal('hookseekerPrompt', 'Edit Summary Prompt', DEFAULT_HOOKSEEKER_PROMPT,
-            ['transcript', 'prev_summary']));
+            ['transcript', 'prev_summary'], 'hookseekerTrailingPrompt'));
 
     $('#stne-edit-lorebook-prompt').on('click', () =>
         openPromptModal('lorebookSyncPrompt', 'Edit Lorebook Sync Prompt', DEFAULT_LOREBOOK_SYNC_PROMPT,

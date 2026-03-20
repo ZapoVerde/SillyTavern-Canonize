@@ -785,6 +785,26 @@
     resize: vertical;
 }
 
+.stne-pm-trailing-section {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.stne-pm-trailing-label {
+    font-size: 0.8rem;
+    opacity: 0.8;
+}
+
+.stne-pm-trailing-textarea {
+    height: 100px;
+    font-size: 0.8rem;
+    font-family: monospace;
+    line-height: 1.45;
+    resize: vertical;
+}
+
 .stne-pm-vars {
     display: flex;
     flex-wrap: wrap;
