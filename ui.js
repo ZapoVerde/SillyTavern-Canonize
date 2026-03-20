@@ -260,6 +260,11 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
           <button id="cnz-profile-delete" class="cnz-btn cnz-btn-danger    cnz-btn-sm" title="Delete this profile">&#x1F5D1;&#xFE0F;</button>
         </div>
 
+        <!-- ── Character-state controls ── -->
+        <div class="cnz-settings-row">
+          <button id="cnz-purge-ledger" class="cnz-btn cnz-btn-danger" title="Clear all CNZ sync history for the current character">Purge Ledger</button>
+        </div>
+
         <!-- ── Summary / Lorebook ── -->
         <div class="cnz-settings-row">
           <label for="cnz-set-profile">Summary Connection Profile ${tip('AI connection used for narrative hook (summary) and lorebook sync calls. Leave blank to use the global connection.')}</label>

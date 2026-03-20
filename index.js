@@ -1558,52 +1558,27 @@ function onEnterRagWorkshop() {
         const lcb        = settings.liveContextBuffer ?? 5;
         const tbb        = Math.max(0, totalNS - lcb);
 
-        // ── DIAGNOSTIC: fallback seeding ─────────────────────────────────────
-        {
-            const rawChatLen    = SillyTavern.getContext().chat?.length ?? 'n/a';
-            const fullPairs     = buildProsePairs(messages);
-            const filteredPairs = fullPairs.filter(p => p.validIdx < tbb);
-            console.log(
-                `[CNZ-DBG] fallback diagnostic:\n` +
-                `  messages.length (raw chat array) = ${messages.length}\n` +
-                `  SillyTavern.getContext().chat?.length = ${rawChatLen}\n` +
-                `  totalNS = ${totalNS}\n` +
-                `  lcb = ${lcb}\n` +
-                `  tbb = Math.max(0, ${totalNS} - ${lcb}) = ${tbb}\n` +
-                `  messages[0]: is_system=${messages[0]?.is_system} is_user=${messages[0]?.is_user} name=${messages[0]?.name}\n` +
-                `  fullPairs.length = ${fullPairs.length}` +
-                (fullPairs.length > 0
-                    ? ` (validIdx ${fullPairs[0].validIdx}–${fullPairs[fullPairs.length - 1].validIdx})`
-                    : '') + `\n` +
-                `  fullPairs validIdx values: [${fullPairs.map(p => p.validIdx).join(', ')}]\n` +
-                `  filteredPairs.length (validIdx < ${tbb}) = ${filteredPairs.length}`
-            );
-            const headNodeDbg = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
-            if (headNodeDbg) {
-                const anchorIdx = fullPairs.findIndex(p => p.validIdx >= headNodeDbg.sequenceNum);
-                console.log(
-                    `[CNZ-DBG] fallback diagnostic (headNode):\n` +
-                    `  headNode.sequenceNum = ${headNodeDbg.sequenceNum}\n` +
-                    `  allPairs.findIndex(p => p.validIdx >= headNode.sequenceNum) = ${anchorIdx}`
-                );
-            } else {
-                console.log('[CNZ-DBG] fallback diagnostic: headNode = none (never committed)');
-            }
-        }
-        // ─────────────────────────────────────────────────────────────────────
-
-        const allPairs   = buildProsePairs(messages).filter(p => p.validIdx < tbb);
-        const headNode   = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
+        const filteredPairs = buildProsePairs(messages).filter(p => p.validIdx < tbb);
+        const headNode      = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
         let windowPairs;
         if (!headNode) {
             // No prior commits — use all pairs up to buffer boundary
-            windowPairs       = allPairs;
+            windowPairs       = filteredPairs;
             _stagedPairOffset = 0;
         } else {
-            // Anchor to the committed head: classify the gap from ledger head to buffer boundary
-            const pairStartIdx = allPairs.findIndex(p => p.validIdx >= headNode.sequenceNum);
+            // Anchor to the committed head: classify the gap from ledger head to buffer boundary.
+            // If the ledger head is already at or beyond tbb there is nothing uncommitted below
+            // the buffer to classify — show a message rather than a blank workshop.
+            if (headNode.sequenceNum >= tbb) {
+                console.log(`[CNZ-DBG] onEnterRagWorkshop fallback: ledger head seqNum=${headNode.sequenceNum} >= tbb=${tbb} — nothing to classify`);
+                toastr.info('CNZ: All available turns are either committed or in the live buffer. Nothing to classify yet.');
+                return;
+            }
+            // Run findIndex against filteredPairs (already trimmed to tbb), not the full pair list,
+            // so the returned index is valid as a slice offset into the same array.
+            const pairStartIdx = filteredPairs.findIndex(p => p.validIdx >= headNode.sequenceNum);
             _stagedPairOffset  = pairStartIdx === -1 ? 0 : pairStartIdx;
-            windowPairs        = pairStartIdx === -1 ? [] : allPairs.slice(pairStartIdx);
+            windowPairs        = pairStartIdx === -1 ? [] : filteredPairs.slice(pairStartIdx);
         }
         if (windowPairs.length > 0) {
             _stagedProsePairs = windowPairs;
@@ -3213,6 +3188,96 @@ function bindSettingsHandlers() {
         saveSettingsDebounced();
         refreshProfileDropdown();
         refreshSettingsUI();
+    });
+
+    $('#cnz-purge-ledger').on('click', async function () {
+        // Guard conditions
+        if (_syncInProgress) {
+            toastr.warning('CNZ: Sync in progress — wait for it to complete before purging.');
+            return;
+        }
+        const ctx  = SillyTavern.getContext();
+        const char = ctx?.characters?.[ctx?.characterId];
+        if (!char) {
+            toastr.error('CNZ: No character selected.');
+            return;
+        }
+
+        // Confirmation modal — names the character and lists exactly what will be deleted.
+        const confirmed = await callPopup(`
+<h3>Purge CNZ Ledger</h3>
+<p>You are about to purge the CNZ sync history for:</p>
+<p><strong>${escapeHtml(char.name)}</strong></p>
+<p>This will permanently delete:</p>
+<ul>
+  <li>The narrative ledger and all committed sync points</li>
+  <li>The last sync position (next sync will start fresh)</li>
+  <li>Stored chunk classification headers in this chat (optional — see checkbox below)</li>
+</ul>
+<p>This cannot be undone. The character's lorebook and hookseeker summary are <strong>NOT</strong> affected — only the sync tracking is cleared.</p>
+<label style="display:flex;align-items:center;gap:0.5em;margin-top:0.75em;">
+  <input type="checkbox" id="cnz-purge-clear-headers" checked>
+  Also clear stored chunk headers from chat messages
+</label>`,
+            'confirm',
+        );
+        if (!confirmed) return;
+
+        const clearHeaders = document.getElementById('cnz-purge-clear-headers')?.checked ?? true;
+
+        // 1. Delete the ledger file from the Data Bank
+        const meta       = getMetaSettings();
+        const ledgerPath = meta.ledgerPaths?.[char.avatar];
+        if (ledgerPath) {
+            try {
+                await fetch('/api/files/delete', {
+                    method:  'POST',
+                    headers: getRequestHeaders(),
+                    body:    JSON.stringify({ path: ledgerPath }),
+                });
+            } catch (err) {
+                console.warn('[CNZ] Purge: ledger file delete failed (continuing):', err);
+            }
+        }
+
+        // 2. Clear the ledger path from settings
+        delete meta.ledgerPaths[char.avatar];
+        saveSettingsDebounced();
+
+        // 3. Reset in-memory ledger state
+        _ledgerManifest = null;
+        _sessionStartId = null;
+
+        // 4. Reset lastLorebookSyncAt
+        meta.lastLorebookSyncAt = null;
+        saveSettingsDebounced();
+
+        // 5. Optionally clear chunk headers from chat messages
+        if (clearHeaders) {
+            const chat = ctx.chat ?? [];
+            let modified = false;
+            for (const msg of chat) {
+                if (msg.extra?.cnz_chunk_header !== undefined || msg.extra?.cnz_turn_label !== undefined) {
+                    delete msg.extra.cnz_chunk_header;
+                    delete msg.extra.cnz_turn_label;
+                    modified = true;
+                }
+            }
+            if (modified) {
+                ctx.saveChat().catch(err => console.error('[CNZ] Purge: saveChat failed:', err));
+            }
+        }
+
+        // 6. Reset staged pairs and chunks
+        _stagedProsePairs       = [];
+        _splitPairIdx           = 0;
+        _stagedPairOffset       = 0;
+        _ragChunks              = [];
+        _splitIndexWhenRagBuilt = null;
+        clearChunkChatLabels();
+
+        // 7. Report
+        toastr.success('CNZ: Ledger purged — next sync will treat this character as new.');
     });
 }
 
