@@ -19,8 +19,8 @@
  *   - Ledger node committed after each successful sync
  */
 
-import { generateRaw, saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup } from '../../../../script.js';
-import { extension_settings } from '../../../extensions.js';
+import { generateRaw, saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup, chat_metadata } from '../../../../script.js';
+import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
 import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML } from './ui.js';
 
@@ -843,20 +843,17 @@ async function uploadRagFile(text, fileName) {
  * @param {string} fileName Human-readable file name.
  * @param {number} byteSize Byte length of the uploaded text.
  */
-function registerCharacterAttachment(key, url, fileName, byteSize) {
-    if (!extension_settings.character_attachments) {
-        extension_settings.character_attachments = {};
+function registerCharacterAttachment(_key, url, fileName, byteSize) {
+    if (!Array.isArray(chat_metadata.attachments)) {
+        chat_metadata.attachments = [];
     }
-    if (!Array.isArray(extension_settings.character_attachments[key])) {
-        extension_settings.character_attachments[key] = [];
-    }
-    extension_settings.character_attachments[key].push({
+    chat_metadata.attachments.push({
         url,
         size:    byteSize,
         name:    fileName,
         created: Date.now(),
     });
-    saveSettingsDebounced();
+    saveMetadataDebounced();
 }
 
 // ─── LLM Calls ────────────────────────────────────────────────────────────────
@@ -2015,7 +2012,7 @@ function populateRagPanel() {
     const context = SillyTavern.getContext();
     const char    = context.characters[context.characterId];
     if (!char || !getSettings().enableRag) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
-    const allAttachments = extension_settings.character_attachments?.[char.chat] ?? [];
+    const allAttachments = chat_metadata.attachments ?? [];
     if (!allAttachments.length) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
     const rows = allAttachments.map(a =>
         `<div class="cnz-rag-item cnz-rag-item--existing">&#x2713; ${escapeHtml(a.name.replace(/\.txt$/i, ''))}</div>`,
