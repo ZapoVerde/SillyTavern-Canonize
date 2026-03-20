@@ -28,8 +28,8 @@ import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML } from './ui.js
 
 const EXT_NAME            = 'cnz';
 const DEFAULT_CONCURRENCY = 5;
-const HOOKS_START         = '<!-- CNZ_HOOKS_START -->';
-const HOOKS_END           = '<!-- CNZ_HOOKS_END -->';
+const HOOKS_START         = '<!-- Current Scenario State -->';
+const HOOKS_END           = '<!--  -->';
 
 const DEFAULT_LOREBOOK_SYNC_PROMPT = `
 [SYSTEM: TASK — LOREBOOK CURATOR]
