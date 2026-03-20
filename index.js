@@ -1641,9 +1641,21 @@ function buildModalTranscript(horizonTurns) {
  * @returns {string}
  */
 function buildSyncWindowTranscript(horizonTurns) {
-    const allPairs = _stagedProsePairs.length > 0
-        ? _stagedProsePairs.slice(0, _splitPairIdx)
-        : buildProsePairs(SillyTavern.getContext().chat ?? []);
+    let allPairs;
+    if (_stagedProsePairs.length > 0) {
+        allPairs = _stagedProsePairs.slice(0, _splitPairIdx);
+    } else {
+        // Fallback: build from live chat, but honour syncFromTurn
+        const settings = getSettings();
+        const syncFrom = Math.max(1, settings.syncFromTurn ?? 1);
+        const messages = SillyTavern.getContext().chat ?? [];
+        let nsIdx = 0;
+        const messagesFromTurn = messages.filter(m => {
+            if (!m.is_system) nsIdx++;
+            return m.is_system || nsIdx >= syncFrom;
+        });
+        allPairs = buildProsePairs(messagesFromTurn);
+    }
     const windowPairs = allPairs.slice(-horizonTurns);
     const windowMsgs  = windowPairs.flatMap(p => [p.user, p.ai]);
     return buildTranscript(windowMsgs);
