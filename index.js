@@ -145,6 +145,10 @@ let _sessionStartId = null;  // headNodeId captured at session start
 // Concurrency guard — prevents overlapping syncs
 let _syncInProgress = false;
 
+// Set to true while CNZ itself drives a generateWithProfile/generateRaw call so
+// the CHAT_COMPLETION_PROMPT_READY handler knows to skip the context mask.
+let _cnzGenerating = false;
+
 // Large-gap snooze — suppress the top-up offer until this non-system count is exceeded
 let _snoozeUntilCount = 0;
 
@@ -829,12 +833,17 @@ function registerCharacterAttachment(key, url, fileName, byteSize) {
 // ─── LLM Calls ────────────────────────────────────────────────────────────────
 
 async function generateWithProfile(prompt, maxTokens = null) {
-    const profileId = getSettings().profileId;
-    if (profileId) {
-        const result = await ConnectionManagerRequestService.sendRequest(profileId, prompt, maxTokens);
-        return result.content;
+    _cnzGenerating = true;
+    try {
+        const profileId = getSettings().profileId;
+        if (profileId) {
+            const result = await ConnectionManagerRequestService.sendRequest(profileId, prompt, maxTokens);
+            return result.content;
+        }
+        return generateRaw({ prompt, trimNames: false, responseLength: maxTokens });
+    } finally {
+        _cnzGenerating = false;
     }
-    return generateRaw({ prompt, trimNames: false, responseLength: maxTokens });
 }
 
 /**
@@ -3341,6 +3350,7 @@ async function init() {
     eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
     eventSource.on(event_types.CHAT_CHANGED,     onChatChanged);
     eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, (data) => {
+        if (_cnzGenerating) return;  // skip mask for CNZ's own internal AI calls
         const syncFrom = Math.max(1, getSettings().syncFromTurn ?? 1);
         if (syncFrom <= 1) return;
         let nsCount = 0;
