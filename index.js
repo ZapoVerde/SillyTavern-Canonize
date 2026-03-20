@@ -2253,7 +2253,7 @@ function closeModal() {
     _finalizeSteps.ragSaved      = false;
 }
 
-function initWizardSession() {
+function initWizardSession(preserveSuggestions = false) {
     $('#cnz-lb-title').text(`Lorebook: ${_lorebookName}`);
     $('#cnz-lb-freeform').val('');
     $('#cnz-lb-error').addClass('cnz-hidden').text('');
@@ -2276,10 +2276,12 @@ function initWizardSession() {
     $('#cnz-rag-tab-sectioned').removeClass('cnz-hidden');
     $('#cnz-rag-tab-raw').addClass('cnz-hidden');
     // Lorebook ingester reset
-    _lorebookSuggestions        = [];
-    _lbActiveIngesterIndex      = 0;
-    _lorebookFreeformLastParsed = null;
-    _lorebookRawText            = '';
+    if (!preserveSuggestions) {
+        _lorebookSuggestions        = [];
+        _lbActiveIngesterIndex      = 0;
+        _lorebookFreeformLastParsed = null;
+        _lorebookRawText            = '';
+    }
     // Finalize step flags
     _finalizeSteps.lorebookSaved = false;
     _finalizeSteps.ragSaved      = false;
@@ -2336,11 +2338,14 @@ async function openReviewModal() {
         );
     }
 
-    // Populate hooks from committed state (scenario anchor block)
-    const hooksText = extractHookseekerBlock(char.scenario ?? '');
+    // Populate hooks from committed state (scenario anchor block).
+    // Re-fetch the character to pick up any scenario patch written during a
+    // background sync that may not yet be reflected in the original char ref.
+    const freshChar = SillyTavern.getContext().characters.find(c => c.avatar === char.avatar);
+    const hooksText = extractHookseekerBlock((freshChar ?? char).scenario ?? '');
     $('#cnz-situation-text').val(hooksText ?? '');
 
-    initWizardSession();
+    initWizardSession(true);
     showModal();
     updateWizard(1);
 }
@@ -2712,12 +2717,13 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         // ── 9. Report outcome ─────────────────────────────────────────────────
         if (lbOk && hooksOk && ragUrl) {
             toastr.success(
-                `CNZ: Chunk ${nonSystemCount} synced. <a href="#" id="cnz-review-link">Review</a>`,
+                `CNZ: Chunk ${nonSystemCount} synced. <a href="#" class="cnz-review-link">Review</a>`,
                 '',
                 { timeOut: 8000, escapeHtml: false },
             );
-            $(document).one('click', '#cnz-review-link', (e) => {
+            $(document).on('click', '.cnz-review-link', function onCnzReviewClick(e) {
                 e.preventDefault();
+                $(document).off('click', '.cnz-review-link', onCnzReviewClick);
                 openReviewModal();
             });
         } else {
@@ -3469,47 +3475,39 @@ async function onWandButtonClick() {
     const char         = ctx.characters[ctx.characterId];
     const messages     = ctx.chat ?? [];
     const currentCount = messages.filter(m => !m.is_system).length;
-    const lastSyncAt   = getMetaSettings().lastLorebookSyncAt;
     const windowSize   = getSettings().chunkEveryN ?? 20;
-    const gap          = lastSyncAt != null ? currentCount - lastSyncAt : Infinity;
+    const lcb          = getSettings().liveContextBuffer ?? 5;
+    const tbb          = Math.max(0, currentCount - lcb);
+    const ledgerHead   = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
+    const gap          = ledgerHead != null ? tbb - ledgerHead.sequenceNum : Infinity;
 
     // ── DEBUG: manual trigger state ───────────────────────────────────────────
-    {
-        const lcb         = getSettings().liveContextBuffer ?? 5;
-        const tbb         = Math.max(0, currentCount - lcb);
-        const ledgerHead  = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
-        console.log(
-            `[CNZ-DBG] ═══ MANUAL TRIGGER ═══\n` +
-            `  char:                ${char.name}\n` +
-            `  total turns:         ${currentCount} non-system\n` +
-            `  liveContextBuffer:   ${lcb}  →  trailingBufferBoundary=${tbb}\n` +
-            `  lastSyncAt:          ${lastSyncAt ?? 'never'}\n` +
-            `  gap:                 ${isFinite(gap) ? gap : '∞ (never synced)'}\n` +
-            `  windowSize:          ${windowSize}\n` +
-            `  ledger head:         ${ledgerHead ? `nodeId=${ledgerHead.nodeId} seqNum=${ledgerHead.sequenceNum}` : 'none (never committed)'}`
-        );
-    }
+    console.log(
+        `[CNZ-DBG] ═══ MANUAL TRIGGER ═══\n` +
+        `  char:                ${char.name}\n` +
+        `  total turns:         ${currentCount} non-system\n` +
+        `  liveContextBuffer:   ${lcb}  →  trailingBufferBoundary=${tbb}\n` +
+        `  gap:                 ${isFinite(gap) ? gap : '∞ (never synced)'}\n` +
+        `  windowSize:          ${windowSize}\n` +
+        `  ledger head:         ${ledgerHead ? `nodeId=${ledgerHead.nodeId} seqNum=${ledgerHead.sequenceNum}` : 'none (never committed)'}`
+    );
 
     // ── DEBUG: PLANNED WINDOWS (what SHOULD go to each AI, computed from current state) ──
     {
-        const _lcb = getSettings().liveContextBuffer ?? 5;
-        const _tbb = Math.max(0, currentCount - _lcb);
-
         // All pairs up to the trailing buffer boundary
-        const _allPairs = buildProsePairs(messages).filter(p => p.validIdx < _tbb);
+        const _allPairs = buildProsePairs(messages).filter(p => p.validIdx < tbb);
 
         // Hook window: full gap from ledger head to buffer boundary (standard, non-coverAll)
-        const _ledgerHead = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
         let _hookPairs;
-        if (!_ledgerHead) {
+        if (!ledgerHead) {
             _hookPairs = _allPairs;
         } else {
-            const _startIdx = _allPairs.findIndex(p => p.validIdx >= _ledgerHead.sequenceNum);
+            const _startIdx = _allPairs.findIndex(p => p.validIdx >= ledgerHead.sequenceNum);
             _hookPairs = _startIdx === -1 ? [] : _allPairs.slice(_startIdx);
         }
 
         // Live context (buffer) turns — NOT sent to any AI
-        const _livePairs = buildProsePairs(messages).filter(p => p.validIdx >= _tbb);
+        const _livePairs = buildProsePairs(messages).filter(p => p.validIdx >= tbb);
 
         // Lorebook window
         const _lbMode    = getSettings().lorebookSyncStart ?? 'syncTurn';
@@ -3521,17 +3519,17 @@ async function onWandButtonClick() {
                 if (!m.is_system) _nsL++;
                 return m.is_system || _nsL > _lastSyncT;
             });
-            _lbPairs = buildProsePairs(_msgsFromLastSync).filter(p => p.validIdx < _tbb);
+            _lbPairs = buildProsePairs(_msgsFromLastSync).filter(p => p.validIdx < tbb);
         } else {
             _lbPairs = null; // same as hook window
         }
 
         // RAG window: the full uncommitted gap
         let _ragPairs;
-        if (!_ledgerHead) {
+        if (!ledgerHead) {
             _ragPairs = _allPairs;
         } else {
-            const _startIdx = _allPairs.findIndex(p => p.validIdx >= _ledgerHead.sequenceNum);
+            const _startIdx = _allPairs.findIndex(p => p.validIdx >= ledgerHead.sequenceNum);
             _ragPairs       = _startIdx === -1 ? [] : _allPairs.slice(_startIdx);
         }
 
@@ -3541,26 +3539,26 @@ async function onWandButtonClick() {
 
         console.log(
             `[CNZ-DBG] ═══ PLANNED WINDOWS (standard window — what SHOULD be sent) ═══\n` +
-            `\n  CONTEXT MASK — turns hidden from main AI prompt (ledger head seqNum=${_ledgerHead?.sequenceNum ?? 'none'}):\n` +
+            `\n  CONTEXT MASK — turns hidden from main AI prompt (ledger head seqNum=${ledgerHead?.sequenceNum ?? 'none'}):\n` +
             `      (determined by ledger head — see CHAT_COMPLETION_PROMPT_READY handler)` +
-            `\n\n  LIVE CONTEXT BUFFER — last ${_lcb} turns, NOT sent to any AI:\n` +
+            `\n\n  LIVE CONTEXT BUFFER — last ${lcb} turns, NOT sent to any AI:\n` +
             `      ` + _fmt(_livePairs) +
             `\n\n  HOOKSEEKER AI — gap from ledger head to buffer boundary (${_hookPairs.length} pairs):\n` +
             `      ` + _fmt(_hookPairs) +
             `\n\n  LOREBOOK AI — ${_lbPairs ? `lastSync mode, from after turn ${_lastSyncT} (${_lbPairs.length} pairs)` : `same window as hookseeker (${_hookPairs.length} pairs)`}:\n` +
             `      ` + (_lbPairs ? _fmt(_lbPairs) : '(same as hookseeker)') +
-            `\n\n  RAG SUMMARIZER — gap chunk${_ledgerHead ? ` after seqNum=${_ledgerHead.sequenceNum}` : ' (first sync — all turns)'} (${_ragPairs.length} pairs):\n` +
+            `\n\n  RAG SUMMARIZER — gap chunk${ledgerHead ? ` after seqNum=${ledgerHead.sequenceNum}` : ' (first sync — all turns)'} (${_ragPairs.length} pairs):\n` +
             `      ` + _fmt(_ragPairs)
         );
     }
 
     // Already covered — open modal with the existing dataset.
-    if (gap < windowSize) {
+    if (gap <= windowSize) {
         openReviewModal();
         return;
     }
 
-    // Gap >= windowSize: a full new window (or more) has accumulated.
+    // Gap > windowSize: more than a full window has accumulated.
     // Ask the user how much to cover.
     let coverAll = false;
     if (isFinite(gap)) {
