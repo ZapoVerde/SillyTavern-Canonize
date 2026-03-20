@@ -213,11 +213,13 @@ export function buildPromptModalHTML() {
 
 /**
  * Returns the HTML for the Canonize extensions settings panel.
- * @param {object}   settings   Current extension settings object (read-only snapshot).
- * @param {Function} escapeHtml HTML-escape utility passed from caller.
+ * @param {object}   settings        activeState snapshot (read-only).
+ * @param {Function} escapeHtml      HTML-escape utility passed from caller.
+ * @param {string[]} profileNames    Ordered list of saved profile names.
+ * @param {string}   currentProfile  Name of the currently active profile.
  * @returns {string}
  */
-export function buildSettingsHTML(settings, escapeHtml) {
+export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default'], currentProfile = 'Default') {
     const s = settings;
     const ragContents      = s.ragContents      ?? 'summary+full';
     const ragSummarySource = s.ragSummarySource ?? 'defined';
@@ -228,6 +230,10 @@ export function buildSettingsHTML(settings, escapeHtml) {
     // Shorthand for the info icon — keeps the template readable
     const tip = (text) => `<span class="stne-info-icon" title="${escapeHtml(text)}">&#9432;</span>`;
 
+    const profileOptions = profileNames
+        .map(n => `<option value="${escapeHtml(n)}"${n === currentProfile ? ' selected' : ''}>${escapeHtml(n)}</option>`)
+        .join('');
+
     return `
 <div id="stne-settings" class="extension_settings">
   <div class="inline-drawer">
@@ -237,6 +243,15 @@ export function buildSettingsHTML(settings, escapeHtml) {
     </div>
     <div class="inline-drawer-content">
       <div class="stne-settings-group">
+
+        <!-- ── Profile bar ── -->
+        <div class="stne-settings-row stne-profile-bar">
+          <select id="stne-profile-select" class="stne-select stne-profile-select" title="Active settings profile">${profileOptions}</select>
+          <button id="stne-profile-save"   class="stne-btn stne-btn-secondary stne-btn-sm" title="Save current settings to this profile">&#x1F4BE;</button>
+          <button id="stne-profile-add"    class="stne-btn stne-btn-secondary stne-btn-sm" title="Save as new profile">&#x2795;</button>
+          <button id="stne-profile-rename" class="stne-btn stne-btn-secondary stne-btn-sm" title="Rename this profile">&#x270F;&#xFE0F;</button>
+          <button id="stne-profile-delete" class="stne-btn stne-btn-danger    stne-btn-sm" title="Delete this profile">&#x1F5D1;&#xFE0F;</button>
+        </div>
 
         <!-- ── Summary / Lorebook ── -->
         <div class="stne-settings-row">

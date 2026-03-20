@@ -6,7 +6,7 @@
 # 📜 Canonize for SillyTavern
 ### *The Autonomous Narrative Engine*
 
-**Canonize** is a background continuity service designed to keep long-running stories coherent, lightweight, and immortal. Unlike traditional "chapter" tools that force you to reset your chat or duplicate your characters, Canonize works silently in the background while you write.
+**Canonize** is a background continuity service designed to keep long-running stories coherent, lightweight, and immortal. Canonize works silently in the background while you write.
 
 By extracting lore snapshots and building narrative memory (RAG) every 20 turns, Canonize ensures your AI always has "The Long View" of the plot without the "Context Bloat" that causes slow responses and forgetfulness.
 

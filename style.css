@@ -868,6 +868,18 @@
     gap: var(--stne-gap-sm);
 }
 
+/* Profile management bar */
+.stne-profile-bar {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--stne-gap-sm);
+}
+
+.stne-profile-select {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
 /* Info icon (ℹ) shown next to setting labels */
 .stne-info-icon {
     display: inline-block;

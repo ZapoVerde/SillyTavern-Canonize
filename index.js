@@ -106,30 +106,33 @@ TARGET TURNS:
 {{target_turns}}
 `;
 
-const SETTINGS_DEFAULTS = Object.freeze({
-    chunkEveryN:           20,
-    hookseekerHorizon:     70,
-    autoSync:              true,
-    profileId:             null,
+// Profile-level configuration keys — saved per profile, loaded into activeState.
+// Meta-state keys (lastLorebookSyncAt, ledgerPaths, profiles, currentProfileName,
+// activeState) live at the root of extension_settings[EXT_NAME] and are never
+// included in a profile object.
+const PROFILE_DEFAULTS = Object.freeze({
+    chunkEveryN:              20,
+    hookseekerHorizon:        70,
+    autoSync:                 true,
+    profileId:                null,
     // Summary / Lorebook
-    syncFromTurn:          1,
-    lorebookSyncStart:     'syncTurn',   // 'syncTurn' | 'lastSync'
-    lastLorebookSyncAt:    null,         // non-system message count at last lorebook sync
-    lorebookSyncPrompt:    DEFAULT_LOREBOOK_SYNC_PROMPT,
-    hookseekerPrompt:          DEFAULT_HOOKSEEKER_PROMPT,
-    hookseekerTrailingPrompt:  '',
+    syncFromTurn:             1,
+    lorebookSyncStart:        'syncTurn',   // 'syncTurn' | 'lastSync'
+    lorebookSyncPrompt:       DEFAULT_LOREBOOK_SYNC_PROMPT,
+    hookseekerPrompt:         DEFAULT_HOOKSEEKER_PROMPT,
+    hookseekerTrailingPrompt: '',
     // Rolling trim
-    pruneOnSync:           false,        // delete canonized turns after each sync
+    pruneOnSync:              false,
     // RAG
-    enableRag:             false,
-    ragSeparator:          '',           // prepended to each chunk; default '***' when blank
-    ragContents:           'summary+full', // 'summary+full' | 'summary' | 'full'
-    ragSummarySource:      'defined',    // 'defined' | 'qvink'
-    ragProfileId:          null,
-    ragMaxTokens:          100,
-    ragChunkSize:          2,            // pairs per chunk when source='defined'
-    ragChunkOverlap:       0,            // 0=none | 1=1-turn | 2=2-turn (defined mode only)
-    ragClassifierPrompt:   DEFAULT_RAG_CLASSIFIER_PROMPT,
+    enableRag:                false,
+    ragSeparator:             '',
+    ragContents:              'summary+full',
+    ragSummarySource:         'defined',
+    ragProfileId:             null,
+    ragMaxTokens:             100,
+    ragChunkSize:             2,
+    ragChunkOverlap:          0,
+    ragClassifierPrompt:      DEFAULT_RAG_CLASSIFIER_PROMPT,
 });
 
 // ─── Session State ─────────────────────────────────────────────────────────────
@@ -188,38 +191,64 @@ const _finalizeSteps = { lorebookSaved: false, ragSaved: false };
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
+/** Returns the active profile configuration. The engine always reads from here. */
 function getSettings() {
+    return extension_settings[EXT_NAME].activeState;
+}
+
+/** Returns the root settings object (profiles dict, meta-state, ledger paths). */
+function getMetaSettings() {
     return extension_settings[EXT_NAME];
 }
 
 function initSettings() {
-    extension_settings[EXT_NAME] = Object.assign(
-        {},
-        SETTINGS_DEFAULTS,
-        extension_settings[EXT_NAME],
-    );
-    const s = extension_settings[EXT_NAME];
-    // ── Migrate removed keys ───────────────────────────────────────────────
-    // factFinderPrompt → lorebookSyncPrompt
-    if (s.factFinderPrompt !== undefined && s.lorebookSyncPrompt === DEFAULT_LOREBOOK_SYNC_PROMPT) {
-        s.lorebookSyncPrompt = s.factFinderPrompt;
-    }
-    delete s.factFinderPrompt;
-    // ragSummaryOnly + useQvink → ragContents + ragSummarySource
-    if (s.ragSummaryOnly !== undefined || s.useQvink !== undefined) {
-        const wasSummaryOnly = s.ragSummaryOnly ?? false;
-        const wasQvink       = s.useQvink       ?? false;
-        if (wasSummaryOnly) {
-            s.ragContents = 'summary';
-        } else if (!s.ragContents || s.ragContents === 'summary+full') {
-            s.ragContents = 'summary+full';
+    if (!extension_settings[EXT_NAME]) extension_settings[EXT_NAME] = {};
+    const root = extension_settings[EXT_NAME];
+
+    if (!root.profiles) {
+        // ── One-time migration: flat structure → profile-based ────────────
+        // First, apply old key renames in-place so they are collected correctly.
+        // factFinderPrompt → lorebookSyncPrompt
+        if (root.factFinderPrompt !== undefined) {
+            if (root.lorebookSyncPrompt === undefined || root.lorebookSyncPrompt === DEFAULT_LOREBOOK_SYNC_PROMPT) {
+                root.lorebookSyncPrompt = root.factFinderPrompt;
+            }
+            delete root.factFinderPrompt;
         }
-        if (wasQvink && s.ragSummarySource === 'defined') {
-            s.ragSummarySource = 'qvink';
+        // ragSummaryOnly + useQvink → ragContents + ragSummarySource
+        if (root.ragSummaryOnly !== undefined || root.useQvink !== undefined) {
+            const wasSummaryOnly = root.ragSummaryOnly ?? false;
+            const wasQvink       = root.useQvink       ?? false;
+            if (wasSummaryOnly) root.ragContents = 'summary';
+            else if (!root.ragContents) root.ragContents = 'summary+full';
+            if (wasQvink && (root.ragSummarySource ?? 'defined') === 'defined') root.ragSummarySource = 'qvink';
+            delete root.ragSummaryOnly;
+            delete root.useQvink;
         }
-        delete s.ragSummaryOnly;
-        delete s.useQvink;
+
+        // Harvest profile-config keys from the flat root into a legacy object.
+        // Meta-state keys (lastLorebookSyncAt, ledgerPaths) are not in
+        // PROFILE_DEFAULTS, so they are left untouched at root.
+        const legacyConfig = {};
+        for (const key of Object.keys(PROFILE_DEFAULTS)) {
+            if (Object.prototype.hasOwnProperty.call(root, key)) {
+                legacyConfig[key] = root[key];
+                delete root[key];
+            }
+        }
+
+        const defaultProfile    = Object.assign({}, PROFILE_DEFAULTS, legacyConfig);
+        root.profiles           = { Default: defaultProfile };
+        root.currentProfileName = 'Default';
+        root.activeState        = structuredClone(defaultProfile);
+    } else {
+        // Existing profile structure — fill in any keys added by newer versions.
+        root.activeState = Object.assign({}, PROFILE_DEFAULTS, root.activeState);
     }
+
+    // Ensure meta-state keys are always present at root.
+    root.lastLorebookSyncAt ??= null;
+    root.ledgerPaths        ??= {};
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -1041,7 +1070,7 @@ function ledgerFileName(avatarKey) {
  * @param {string} avatarKey
  */
 async function fetchOrBootstrapLedger(avatarKey) {
-    const storedPath = (getSettings().ledgerPaths ?? {})[avatarKey];
+    const storedPath = (getMetaSettings().ledgerPaths ?? {})[avatarKey];
     if (storedPath) {
         try {
             const res = await fetch(storedPath);
@@ -1064,7 +1093,7 @@ async function fetchOrBootstrapLedger(avatarKey) {
  * @returns {Promise<boolean>}
  */
 async function verifyFreshnessLock(avatarKey) {
-    const storedPath = (getSettings().ledgerPaths ?? {})[avatarKey];
+    const storedPath = (getMetaSettings().ledgerPaths ?? {})[avatarKey];
     if (!storedPath) {
         return _sessionStartId === null;
     }
@@ -1121,7 +1150,7 @@ function buildLedgerNode(parentNodeId, sequenceNum, chatMetadata, milestoneHash 
  * @param {string} avatarKey
  */
 async function commitLedgerManifest(avatarKey) {
-    const storedPaths = getSettings().ledgerPaths ?? {};
+    const storedPaths = getMetaSettings().ledgerPaths ?? {};
     const oldPath     = storedPaths[avatarKey];
     if (oldPath) {
         try {
@@ -1141,8 +1170,8 @@ async function commitLedgerManifest(avatarKey) {
     });
     if (!res.ok) throw new Error(`Ledger save failed (HTTP ${res.status})`);
     const { path } = await res.json();
-    if (!getSettings().ledgerPaths) getSettings().ledgerPaths = {};
-    getSettings().ledgerPaths[avatarKey] = path;
+    if (!getMetaSettings().ledgerPaths) getMetaSettings().ledgerPaths = {};
+    getMetaSettings().ledgerPaths[avatarKey] = path;
     saveSettingsDebounced();
 }
 
@@ -2113,8 +2142,8 @@ async function runStneSync(char, messages) {
 
         // Build lorebook transcript — optionally from last sync point
         let lbTranscript;
-        if (settings.lorebookSyncStart === 'lastSync' && settings.lastLorebookSyncAt != null) {
-            const lastAt = settings.lastLorebookSyncAt;
+        if (settings.lorebookSyncStart === 'lastSync' && getMetaSettings().lastLorebookSyncAt != null) {
+            const lastAt = getMetaSettings().lastLorebookSyncAt;
             let nsIdx2 = 0;
             const messagesFromLastSync = messages.filter(m => {
                 if (!m.is_system) nsIdx2++;
@@ -2197,7 +2226,7 @@ async function runStneSync(char, messages) {
             _lorebookDelta = { createdUids, modifiedEntries };
             lbOk = true;
             // Track the sync point for 'lastSync' mode
-            getSettings().lastLorebookSyncAt = nonSystemCount;
+            getMetaSettings().lastLorebookSyncAt = nonSystemCount;
             saveSettingsDebounced();
             console.log(`[STNE] Lorebook updated: ${createdUids.length} created, ${Object.keys(modifiedEntries).length} modified.`);
         } catch (err) {
@@ -2426,13 +2455,13 @@ function openPromptModal(settingsKey, title, defaultValue, vars = []) {
 
     $textarea.on('input.pm', function () {
         getSettings()[settingsKey] = $(this).val();
-        saveSettingsDebounced();
+        saveSettingsDebounced(); updateDirtyIndicator();
     });
 
     $reset.on('click.pm', function () {
         getSettings()[settingsKey] = defaultValue;
         $textarea.val(defaultValue);
-        saveSettingsDebounced();
+        saveSettingsDebounced(); updateDirtyIndicator();
     });
 
     const closePromptModal = (e) => {
@@ -2450,39 +2479,111 @@ function openPromptModal(settingsKey, title, defaultValue, vars = []) {
 
 // ─── Settings Panel ───────────────────────────────────────────────────────────
 
+/** True if activeState differs from the saved profile snapshot. */
+function isStateDirty() {
+    const meta = getMetaSettings();
+    return JSON.stringify(meta.activeState) !== JSON.stringify(meta.profiles[meta.currentProfileName]);
+}
+
+/** Updates the profile dropdown label to append '*' when state is dirty. */
+function updateDirtyIndicator() {
+    const meta  = getMetaSettings();
+    const label = meta.currentProfileName + (isStateDirty() ? ' *' : '');
+    const $sel  = $('#stne-profile-select');
+    $sel.find(`option[value="${CSS.escape(meta.currentProfileName)}"]`).text(label);
+    $sel.val(meta.currentProfileName);
+}
+
+/**
+ * Repopulates all settings inputs from activeState. Called after loading a profile.
+ * Connection profile dropdowns are re-initialized via handleDropdown, which
+ * requires the element to already be in the DOM.
+ */
+function refreshSettingsUI() {
+    const s = getSettings();
+
+    $('#stne-set-sync-from-turn').val(s.syncFromTurn ?? 1);
+    $('#stne-set-chunk-every-n').val(s.chunkEveryN ?? 20);
+    $('#stne-set-hookseeker-horizon').val(s.hookseekerHorizon ?? 70);
+    $('#stne-set-lorebook-sync-start').val(s.lorebookSyncStart ?? 'syncTurn');
+    $('#stne-set-prune-on-sync').prop('checked', s.pruneOnSync ?? false);
+    $('#stne-hookseeker-trailing-prompt').val(s.hookseekerTrailingPrompt ?? '');
+    $('#stne-set-enable-rag').prop('checked', s.enableRag ?? false);
+    $('#stne-rag-settings-body').toggleClass('stne-disabled', !(s.enableRag ?? false));
+    $('#stne-set-rag-separator').val(s.ragSeparator ?? '');
+    $('#stne-set-rag-contents').val(s.ragContents ?? 'summary+full');
+
+    const hasSummary = (s.ragContents ?? 'summary+full') !== 'full';
+    $('#stne-rag-summary-source-row').toggleClass('stne-hidden', !hasSummary);
+    $('#stne-set-rag-summary-source').val(s.ragSummarySource ?? 'defined');
+    $('#stne-set-rag-max-tokens').val(s.ragMaxTokens ?? 100);
+    $('#stne-set-rag-chunk-size').val(s.ragChunkSize ?? 2);
+    $('#stne-set-rag-chunk-overlap').val(s.ragChunkOverlap ?? 0);
+    updateRagAiControlsVisibility();
+
+    // Re-initialize connection profile dropdowns with the newly loaded values.
+    try {
+        ConnectionManagerRequestService.handleDropdown(
+            '#stne-set-profile',
+            s.profileId ?? '',
+            (profile) => { getSettings().profileId = profile?.id ?? null; saveSettingsDebounced(); updateDirtyIndicator(); },
+        );
+    } catch (e) { /* silent */ }
+    try {
+        ConnectionManagerRequestService.handleDropdown(
+            '#stne-set-rag-profile',
+            s.ragProfileId ?? '',
+            (profile) => { getSettings().ragProfileId = profile?.id ?? null; saveSettingsDebounced(); updateDirtyIndicator(); },
+        );
+    } catch (e) { /* silent */ }
+
+    updateDirtyIndicator();
+}
+
+/** Rebuilds the profile <select> options from the current profiles dict. */
+function refreshProfileDropdown() {
+    const meta = getMetaSettings();
+    const $sel = $('#stne-profile-select');
+    $sel.empty();
+    for (const name of Object.keys(meta.profiles)) {
+        $sel.append($('<option>').val(name).text(name));
+    }
+    updateDirtyIndicator();
+}
+
 function bindSettingsHandlers() {
     // ── Summary / Lorebook ────────────────────────────────────────────────────
     $('#stne-set-sync-from-turn').on('input', function () {
         const val = Math.max(1, parseInt($(this).val()) || 1);
         getSettings().syncFromTurn = val;
-        saveSettingsDebounced();
+        saveSettingsDebounced(); updateDirtyIndicator();
     });
 
     $('#stne-set-chunk-every-n').on('input', function () {
         const val = Math.max(1, parseInt($(this).val()) || 20);
         getSettings().chunkEveryN = val;
-        saveSettingsDebounced();
+        saveSettingsDebounced(); updateDirtyIndicator();
     });
 
     $('#stne-set-hookseeker-horizon').on('input', function () {
         const val = Math.max(1, parseInt($(this).val()) || 70);
         getSettings().hookseekerHorizon = val;
-        saveSettingsDebounced();
+        saveSettingsDebounced(); updateDirtyIndicator();
     });
 
     $('#stne-set-lorebook-sync-start').on('change', function () {
         getSettings().lorebookSyncStart = $(this).val();
-        saveSettingsDebounced();
+        saveSettingsDebounced(); updateDirtyIndicator();
     });
 
     $('#stne-set-prune-on-sync').on('change', function () {
         getSettings().pruneOnSync = $(this).prop('checked');
-        saveSettingsDebounced();
+        saveSettingsDebounced(); updateDirtyIndicator();
     });
 
     $('#stne-hookseeker-trailing-prompt').on('input', function () {
         getSettings().hookseekerTrailingPrompt = $(this).val();
-        saveSettingsDebounced();
+        saveSettingsDebounced(); updateDirtyIndicator();
     });
 
     $('#stne-edit-summary-prompt').on('click', () =>
@@ -2496,18 +2597,18 @@ function bindSettingsHandlers() {
     // ── RAG ───────────────────────────────────────────────────────────────────
     $('#stne-set-enable-rag').on('change', function () {
         getSettings().enableRag = $(this).prop('checked');
-        saveSettingsDebounced();
+        saveSettingsDebounced(); updateDirtyIndicator();
         $('#stne-rag-settings-body').toggleClass('stne-disabled', !getSettings().enableRag);
     });
 
     $('#stne-set-rag-separator').on('input', function () {
         getSettings().ragSeparator = $(this).val();
-        saveSettingsDebounced();
+        saveSettingsDebounced(); updateDirtyIndicator();
     });
 
     $('#stne-set-rag-contents').on('change', function () {
         getSettings().ragContents = $(this).val();
-        saveSettingsDebounced();
+        saveSettingsDebounced(); updateDirtyIndicator();
         const hasSummary = $(this).val() !== 'full';
         $('#stne-rag-summary-source-row').toggleClass('stne-hidden', !hasSummary);
         updateRagAiControlsVisibility();
@@ -2515,7 +2616,7 @@ function bindSettingsHandlers() {
 
     $('#stne-set-rag-summary-source').on('change', function () {
         getSettings().ragSummarySource = $(this).val();
-        saveSettingsDebounced();
+        saveSettingsDebounced(); updateDirtyIndicator();
         updateRagAiControlsVisibility();
     });
 
@@ -2523,19 +2624,19 @@ function bindSettingsHandlers() {
         const val = parseInt($(this).val(), 10);
         if (!isNaN(val) && val >= 1) {
             getSettings().ragMaxTokens = val;
-            saveSettingsDebounced();
+            saveSettingsDebounced(); updateDirtyIndicator();
         }
     });
 
     $('#stne-set-rag-chunk-size').on('input', function () {
         const val = Math.max(1, parseInt($(this).val()) || 2);
         getSettings().ragChunkSize = val;
-        saveSettingsDebounced();
+        saveSettingsDebounced(); updateDirtyIndicator();
     });
 
     $('#stne-set-rag-chunk-overlap').on('change', function () {
         getSettings().ragChunkOverlap = parseInt($(this).val()) || 0;
-        saveSettingsDebounced();
+        saveSettingsDebounced(); updateDirtyIndicator();
     });
 
     $('#stne-edit-classifier-prompt').on('click', () =>
@@ -2549,7 +2650,7 @@ function bindSettingsHandlers() {
             getSettings().profileId ?? '',
             (profile) => {
                 getSettings().profileId = profile?.id ?? null;
-                saveSettingsDebounced();
+                saveSettingsDebounced(); updateDirtyIndicator();
             },
         );
     } catch (e) {
@@ -2562,12 +2663,80 @@ function bindSettingsHandlers() {
             getSettings().ragProfileId ?? '',
             (profile) => {
                 getSettings().ragProfileId = profile?.id ?? null;
-                saveSettingsDebounced();
+                saveSettingsDebounced(); updateDirtyIndicator();
             },
         );
     } catch (e) {
         console.warn('[STNE] Could not initialize RAG profile dropdown:', e);
     }
+
+    // ── Profile management ────────────────────────────────────────────────────
+    $('#stne-profile-select').on('change', function () {
+        const newName = $(this).val();
+        const meta    = getMetaSettings();
+        if (!meta.profiles[newName]) return;
+        meta.currentProfileName = newName;
+        meta.activeState        = structuredClone(meta.profiles[newName]);
+        saveSettingsDebounced();
+        refreshSettingsUI();
+    });
+
+    $('#stne-profile-save').on('click', function () {
+        const meta = getMetaSettings();
+        meta.profiles[meta.currentProfileName] = structuredClone(meta.activeState);
+        saveSettingsDebounced();
+        updateDirtyIndicator();
+    });
+
+    $('#stne-profile-add').on('click', async function () {
+        const rawName = await callPopup('<h3>New profile name</h3>', 'input', '');
+        const name    = (rawName ?? '').trim();
+        if (!name) return;
+        const meta = getMetaSettings();
+        if (meta.profiles[name]) {
+            toastr.warning(`Profile "${name}" already exists.`);
+            return;
+        }
+        meta.profiles[name]     = structuredClone(meta.activeState);
+        meta.currentProfileName = name;
+        saveSettingsDebounced();
+        refreshProfileDropdown();
+    });
+
+    $('#stne-profile-rename').on('click', async function () {
+        const meta    = getMetaSettings();
+        const rawName = await callPopup('<h3>Rename profile</h3>', 'input', meta.currentProfileName);
+        const newName = (rawName ?? '').trim();
+        if (!newName || newName === meta.currentProfileName) return;
+        if (meta.profiles[newName]) {
+            toastr.warning(`Profile "${newName}" already exists.`);
+            return;
+        }
+        meta.profiles[newName] = meta.profiles[meta.currentProfileName];
+        delete meta.profiles[meta.currentProfileName];
+        meta.currentProfileName = newName;
+        saveSettingsDebounced();
+        refreshProfileDropdown();
+    });
+
+    $('#stne-profile-delete').on('click', async function () {
+        const meta = getMetaSettings();
+        if (Object.keys(meta.profiles).length <= 1) {
+            toastr.warning('Cannot delete the only profile.');
+            return;
+        }
+        const confirmed = await callPopup(
+            `<h3>Delete profile "${escapeHtml(meta.currentProfileName)}"?</h3>This cannot be undone.`,
+            'confirm',
+        );
+        if (!confirmed) return;
+        delete meta.profiles[meta.currentProfileName];
+        meta.currentProfileName = Object.keys(meta.profiles)[0];
+        meta.activeState        = structuredClone(meta.profiles[meta.currentProfileName]);
+        saveSettingsDebounced();
+        refreshProfileDropdown();
+        refreshSettingsUI();
+    });
 }
 
 /**
@@ -2583,8 +2752,12 @@ function updateRagAiControlsVisibility() {
 
 function injectSettingsPanel() {
     if ($('#stne-settings').length) return;
-    $('#extensions_settings').append(buildSettingsHTML(getSettings(), escapeHtml));
+    const meta = getMetaSettings();
+    $('#extensions_settings').append(
+        buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName),
+    );
     bindSettingsHandlers();
+    refreshProfileDropdown();
     updateRagAiControlsVisibility();
 }
 
