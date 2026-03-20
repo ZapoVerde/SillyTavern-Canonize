@@ -522,6 +522,21 @@ async function ragFireChunk(chunkIndex) {
         const pairStart    = chunk.pairStart ?? chunkIndex;
         const pairEnd      = chunk.pairEnd   ?? (pairStart + 1);
         const targetPairs  = _stagedProsePairs.slice(pairStart, Math.min(pairEnd, _splitPairIdx));
+
+        // ── DEBUG: pairs entering the classifier ──────────────────────────────
+        console.log(
+            `[STNE-DBG] ragFireChunk chunk=${chunkIndex} (${chunk.turnLabel})` +
+            ` pairStart=${pairStart} pairEnd=${pairEnd} _splitPairIdx=${_splitPairIdx}` +
+            ` → targetPairs.length=${targetPairs.length}`
+        );
+        if (targetPairs.length === 0) {
+            console.warn(`[STNE-DBG] ragFireChunk chunk=${chunkIndex} — targetPairs is EMPTY, AI will receive no turns!`);
+        } else {
+            console.log('[STNE-DBG] ragFireChunk targetPairs:', targetPairs.map(p =>
+                `[validIdx=${p.validIdx}] ${p.user?.name ?? '?'}→${p.ai?.name ?? '?'}`
+            ));
+        }
+
         const header       = await runRagClassifierCall(summaryAtCall, targetPairs);
 
         const globalStale = _ragGlobalGenId !== globalGenId;
@@ -600,12 +615,31 @@ async function runRagClassifierCall(summaryText, targetPairs) {
         .join('\n\n');
 
     const promptTemplate = getSettings().ragClassifierPrompt || DEFAULT_RAG_CLASSIFIER_PROMPT;
+    const formattedTurns = formatPairs(targetPairs);
     const prompt = interpolate(promptTemplate, {
         summary:      summaryText,
-        target_turns: formatPairs(targetPairs),
+        target_turns: formattedTurns,
     });
 
-    return generateWithRagProfile(prompt);
+    // ── DEBUG: prompt content sent to AI ─────────────────────────────────────
+    console.log(
+        `[STNE-DBG] runRagClassifierCall — targetPairs=${targetPairs.length}` +
+        ` summaryText.length=${(summaryText ?? '').length}` +
+        ` formattedTurns.length=${formattedTurns.length}`
+    );
+    if (!formattedTurns) {
+        console.warn('[STNE-DBG] runRagClassifierCall — formattedTurns is EMPTY; AI will see no TARGET TURNS content.');
+    } else {
+        console.log('[STNE-DBG] runRagClassifierCall TARGET TURNS snippet:', formattedTurns.slice(0, 300));
+    }
+
+    const ragResponse = await generateWithRagProfile(prompt);
+    // ── DEBUG: raw AI response ────────────────────────────────────────────────
+    console.log(`[STNE-DBG] runRagClassifierCall AI response (${ragResponse?.length ?? 0} chars):`, ragResponse);
+    if (!ragResponse?.trim()) {
+        console.warn('[STNE-DBG] runRagClassifierCall — AI response is EMPTY.');
+    }
+    return ragResponse;
 }
 
 // ─── Lorebook Sync Call ────────────────────────────────────────────────────────
@@ -2140,6 +2174,23 @@ async function runStneSync(char, messages, { coverAll = false } = {}) {
         if (!windowPairs.length) {
             console.log('[STNE] No complete pairs in window — skipping sync.');
             return;
+        }
+
+        // ── DEBUG: turn window coverage ───────────────────────────────────────
+        {
+            const firstPair = windowPairs[0];
+            const lastPair  = windowPairs[windowPairs.length - 1];
+            const firstTurn = (firstPair.validIdx ?? 0) + 1;
+            const lastTurn  = (lastPair.validIdx  ?? windowPairs.length - 1) + 1;
+            console.log(
+                `[STNE-DBG] runStneSync window: ${windowPairs.length} pairs` +
+                ` | validIdx range ${firstPair.validIdx}–${lastPair.validIdx}` +
+                ` | approx turns ${firstTurn}–${lastTurn}` +
+                ` | allPairs=${allPairs.length} windowSize=${windowSize} coverAll=${coverAll} syncFrom=${syncFrom}`
+            );
+            console.log('[STNE-DBG] windowPairs summary:', windowPairs.map(p =>
+                `[${p.validIdx}] ${p.user?.name ?? '?'} → ${p.ai?.name ?? '?'}`
+            ));
         }
 
         // Build hookseeker transcript from the chosen window
