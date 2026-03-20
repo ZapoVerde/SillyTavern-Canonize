@@ -1109,6 +1109,10 @@ function revertLorebookDelta(lbData, delta) {
     return { ...lbData, entries };
 }
 
+function buildPreSyncLorebook() {
+    return revertLorebookDelta(_lorebookData, _lorebookDelta);
+}
+
 /**
  * Builds a "Virtual Document" string from a lorebook entry's three editable fields.
  * Pure function — no DOM or module dependencies.
@@ -1751,12 +1755,52 @@ function showLbError(message) {
 function onLbRegenClick() {
     setLbLoading(true);
     $('#cnz-lb-error').addClass('cnz-hidden').text('');
-    const lbId       = ++_lorebookGenId;
-    const horizon    = getSettings().chunkEveryN ?? 20;
-    const upToLatest = $('#cnz-lb-up-to-latest').is(':checked');
-    const transcript = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon);
+    const lbId          = ++_lorebookGenId;
+    const horizon       = getSettings().chunkEveryN ?? 20;
+    const upToLatest    = $('#cnz-lb-up-to-latest').is(':checked');
+    const transcript    = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon);
+    const preSyncLorebook = buildPreSyncLorebook();
     runLorebookSyncCall(transcript)
-        .then(text => { if (_lorebookGenId !== lbId) return; populateLbFreeform(text); })
+        .then(text => {
+            if (_lorebookGenId !== lbId) return;
+
+            // Store raw output
+            _lorebookRawText = text;
+
+            // Reset draft to pre-sync baseline (captured before this async call)
+            _draftLorebook = structuredClone(preSyncLorebook);
+
+            // Parse and auto-apply new suggestions
+            const suggestions = parseLbSuggestions(text);
+            _lorebookSuggestions = enrichLbSuggestions(suggestions);
+
+            for (const s of _lorebookSuggestions) {
+                if (s.linkedUid !== null) {
+                    const entry = _draftLorebook.entries[String(s.linkedUid)];
+                    if (entry) {
+                        entry.comment = s.name;
+                        entry.key     = s.keys;
+                        entry.content = s.content;
+                    }
+                } else {
+                    const uid = nextLorebookUid();
+                    _draftLorebook.entries[String(uid)] = makeLbDraftEntry(uid, s.name, s.keys, s.content);
+                    s.linkedUid = uid;
+                }
+                s._applied = true;
+            }
+
+            // Save and update in-memory state (but NOT _lorebookDelta — baseline stays fixed)
+            lbSaveLorebook(_lorebookName, _draftLorebook)
+                .then(() => { _lorebookData = structuredClone(_draftLorebook); })
+                .catch(err => toastr.error(`CNZ: Lorebook save failed — ${err.message}`));
+
+            setLbLoading(false);
+            $('#cnz-lb-freeform').val(text);
+            _lbActiveIngesterIndex = Math.max(0, Math.min(_lbActiveIngesterIndex, _lorebookSuggestions.length - 1));
+            populateLbIngesterDropdown();
+            if (_lorebookSuggestions[_lbActiveIngesterIndex]) renderLbIngesterDetail(_lorebookSuggestions[_lbActiveIngesterIndex]);
+        })
         .catch(err => {
             if (_lorebookGenId !== lbId) return;
             showLbError(`Regeneration failed: ${err.message}`);
@@ -1852,8 +1896,22 @@ function updateLbDiff() {
     const proposed = toVirtualDoc(name, keys, content);
     let base = '';
     if (s.linkedUid !== null) {
-        const entry = _draftLorebook?.entries?.[String(s.linkedUid)];
-        if (entry) base = toVirtualDoc(entry.comment || '', Array.isArray(entry.key) ? entry.key : [], entry.content || '');
+        const uidStr   = String(s.linkedUid);
+        const isNew    = _lorebookDelta?.createdUids?.includes(uidStr);
+        const preDelta = _lorebookDelta?.modifiedEntries?.[uidStr];
+
+        if (isNew) {
+            base = ''; // created this sync — no prior state
+        } else if (preDelta) {
+            const preSyncEntry = _lorebookData?.entries?.[uidStr];
+            if (preSyncEntry) {
+                base = toVirtualDoc(preSyncEntry.comment || '', preDelta.key ?? [], preDelta.content ?? '');
+            }
+        } else {
+            // Entry was not touched this sync — current state is the baseline
+            const entry = _draftLorebook?.entries?.[uidStr];
+            if (entry) base = toVirtualDoc(entry.comment || '', Array.isArray(entry.key) ? entry.key : [], entry.content || '');
+        }
     }
     $('#cnz-lb-ingester-diff').html(wordDiff(base, proposed));
 }
@@ -1892,12 +1950,46 @@ function onLbIngesterRevertAi() {
 function onLbIngesterRevertDraft() {
     const s = _lorebookSuggestions[_lbActiveIngesterIndex];
     if (!s || s.linkedUid === null) return;
-    const entry = _draftLorebook?.entries?.[String(s.linkedUid)];
+
+    const uidStr = String(s.linkedUid);
+    const delta  = _lorebookDelta?.modifiedEntries?.[uidStr];
+    const isNew  = _lorebookDelta?.createdUids?.includes(uidStr);
+
+    if (isNew) {
+        // Entry was created this sync — revert means delete it from the lorebook
+        if (!_draftLorebook?.entries) return;
+        delete _draftLorebook.entries[uidStr];
+        lbSaveLorebook(_lorebookName, _draftLorebook)
+            .then(() => { _lorebookData = structuredClone(_draftLorebook); })
+            .catch(err => toastr.error(`CNZ: Revert failed — ${err.message}`));
+        s._applied  = false;
+        s._rejected = true;
+        renderLbIngesterDetail(s);
+        populateLbIngesterDropdown();
+        updateLbDiff();
+        return;
+    }
+
+    if (!delta) return; // entry unchanged this sync — nothing to revert
+
+    // Restore pre-sync content and keys
+    const entry = _draftLorebook?.entries?.[uidStr];
     if (!entry) return;
-    s.name = entry.comment || ''; s.keys = Array.isArray(entry.key) ? [...entry.key] : []; s.content = entry.content || '';
+    entry.content = delta.content;
+    entry.key     = [...(delta.key ?? [])];
+    s.name    = entry.comment || s.name;
+    s.keys    = [...entry.key];
+    s.content = entry.content;
+
+    lbSaveLorebook(_lorebookName, _draftLorebook)
+        .then(() => { _lorebookData = structuredClone(_draftLorebook); })
+        .catch(err => toastr.error(`CNZ: Revert failed — ${err.message}`));
+
     renderLbIngesterDetail(s);
     const prefix = s._applied ? '\u2713 ' : (s._rejected ? '\u2717 ' : '');
-    $('#cnz-lb-suggestion-select option').eq(_lbActiveIngesterIndex).text(escapeHtml(`${prefix}${s.type}: ${s.name}`));
+    $('#cnz-lb-suggestion-select option').eq(_lbActiveIngesterIndex)
+        .text(escapeHtml(`${prefix}${s.type}: ${s.name}`));
+    updateLbDiff();
 }
 
 function onLbIngesterNext() {
@@ -2346,6 +2438,10 @@ async function openReviewModal() {
     $('#cnz-situation-text').val(hooksText ?? '');
 
     initWizardSession(true);
+    if (_lorebookRawText) {
+        $('#cnz-lb-freeform').val(_lorebookRawText);
+        _lorebookFreeformLastParsed = null;
+    }
     showModal();
     updateWizard(1);
 }
@@ -2576,6 +2672,8 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
         // ── 5. Apply Lorebook Sync: parse → enrich → auto-apply → save ────────
         try {
+            _lorebookRawText  = '';
+            _lorebookRawText  = lorebookSyncText;
             const preLorebook = structuredClone(_lorebookData);
             const suggestions = parseLbSuggestions(lorebookSyncText);
 
