@@ -123,7 +123,7 @@ const PROFILE_DEFAULTS = Object.freeze({
     pruneOnSync:              false,
     // RAG
     enableRag:                false,
-    ragSeparator:             '',
+    ragSeparator:             'Chunk {{chunk_number}} ({{turn_range}})',
     ragContents:              'summary+full',
     ragSummarySource:         'defined',
     ragProfileId:             null,
@@ -379,19 +379,22 @@ function buildProsePairs(messages) {
  * @param {Array} ragChunks
  * @returns {string}
  */
+const DEFAULT_SEPARATOR = 'Chunk {{chunk_number}} ({{turn_range}})';
+
 function buildRagDocument(ragChunks) {
     if (!ragChunks.length) return '';
     const settings    = getSettings();
     const contents    = settings.ragContents    ?? 'summary+full';
-    const sepTemplate = settings.ragSeparator?.trim() || '***';
+    const sepTemplate = settings.ragSeparator?.trim() || DEFAULT_SEPARATOR;
     const ctx         = SillyTavern.getContext();
     const charName    = ctx?.characters?.[ctx?.characterId]?.name ?? '';
 
     return ragChunks.map(c => {
         const sep = interpolate(sepTemplate, {
-            turn_number: String(c.chunkIndex + 1),
-            turn_range:  c.turnLabel,
-            char_name:   charName,
+            chunk_number: String(c.chunkIndex + 1),
+            turn_number:  String(c.chunkIndex + 1),   // backward-compat alias
+            turn_range:   c.turnRange,
+            char_name:    charName,
         });
         const parts = [sep];
         if (contents !== 'full')    parts.push(c.header);   // summary
@@ -420,11 +423,7 @@ function buildRagChunks(pairs) {
             const window    = pairs.slice(i, i + chunkSize);
             const turnA     = i + 1;
             const turnB     = Math.min(i + chunkSize, pairs.length);
-            const turnLabel = chunkSize === 1
-                ? `Turn ${turnA}`
-                : (turnA === turnB
-                    ? `Chunk ${chunks.length + 1} (Turn ${turnA})`
-                    : `Chunk ${chunks.length + 1} (Turns ${turnA}–${turnB})`);
+            const turnRange = turnA === turnB ? `Turn ${turnA}` : `Turns ${turnA}–${turnB}`;
 
             const content = window
                 .map(p => `[${p.user.name.toUpperCase()}]\n${p.user.mes}\n\n[${p.ai.name.toUpperCase()}]\n${p.ai.mes}`)
@@ -436,9 +435,9 @@ function buildRagChunks(pairs) {
                 chunkIndex: chunks.length,
                 pairStart:  i,
                 pairEnd:    Math.min(i + chunkSize, pairs.length),
-                turnLabel,
+                turnRange,
                 content,
-                header:  qvinkText || turnLabel,
+                header:  qvinkText || turnRange,
                 status:  (useQvink && qvinkText) ? 'complete' : 'pending',
                 genId:   0,
             });
@@ -452,9 +451,7 @@ function buildRagChunks(pairs) {
             const window    = pairs.slice(sliceFrom, i + 1);
             const turnA     = sliceFrom + 1;
             const turnB     = i + 1;
-            const turnLabel = turnA === turnB
-                ? `Chunk ${chunks.length + 1} (Turn ${turnA})`
-                : `Chunk ${chunks.length + 1} (Turns ${turnA}–${turnB})`;
+            const turnRange = turnA === turnB ? `Turn ${turnA}` : `Turns ${turnA}–${turnB}`;
 
             const content = window
                 .map(p => `[${p.user.name.toUpperCase()}]\n${p.user.mes}\n\n[${p.ai.name.toUpperCase()}]\n${p.ai.mes}`)
@@ -464,15 +461,133 @@ function buildRagChunks(pairs) {
                 chunkIndex: chunks.length,
                 pairStart:  sliceFrom,
                 pairEnd:    i + 1,
-                turnLabel,
+                turnRange,
                 content,
-                header:  turnLabel,
+                header:  turnRange,
                 status:  'pending',
                 genId:   0,
             });
         }
     }
     return chunks;
+}
+
+/**
+ * Injects (or refreshes) a Canonize chunk label beneath the last AI message
+ * of the chunk in the chat UI.  Mirrors the Qvink pattern: find the message
+ * by mesid, append a styled div after div.mes_text.
+ * No-ops when the message is not currently in the DOM.
+ * @param {number} chunkIndex
+ */
+function renderChunkChatLabel(chunkIndex) {
+    const chunk = _ragChunks[chunkIndex];
+    if (!chunk) return;
+
+    // Resolve the last AI message in this chunk's pair window
+    const lastPairIdx = (chunk.pairEnd ?? chunkIndex + 1) - 1;
+    const pair = _stagedProsePairs[lastPairIdx];
+    if (!pair?.ai) return;
+
+    const chat  = SillyTavern.getContext().chat ?? [];
+    const mesId = chat.indexOf(pair.ai);
+    if (mesId === -1) return;
+
+    const $msgDiv = $(`div[mesid="${mesId}"]`);
+    if (!$msgDiv.length) return;
+
+    // Replace any existing label on this message
+    $msgDiv.find('.stne-chunk-label').remove();
+
+    // For pending/in-flight chunks don't inject yet — label appears on completion
+    if (chunk.status === 'pending' || chunk.status === 'in-flight') return;
+
+    const bodyText = (chunk.status === 'complete' || chunk.status === 'manual')
+        ? `${chunk.turnRange}: ${chunk.header}`
+        : chunk.turnRange;   // stale/error — show turn range only
+
+    const $label = $('<div class="stne-chunk-label"></div>');
+    $label.append($('<span class="stne-chunk-label-prefix">◆ CANONIZE </span>'));
+    $label.append($('<span>').text(bodyText));
+    $msgDiv.find('div.mes_text').after($label);
+}
+
+/**
+ * Renders chunk labels for every chunk in _ragChunks.
+ * Called on workshop open and after full sync so all turns get annotated.
+ */
+function renderAllChunkChatLabels() {
+    for (let i = 0; i < _ragChunks.length; i++) {
+        renderChunkChatLabel(i);
+    }
+}
+
+/**
+ * Removes all Canonize chunk labels from the chat UI.
+ * Called on chat/character switch so stale labels don't bleed across chats.
+ */
+function clearChunkChatLabels() {
+    $('#chat').find('.stne-chunk-label').remove();
+}
+
+/**
+ * Renders the separator template for a given chunk.
+ * This rendered string is stored as stne_turn_label on the chat message and used
+ * as a validity key — if it doesn't match on reload, the chunk is re-classified.
+ * @param {object} chunk
+ * @returns {string}
+ */
+function renderSeparator(chunk) {
+    const settings    = getSettings();
+    const sepTemplate = settings.ragSeparator?.trim() || DEFAULT_SEPARATOR;
+    const ctx         = SillyTavern.getContext();
+    const charName    = ctx?.characters?.[ctx?.characterId]?.name ?? '';
+    return interpolate(sepTemplate, {
+        chunk_number: String(chunk.chunkIndex + 1),
+        turn_number:  String(chunk.chunkIndex + 1),
+        turn_range:   chunk.turnRange,
+        char_name:    charName,
+    });
+}
+
+/**
+ * Writes a completed chunk's header into the last AI message of its pair window
+ * as message.extra.stne_chunk_header / stne_turn_label, then saves the chat.
+ * The chat file is the source of truth — this makes headers survive page reloads.
+ * @param {number} chunkIndex
+ */
+async function writeChunkHeaderToChat(chunkIndex) {
+    const chunk = _ragChunks[chunkIndex];
+    if (!chunk || (chunk.status !== 'complete' && chunk.status !== 'manual')) return;
+    const lastPairIdx = (chunk.pairEnd ?? chunkIndex + 1) - 1;
+    const pair = _stagedProsePairs[lastPairIdx];
+    if (!pair?.ai) return;
+    if (!pair.ai.extra) pair.ai.extra = {};
+    pair.ai.extra.stne_chunk_header = chunk.header;
+    pair.ai.extra.stne_turn_label   = renderSeparator(chunk);
+    try {
+        await SillyTavern.getContext().saveChat();
+    } catch (err) {
+        console.error('[STNE] writeChunkHeaderToChat: saveChat failed:', err);
+    }
+}
+
+/**
+ * Reads stne_chunk_header / stne_turn_label from each chunk's last AI message.
+ * If the stored turn label matches the current rendered separator (same chunk
+ * boundaries and same separator template), the chunk is pre-populated as complete
+ * and skips AI classification.  Mismatches are left as 'pending'.
+ * Uses _stagedProsePairs as the pair source.
+ */
+function hydrateChunkHeadersFromChat() {
+    for (const chunk of _ragChunks) {
+        if (chunk.status === 'complete') continue;   // qvink or already hydrated
+        const lastPairIdx = (chunk.pairEnd ?? chunk.chunkIndex + 1) - 1;
+        const pair = _stagedProsePairs[lastPairIdx];
+        if (!pair?.ai?.extra?.stne_chunk_header) continue;
+        if (pair.ai.extra.stne_turn_label !== renderSeparator(chunk)) continue;
+        chunk.header = pair.ai.extra.stne_chunk_header;
+        chunk.status = 'complete';
+    }
 }
 
 /**
@@ -525,7 +640,7 @@ async function ragFireChunk(chunkIndex) {
 
         // ── DEBUG: pairs entering the classifier ──────────────────────────────
         console.log(
-            `[STNE-DBG] ragFireChunk chunk=${chunkIndex} (${chunk.turnLabel})` +
+            `[STNE-DBG] ragFireChunk chunk=${chunkIndex} (${chunk.turnRange})` +
             ` pairStart=${pairStart} pairEnd=${pairEnd} _splitPairIdx=${_splitPairIdx}` +
             ` → targetPairs.length=${targetPairs.length}`
         );
@@ -547,8 +662,11 @@ async function ragFireChunk(chunkIndex) {
         if (_lastSummaryUsedForRag !== summaryAtCall) {
             chunk.status = 'stale';
         } else {
-            chunk.header = header.trim() || chunk.turnLabel;
+            chunk.header = header.trim() || chunk.turnRange;
             chunk.status = 'complete';
+            writeChunkHeaderToChat(chunkIndex).catch(err =>
+                console.error('[STNE] writeChunkHeaderToChat error:', err),
+            );
         }
     } catch (err) {
         const globalStale = _ragGlobalGenId !== globalGenId;
@@ -568,6 +686,7 @@ async function ragFireChunk(chunkIndex) {
 
     if (_ragGlobalGenId === globalGenId) {
         renderRagCard(chunkIndex);
+        renderChunkChatLabel(chunkIndex);
     }
 }
 
@@ -1369,23 +1488,82 @@ function onEnterRagWorkshop() {
     const summaryText = $('#stne-situation-text').val().trim();
     const hasError    = !$('#stne-error-1').hasClass('stne-hidden');
 
-    // Build or refresh chunks from staged pairs (already set by runStneSync)
+    // ── DEBUG: workshop entry state ───────────────────────────────────────────
+    console.log(
+        `[STNE-DBG] onEnterRagWorkshop` +
+        ` _stagedProsePairs.length=${_stagedProsePairs.length}` +
+        ` _splitPairIdx=${_splitPairIdx}` +
+        ` _ragChunks.length=${_ragChunks.length}` +
+        ` _splitIndexWhenRagBuilt=${_splitIndexWhenRagBuilt}` +
+        ` summaryText.length=${summaryText.length}` +
+        ` hasError=${hasError}`
+    );
+    if (_stagedProsePairs.length > 0) {
+        const first = _stagedProsePairs[0];
+        const last  = _stagedProsePairs[_stagedProsePairs.length - 1];
+        console.log(
+            `[STNE-DBG] onEnterRagWorkshop stagedPairs indices:` +
+            ` first.validIdx=${first.validIdx} (${first.user?.name}→${first.ai?.name})` +
+            ` last.validIdx=${last.validIdx} (${last.user?.name}→${last.ai?.name})`
+        );
+    } else {
+        console.warn('[STNE-DBG] onEnterRagWorkshop — _stagedProsePairs is EMPTY; falling back to live chat context.');
+        // No prior sync this session — seed staged pairs from the live chat so the
+        // workshop has something to classify. Use the same window size as runStneSync.
+        const settings   = getSettings();
+        const syncFrom   = Math.max(1, settings.syncFromTurn ?? 1);
+        const windowSize = settings.chunkEveryN ?? 20;
+        const messages   = SillyTavern.getContext().chat ?? [];
+        let nsIdx = 0;
+        const messagesFromTurn = messages.filter(m => {
+            if (!m.is_system) nsIdx++;
+            return m.is_system || nsIdx >= syncFrom;
+        });
+        const allPairs = buildProsePairs(messagesFromTurn);
+        const windowPairs = allPairs.slice(-windowSize);
+        if (windowPairs.length > 0) {
+            _stagedProsePairs = windowPairs;
+            _splitPairIdx     = windowPairs.length;
+            console.log(
+                `[STNE-DBG] onEnterRagWorkshop: seeded _stagedProsePairs from live chat` +
+                ` — ${windowPairs.length} pairs (validIdx ${windowPairs[0].validIdx}–${windowPairs[windowPairs.length - 1].validIdx})` +
+                ` syncFrom=${syncFrom} windowSize=${windowSize}`
+            );
+        } else {
+            console.warn('[STNE-DBG] onEnterRagWorkshop: live chat also yielded 0 pairs — chat may be empty or all system messages.');
+        }
+    }
+
+    // Build or refresh chunks from staged pairs (already set by runStneSync or fallback above)
     if (_ragChunks.length === 0 && _stagedProsePairs.length > 0) {
         const archivePairs = _stagedProsePairs.slice(0, _splitPairIdx);
+        console.log(`[STNE-DBG] onEnterRagWorkshop: building chunks from scratch — archivePairs.length=${archivePairs.length}`);
         if (archivePairs.length > 0) {
             _ragChunks = buildRagChunks(archivePairs);
             _splitIndexWhenRagBuilt = _splitPairIdx;
+            console.log(`[STNE-DBG] onEnterRagWorkshop: built ${_ragChunks.length} chunks covering validIdx 0–${_splitPairIdx - 1}`);
+            // Labels haven't been rendered yet (no prior sync ran) — render the
+            // turn-range placeholders now; AI-classified headers appear via ragFireChunk
+            renderAllChunkChatLabels();
         }
         renderRagWorkshop();
     } else if (_ragChunks.length > 0) {
         if (_splitIndexWhenRagBuilt !== null && _splitPairIdx !== _splitIndexWhenRagBuilt) {
             toastr.warning('Sync window has changed — Narrative Memory chunks will be rebuilt.');
             const archivePairs = _stagedProsePairs.slice(0, _splitPairIdx);
+            console.log(`[STNE-DBG] onEnterRagWorkshop: rebuilding chunks (splitIdx changed ${_splitIndexWhenRagBuilt}→${_splitPairIdx}) — archivePairs.length=${archivePairs.length}`);
             _ragChunks = buildRagChunks(archivePairs);
             _splitIndexWhenRagBuilt = _splitPairIdx;
+        } else {
+            console.log(`[STNE-DBG] onEnterRagWorkshop: reusing ${_ragChunks.length} existing chunks`);
         }
         renderRagWorkshop();
+    } else {
+        console.warn('[STNE-DBG] onEnterRagWorkshop: NO CHUNKS BUILT — both _ragChunks and _stagedProsePairs are empty. Workshop will be blank.');
     }
+
+    // Hydrate headers from chat file — pre-populates complete chunks, skips their AI calls
+    hydrateChunkHeadersFromChat();
 
     if (!summaryText || hasError)  { showRagNoSummaryMessage(); return; }
     hideRagNoSummaryMessage();
@@ -2336,13 +2514,17 @@ async function runStneSync(char, messages, { coverAll = false } = {}) {
             _ragChunks             = buildRagChunks(windowPairs);
             _lastSummaryUsedForRag = hookseekerText.trim();
 
-            // Enqueue all pending chunks and drain
+            // Pre-populate headers from chat file — skips AI for already-classified chunks
+            hydrateChunkHeadersFromChat();
+
+            // Enqueue only chunks that weren't hydrated
             _ragCallQueue = _ragChunks
                 .filter(c => c.status === 'pending')
                 .map(c => c.chunkIndex);
             ragDrainQueue();
 
             await waitForRagChunks();
+            renderAllChunkChatLabels();
 
             const ragText     = buildRagDocument(_ragChunks);
             const ragFileName = `${char.name}_stne_t${nonSystemCount}.txt`
@@ -2607,7 +2789,7 @@ function refreshSettingsUI() {
     $('#stne-set-prune-on-sync').prop('checked', s.pruneOnSync ?? false);
     $('#stne-set-enable-rag').prop('checked', s.enableRag ?? false);
     $('#stne-rag-settings-body').toggleClass('stne-disabled', !(s.enableRag ?? false));
-    $('#stne-set-rag-separator').val(s.ragSeparator ?? '');
+    $('#stne-set-rag-separator').val(s.ragSeparator ?? DEFAULT_SEPARATOR);
     $('#stne-set-rag-contents').val(s.ragContents ?? 'summary+full');
 
     const hasSummary = (s.ragContents ?? 'summary+full') !== 'full';
@@ -2693,8 +2875,44 @@ function bindSettingsHandlers() {
         $('#stne-rag-settings-body').toggleClass('stne-disabled', !getSettings().enableRag);
     });
 
-    $('#stne-set-rag-separator').on('input', function () {
-        getSettings().ragSeparator = $(this).val();
+    $('#stne-set-rag-separator').on('change', function () {
+        const newVal   = $(this).val();
+        const oldVal   = getSettings().ragSeparator ?? '';
+        if (newVal === oldVal) return;
+
+        // Count stored chunk headers in the current chat
+        const chat       = SillyTavern.getContext().chat ?? [];
+        const storedCount = chat.filter(m => m.extra?.stne_chunk_header).length;
+
+        if (storedCount > 0) {
+            const approxTurns = storedCount * (getSettings().ragChunkSize ?? 2);
+            const confirmed   = confirm(
+                `Changing the separator invalidates ${storedCount} stored chunk header(s) ` +
+                `(~${approxTurns} turns).\n\n` +
+                `All headers will be cleared and reclassified, and your external vector store ` +
+                `will need to resync.\n\nProceed?`
+            );
+            if (!confirmed) {
+                $(this).val(oldVal);   // revert the input
+                return;
+            }
+            // Clear stored headers from all chat messages
+            for (const m of chat) {
+                if (m.extra?.stne_chunk_header) {
+                    delete m.extra.stne_chunk_header;
+                    delete m.extra.stne_turn_label;
+                }
+            }
+            SillyTavern.getContext().saveChat().catch(err =>
+                console.error('[STNE] saveChat after separator clear failed:', err),
+            );
+            // Mark any in-memory chunks as pending so they reclassify on next open
+            for (const c of _ragChunks) {
+                if (c.status === 'complete' || c.status === 'manual') c.status = 'pending';
+            }
+        }
+
+        getSettings().ragSeparator = newVal;
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
@@ -2884,8 +3102,13 @@ function onChatChanged() {
 
     // Character switched — reset cached ledger (it belongs to the old character) and stay silent
     if (!char || char.avatar !== _lastKnownAvatar) {
-        _ledgerManifest  = null;
-        _lastKnownAvatar = char?.avatar ?? null;
+        _ledgerManifest    = null;
+        _lastKnownAvatar   = char?.avatar ?? null;
+        _stagedProsePairs  = [];
+        _splitPairIdx      = 0;
+        _ragChunks         = [];
+        _splitIndexWhenRagBuilt = null;
+        clearChunkChatLabels();
         return;
     }
 
