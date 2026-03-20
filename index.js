@@ -3316,13 +3316,12 @@ async function onMessageReceived() {
     if (count <= _snoozeUntilCount) return;
 
     // ── Gap detection ─────────────────────────────────────────────────────────
-    // Ledger not loaded yet (character just opened, healer hasn't run) —
-    // fall back to legacy modulo trigger so auto-sync still fires.
+    // Ledger not loaded yet — bootstrap it in the background and skip this
+    // trigger. The next MESSAGE_RECEIVED will find the manifest ready.
     if (!_ledgerManifest) {
-        if (count % every !== 0) return;
         const char = context.characters[context.characterId];
-        runCnzSync(char, messages).catch(err =>
-            console.error('[CNZ] runCnzSync uncaught error:', err),
+        fetchOrBootstrapLedger(char.avatar).catch(err =>
+            console.error('[CNZ] onMessageReceived: ledger bootstrap failed:', err),
         );
         return;
     }
@@ -3396,7 +3395,8 @@ function onChatChanged() {
     const char         = context.characters[context.characterId];
     const chatFileName = char?.chat ?? null;
 
-    // Character switched — reset cached ledger (it belongs to the old character) and stay silent
+    // Character switched — reset cached ledger (it belongs to the old character),
+    // then bootstrap the new character's ledger and run the Healer.
     if (!char || char.avatar !== _lastKnownAvatar) {
         _ledgerManifest    = null;
         _lastKnownAvatar   = char?.avatar ?? null;
@@ -3406,6 +3406,14 @@ function onChatChanged() {
         _ragChunks         = [];
         _splitIndexWhenRagBuilt = null;
         clearChunkChatLabels();
+        if (char) {
+            fetchOrBootstrapLedger(char.avatar)
+                .then(() => {
+                    console.log(`[CNZ] Ledger loaded on chat open — headNodeId=${_ledgerManifest?.headNodeId ?? 'none (fresh)'}`);
+                    return runHealer(char, char.chat);
+                })
+                .catch(err => console.error('[CNZ] onChatChanged: bootstrap/healer failed:', err));
+        }
         return;
     }
 
@@ -3631,15 +3639,6 @@ async function init() {
         }
     });
 
-    // Deferred startup Healer: catches branches when ST loads directly into a
-    // chat without firing CHAT_CHANGED (e.g., on page reload mid-branch).
-    setTimeout(() => {
-        const ctx  = SillyTavern.getContext();
-        const char = ctx?.characters?.[ctx?.characterId];
-        if (char) runHealer(char, char.chat).catch(err =>
-            console.error('[CNZ] Startup Healer uncaught error:', err),
-        );
-    }, 1000);
 }
 
 await init();
