@@ -1641,10 +1641,10 @@ function buildModalTranscript(horizonTurns) {
  * @returns {string}
  */
 function buildSyncWindowTranscript(horizonTurns) {
-    const pairs = _stagedProsePairs.length > 0
-        ? _stagedProsePairs
+    const allPairs = _stagedProsePairs.length > 0
+        ? _stagedProsePairs.slice(0, _splitPairIdx)
         : buildProsePairs(SillyTavern.getContext().chat ?? []);
-    const windowPairs = pairs.slice(-horizonTurns);
+    const windowPairs = allPairs.slice(-horizonTurns);
     const windowMsgs  = windowPairs.flatMap(p => [p.user, p.ai]);
     return buildTranscript(windowMsgs);
 }
