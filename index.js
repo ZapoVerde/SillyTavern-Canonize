@@ -2423,8 +2423,21 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
             });
             const lbPairs = buildProsePairs(messagesFromLastSync);
             lbTranscript  = buildTranscript(lbPairs.flatMap(p => [p.user, p.ai]));
+            console.log(
+                `[CNZ-DBG] ── TURN ROUTING ──\n` +
+                `  → HOOKSEEKER AI  (${hookPairs.length} turns, validIdx ${hookPairs[0]?.validIdx ?? '?'}–${hookPairs[hookPairs.length - 1]?.validIdx ?? '?'}):` +
+                `\n      ` + hookPairs.map(p => `[${p.validIdx}] ${p.user?.name ?? '?'} → ${p.ai?.name ?? '?'}`).join('\n      ') +
+                `\n  → LOREBOOK AI   (${lbPairs.length} turns from after lastSync turn ${lastAt}, lastSync mode):` +
+                `\n      ` + lbPairs.map(p => `[${p.validIdx}] ${p.user?.name ?? '?'} → ${p.ai?.name ?? '?'}`).join('\n      ')
+            );
         } else {
             lbTranscript = hooksTranscript;
+            console.log(
+                `[CNZ-DBG] ── TURN ROUTING ──\n` +
+                `  → HOOKSEEKER AI  (${hookPairs.length} turns, validIdx ${hookPairs[0]?.validIdx ?? '?'}–${hookPairs[hookPairs.length - 1]?.validIdx ?? '?'}):` +
+                `\n      ` + hookPairs.map(p => `[${p.validIdx}] ${p.user?.name ?? '?'} → ${p.ai?.name ?? '?'}`).join('\n      ') +
+                `\n  → LOREBOOK AI   same window as hookseeker (${coverAll ? 'coverAll mode' : `lorebookSyncStart=${settings.lorebookSyncStart}`})`
+            );
         }
 
         // ── 2. Ensure lorebook is loaded ──────────────────────────────────────
@@ -2453,10 +2466,19 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
             const pairStartIdx   = commitBoundary <= 0 ? 0 : allPairs.findIndex(p => p.validIdx >= commitBoundary);
             ragPairs             = pairStartIdx === -1 ? [] : allPairs.slice(pairStartIdx, pairStartIdx + windowSize);
         }
+        // ── DEBUG: previous chunk (ledger head) and RAG window ────────────────
         console.log(
-            `[CNZ-DBG] ragPairs: ${ragPairs.length} pairs` +
-            (ragPairs.length > 0 ? ` | validIdx ${ragPairs[0].validIdx}–${ragPairs[ragPairs.length - 1].validIdx}` : '') +
-            ` | headSeqNum=${headNodeForRag?.sequenceNum ?? 'none'} syncFrom=${syncFrom}`
+            `[CNZ-DBG] ── CHUNK / RAG WINDOW ──\n` +
+            `  previous chunk (ledger head): ${
+                headNodeForRag
+                    ? `nodeId=${headNodeForRag.nodeId}  seqNum=${headNodeForRag.sequenceNum}  (turns up to ${headNodeForRag.sequenceNum} committed)`
+                    : 'none — this is the first sync'
+            }\n` +
+            `  → RAG SUMMARIZER (${ragPairs.length} turns${ragPairs.length > 0 ? `, validIdx ${ragPairs[0].validIdx}–${ragPairs[ragPairs.length - 1].validIdx}` : ''}):` +
+            (ragPairs.length > 0
+                ? `\n      ` + ragPairs.map(p => `[${p.validIdx}] ${p.user?.name ?? '?'} → ${p.ai?.name ?? '?'}`).join('\n      ')
+                : ' (empty — nothing to classify)') +
+            `\n  headSeqNum=${headNodeForRag?.sequenceNum ?? 'none'}  syncFrom=${syncFrom}  allPairs=${allPairs.length}  coverAll=${coverAll}`
         );
 
         // ── 4. Fire Lorebook Sync + Hookseeker (staggered, with auto-retry) ──
@@ -3295,6 +3317,91 @@ async function onWandButtonClick() {
     const windowSize   = getSettings().chunkEveryN ?? 20;
     const gap          = lastSyncAt != null ? currentCount - lastSyncAt : Infinity;
 
+    // ── DEBUG: manual trigger state ───────────────────────────────────────────
+    {
+        const syncFrom    = getSettings().syncFromTurn ?? 1;
+        const maskedCount = Math.max(0, syncFrom - 1);
+        const ledgerHead  = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
+        console.log(
+            `[CNZ-DBG] ═══ MANUAL TRIGGER ═══\n` +
+            `  char:         ${char.name}\n` +
+            `  total turns:  ${currentCount} non-system\n` +
+            `  lastSyncAt:   ${lastSyncAt ?? 'never'}\n` +
+            `  gap:          ${isFinite(gap) ? gap : '∞ (never synced)'}\n` +
+            `  windowSize:   ${windowSize}\n` +
+            `  syncFromTurn: ${syncFrom}  →  turns 1–${maskedCount} are masked from the main AI prompt\n` +
+            `  ledger head:  ${ledgerHead ? `nodeId=${ledgerHead.nodeId} seqNum=${ledgerHead.sequenceNum}` : 'none (never committed)'}`
+        );
+    }
+
+    // ── DEBUG: PLANNED WINDOWS (what SHOULD go to each AI, computed from current state) ──
+    {
+        const syncFrom = getSettings().syncFromTurn ?? 1;
+
+        // Masked turns: non-system messages before syncFromTurn
+        let _nsM = 0;
+        const _maskedTurns = messages.filter(m => {
+            if (m.is_system) return false;
+            _nsM++;
+            return _nsM < syncFrom;
+        });
+
+        // All pairs from syncFromTurn onward (same slice as runCnzSync uses)
+        let _nsA = 0;
+        const _msgsFromSync = messages.filter(m => {
+            if (!m.is_system) _nsA++;
+            return m.is_system || _nsA >= syncFrom;
+        });
+        const _allPairs = buildProsePairs(_msgsFromSync);
+
+        // Hook window: last windowSize pairs (standard, non-coverAll)
+        const _hookPairs = _allPairs.slice(-windowSize);
+
+        // Lorebook window
+        const _lbMode    = getSettings().lorebookSyncStart ?? 'syncTurn';
+        const _lastSyncT = getMetaSettings().lastLorebookSyncAt;
+        let _lbPairs;
+        if (_lbMode === 'lastSync' && _lastSyncT != null) {
+            let _nsL = 0;
+            const _msgsFromLastSync = messages.filter(m => {
+                if (!m.is_system) _nsL++;
+                return m.is_system || _nsL > _lastSyncT;
+            });
+            _lbPairs = buildProsePairs(_msgsFromLastSync);
+        } else {
+            _lbPairs = null; // same as hook window
+        }
+
+        // RAG window: the uncommitted gap chunk
+        const _ledgerHead = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
+        let _ragPairs;
+        if (!_ledgerHead) {
+            _ragPairs = _allPairs;
+        } else {
+            const _boundary    = _ledgerHead.sequenceNum - syncFrom + 1;
+            const _pairStart   = _boundary <= 0 ? 0 : _allPairs.findIndex(p => p.validIdx >= _boundary);
+            _ragPairs          = _pairStart === -1 ? [] : _allPairs.slice(_pairStart, _pairStart + windowSize);
+        }
+
+        const _fmt = pairs => pairs.length
+            ? pairs.map(p => `[validIdx=${p.validIdx}] ${p.user?.name ?? '?'} → ${p.ai?.name ?? '?'}`).join('\n      ')
+            : '(none)';
+
+        console.log(
+            `[CNZ-DBG] ═══ PLANNED WINDOWS (standard window — what SHOULD be sent) ═══\n` +
+            `\n  CONTEXT MASK — turns hidden from main AI prompt (syncFromTurn=${syncFrom}):\n` +
+            `      ` + (_maskedTurns.length
+                ? _maskedTurns.map((m, i) => `[turn ${i + 1}] ${m.name ?? '?'}`).join('\n      ')
+                : '(none — no turns masked)') +
+            `\n\n  HOOKSEEKER AI — last ${windowSize} of ${_allPairs.length} available pairs:\n` +
+            `      ` + _fmt(_hookPairs) +
+            `\n\n  LOREBOOK AI — ${_lbPairs ? `lastSync mode, from after turn ${_lastSyncT} (${_lbPairs.length} pairs)` : `same window as hookseeker (${_hookPairs.length} pairs)`}:\n` +
+            `      ` + (_lbPairs ? _fmt(_lbPairs) : '(same as hookseeker)') +
+            `\n\n  RAG SUMMARIZER — gap chunk${_ledgerHead ? ` after seqNum=${_ledgerHead.sequenceNum}` : ' (first sync — all turns)'} (${_ragPairs.length} pairs):\n` +
+            `      ` + _fmt(_ragPairs)
+        );
+    }
+
     // Already covered — open modal with the existing dataset.
     if (gap < windowSize) {
         openReviewModal();
@@ -3361,8 +3468,19 @@ async function init() {
         });
         const hidden = data.chat.length - filtered.length;
         if (hidden > 0) {
+            // Capture hidden messages BEFORE the splice
+            const hiddenMsgs = data.chat.filter(m => !filtered.includes(m));
+            const firstKept  = filtered.find(m => m.role !== 'system');
             data.chat.splice(0, data.chat.length, ...filtered);
-            console.log(`[CNZ] Context mask: hid ${hidden} canonized turn(s) from LLM prompt.`);
+            console.log(
+                `[CNZ-DBG] ── CONTEXT MASK ──\n` +
+                `  syncFromTurn=${syncFrom}  hidden=${hiddenMsgs.length} non-system msg(s)  total prompt msgs after=${filtered.length}\n` +
+                `  first kept non-system: "${firstKept?.name ?? '?'}" (role=${firstKept?.role ?? '?'})\n` +
+                `  masked turns (excluded from main AI prompt):\n      ` +
+                hiddenMsgs.filter(m => m.role !== 'system')
+                    .map((m, i) => `[${i + 1}] ${m.name ?? '?'} (role=${m.role ?? '?'})`)
+                    .join('\n      ')
+            );
         }
     });
 
