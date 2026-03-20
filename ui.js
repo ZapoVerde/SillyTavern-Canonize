@@ -52,6 +52,9 @@ export function buildModalHTML() {
     <div id="stne-step-2" class="stne-step stne-hidden">
       <div class="stne-section-header">
         <h3 id="stne-lb-title" class="stne-title">Lorebook</h3>
+        <label class="stne-checkbox-label stne-label-sm" title="When checked, regen uses the full chat up to the latest turn instead of the sync window">
+          <input id="stne-lb-up-to-latest" type="checkbox"> Up to latest turn
+        </label>
         <span id="stne-lb-spinner" class="stne-section-spin fa-solid fa-spinner fa-spin stne-hidden"></span>
         <button id="stne-lb-regen" class="stne-btn stne-btn-secondary stne-btn-sm">&#x21bb;</button>
       </div>

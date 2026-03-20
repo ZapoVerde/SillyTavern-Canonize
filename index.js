@@ -27,7 +27,6 @@ import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML } from './ui.js
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const EXT_NAME            = 'stne';
-const DEFAULT_LOOKBACK    = 1;
 const DEFAULT_CONCURRENCY = 5;
 const HOOKS_START         = '<!-- STNE_HOOKS_START -->';
 const HOOKS_END           = '<!-- STNE_HOOKS_END -->';
@@ -100,7 +99,6 @@ Header: The protagonist discovers undeniable proof of betrayal in the hidden let
 
 GLOBAL CHAPTER SUMMARY (context only — do NOT classify):
 {{summary}}
-{{context_block}}
 
 TARGET TURNS:
 {{target_turns}}
@@ -448,8 +446,8 @@ function buildRagChunks(pairs) {
     } else {
         // Overlapping: step = 1 new pair per chunk; each chunk includes `overlap` prior pairs
         // chunk at position i covers pairs[max(0, i - overlap) .. i] inclusive
-        const startIdx = Math.max(0, overlap - 1);
-        for (let i = startIdx; i < pairs.length; i++) {
+        // Start at 0 so every turn gets an event, even when the full overlap context isn't yet available.
+        for (let i = 0; i < pairs.length; i++) {
             const sliceFrom = Math.max(0, i - overlap);
             const window    = pairs.slice(sliceFrom, i + 1);
             const turnA     = sliceFrom + 1;
@@ -514,7 +512,6 @@ async function ragFireChunk(chunkIndex) {
     const localGenId       = ++chunk.genId;
     const globalGenId      = _ragGlobalGenId;
     const summaryAtCall    = _lastSummaryUsedForRag;
-    const lookback         = getSettings().classifierLookback ?? DEFAULT_LOOKBACK;
 
     chunk.status = 'in-flight';
     _ragInFlightCount++;
@@ -524,9 +521,8 @@ async function ragFireChunk(chunkIndex) {
     try {
         const pairStart    = chunk.pairStart ?? chunkIndex;
         const pairEnd      = chunk.pairEnd   ?? (pairStart + 1);
-        const contextPairs = _stagedProsePairs.slice(Math.max(0, pairStart - lookback), pairStart);
         const targetPairs  = _stagedProsePairs.slice(pairStart, Math.min(pairEnd, _splitPairIdx));
-        const header       = await runRagClassifierCall(summaryAtCall, contextPairs, targetPairs);
+        const header       = await runRagClassifierCall(summaryAtCall, targetPairs);
 
         const globalStale = _ragGlobalGenId !== globalGenId;
         const localStale  = chunk.genId !== localGenId;
@@ -595,24 +591,18 @@ async function waitForRagChunks(timeoutMs = 120_000) {
 /**
  * Builds and fires the prompt for a single RAG classification call.
  * @param {string} summaryText
- * @param {Array}  contextPairs
  * @param {Array}  targetPairs
  * @returns {Promise<string>}
  */
-async function runRagClassifierCall(summaryText, contextPairs, targetPairs) {
+async function runRagClassifierCall(summaryText, targetPairs) {
     const formatPairs = pairs => pairs
         .map(p => `[${p.user.name.toUpperCase()}]\n${p.user.mes}\n\n[${p.ai.name.toUpperCase()}]\n${p.ai.mes}`)
         .join('\n\n');
 
-    const contextBlock = contextPairs.length > 0
-        ? `CONTEXT TURNS (for background only — do NOT classify these):\n${formatPairs(contextPairs)}\n\n`
-        : '';
-
     const promptTemplate = getSettings().ragClassifierPrompt || DEFAULT_RAG_CLASSIFIER_PROMPT;
     const prompt = interpolate(promptTemplate, {
-        summary:       summaryText,
-        context_block: contextBlock,
-        target_turns:  formatPairs(targetPairs),
+        summary:      summaryText,
+        target_turns: formatPairs(targetPairs),
     });
 
     return generateWithRagProfile(prompt);
@@ -1403,7 +1393,8 @@ function setHooksLoading(isLoading) {
 }
 
 /**
- * Builds a rolling window transcript for modal AI calls.
+ * Builds a rolling window transcript for modal AI calls, using the full chat
+ * (up to the latest turn). Used when "up to latest turn" is explicitly requested.
  * @param {number} horizonTurns  Number of trailing turns to include.
  * @returns {string}
  */
@@ -1416,12 +1407,28 @@ function buildModalTranscript(horizonTurns) {
     return buildTranscript(windowMsgs);
 }
 
+/**
+ * Builds a transcript bounded by the sync window (_stagedProsePairs), so AI calls
+ * never see turns beyond the edge of the last sync. Falls back to full context if no
+ * sync has been staged yet.
+ * @param {number} horizonTurns  Number of trailing turns to include.
+ * @returns {string}
+ */
+function buildSyncWindowTranscript(horizonTurns) {
+    const pairs = _stagedProsePairs.length > 0
+        ? _stagedProsePairs
+        : buildProsePairs(SillyTavern.getContext().chat ?? []);
+    const windowPairs = pairs.slice(-horizonTurns);
+    const windowMsgs  = windowPairs.flatMap(p => [p.user, p.ai]);
+    return buildTranscript(windowMsgs);
+}
+
 function onRegenHooksClick() {
     setHooksLoading(true);
     $('#stne-error-1').addClass('stne-hidden').text('');
     const hooksId  = ++_hooksGenId;
     const horizon  = getSettings().hookseekerHorizon ?? 70;
-    const transcript = buildModalTranscript(horizon);
+    const transcript = buildSyncWindowTranscript(horizon);
     runHookseekerCall(transcript, _priorSituation)
         .then(text => {
             if (_hooksGenId !== hooksId) return;
@@ -1469,7 +1476,8 @@ function onLbRegenClick() {
     $('#stne-lb-error').addClass('stne-hidden').text('');
     const lbId       = ++_lorebookGenId;
     const horizon    = getSettings().chunkEveryN ?? 20;
-    const transcript = buildModalTranscript(horizon);
+    const upToLatest = $('#stne-lb-up-to-latest').is(':checked');
+    const transcript = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon);
     runLorebookSyncCall(transcript)
         .then(text => { if (_lorebookGenId !== lbId) return; populateLbFreeform(text); })
         .catch(err => {
@@ -2674,7 +2682,7 @@ function bindSettingsHandlers() {
 
     $('#stne-edit-classifier-prompt').on('click', () =>
         openPromptModal('ragClassifierPrompt', 'Edit Classifier Prompt', DEFAULT_RAG_CLASSIFIER_PROMPT,
-            ['summary', 'context_block', 'target_turns']));
+            ['summary', 'target_turns']));
 
     // ── Connection profiles ───────────────────────────────────────────────────
     try {
