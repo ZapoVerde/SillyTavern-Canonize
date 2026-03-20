@@ -2165,17 +2165,32 @@ async function runStneSync(char, messages) {
             await fetchOrBootstrapLedger(char.avatar);
         }
 
-        // ── 4. Fire Lorebook Sync + Hookseeker in parallel ────────────────────
+        // ── 4. Fire Lorebook Sync + Hookseeker (staggered, with auto-retry) ──
         let lorebookSyncText, hookseekerText;
-        try {
-            [lorebookSyncText, hookseekerText] = await Promise.all([
-                runLorebookSyncCall(lbTranscript),
-                runHookseekerCall(hooksTranscript, _priorSituation),
-            ]);
-        } catch (err) {
-            console.error('[STNE] AI calls failed:', err);
-            toastr.warning(`STNE: AI calls failed — ${err.message}`);
-            return; // cannot proceed without AI output
+        {
+            const MAX_ATTEMPTS = 3;
+            let lastErr;
+            for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+                try {
+                    lorebookSyncText = await runLorebookSyncCall(lbTranscript);
+                    await new Promise(r => setTimeout(r, 1000));
+                    hookseekerText   = await runHookseekerCall(hooksTranscript, _priorSituation);
+                    lastErr = null;
+                    break;
+                } catch (err) {
+                    lastErr = err;
+                    console.warn(`[STNE] AI calls failed (attempt ${attempt}/${MAX_ATTEMPTS}):`, err);
+                    if (attempt < MAX_ATTEMPTS) {
+                        toastr.warning(`STNE: AI call failed — retrying (${attempt}/${MAX_ATTEMPTS})…`);
+                        await new Promise(r => setTimeout(r, 2000 * attempt));
+                    }
+                }
+            }
+            if (lastErr) {
+                console.error('[STNE] AI calls failed after all retries:', lastErr);
+                toastr.error(`STNE: AI calls failed after ${MAX_ATTEMPTS} attempts — ${lastErr.message}`);
+                return;
+            }
         }
 
         // ── 5. Apply Lorebook Sync: parse → enrich → auto-apply → save ────────
@@ -2820,12 +2835,27 @@ function onChatChanged() {
     }
 }
 
+// ─── Wand Menu Button ─────────────────────────────────────────────────────────
+
+function injectWandButton() {
+    if ($('#stne-wand-btn').length) return;
+    const btn = $(
+        '<div id="stne-wand-btn" class="list-group-item flex-container flexGap5" title="Run Canonize">' +
+        '<i class="fa-solid fa-book-open"></i>' +
+        '<span>Run Canonize</span>' +
+        '</div>'
+    );
+    btn.on('click', () => openReviewModal());
+    $('#extensionsMenu').append(btn);
+}
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 async function init() {
     initSettings();
     injectModal();
     injectSettingsPanel();
+    injectWandButton();
     eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
     eventSource.on(event_types.CHAT_CHANGED,     onChatChanged);
     eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, (data) => {
