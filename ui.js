@@ -303,13 +303,6 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
                   title="Edit the prompt template used when asking the AI to suggest lorebook entry updates and new entries.">Edit Lorebook Sync Prompt</button>
         </div>
 
-        <div class="stne-settings-row">
-          <label for="stne-hookseeker-trailing-prompt">Summary trailing prompt ${tip('Extra instructions appended after the transcript when running the summarizer. Use this to add context-specific guidance without editing the full prompt template.')}</label>
-          <textarea id="stne-hookseeker-trailing-prompt" class="stne-input" rows="4"
-                    placeholder="e.g. Pay special attention to …"
-                    style="width:100%;resize:vertical;">${escapeHtml(s.hookseekerTrailingPrompt ?? '')}</textarea>
-        </div>
-
         <!-- ── RAG Settings ── -->
         <div class="stne-settings-section-header">RAG Settings</div>
 

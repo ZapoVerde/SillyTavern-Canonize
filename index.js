@@ -2531,7 +2531,6 @@ function refreshSettingsUI() {
     $('#stne-set-hookseeker-horizon').val(s.hookseekerHorizon ?? 70);
     $('#stne-set-lorebook-sync-start').val(s.lorebookSyncStart ?? 'syncTurn');
     $('#stne-set-prune-on-sync').prop('checked', s.pruneOnSync ?? false);
-    $('#stne-hookseeker-trailing-prompt').val(s.hookseekerTrailingPrompt ?? '');
     $('#stne-set-enable-rag').prop('checked', s.enableRag ?? false);
     $('#stne-rag-settings-body').toggleClass('stne-disabled', !(s.enableRag ?? false));
     $('#stne-set-rag-separator').val(s.ragSeparator ?? '');
@@ -2602,11 +2601,6 @@ function bindSettingsHandlers() {
 
     $('#stne-set-prune-on-sync').on('change', function () {
         getSettings().pruneOnSync = $(this).prop('checked');
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#stne-hookseeker-trailing-prompt').on('input', function () {
-        getSettings().hookseekerTrailingPrompt = $(this).val();
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
