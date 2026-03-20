@@ -110,6 +110,7 @@ TARGET TURNS:
 // included in a profile object.
 const PROFILE_DEFAULTS = Object.freeze({
     chunkEveryN:              20,
+    gapSnoozeTurns:           5,
     hookseekerHorizon:        70,
     autoSync:                 true,
     profileId:                null,
@@ -143,6 +144,9 @@ let _sessionStartId = null;  // headNodeId captured at session start
 
 // Concurrency guard — prevents overlapping syncs
 let _syncInProgress = false;
+
+// Large-gap snooze — suppress the top-up offer until this non-system count is exceeded
+let _snoozeUntilCount = 0;
 
 // Healer tracking — updated on CHAT_CHANGED
 let _lastKnownAvatar = null;
@@ -1519,15 +1523,25 @@ function onEnterRagWorkshop() {
             if (!m.is_system) nsIdx++;
             return m.is_system || nsIdx >= syncFrom;
         });
-        const allPairs = buildProsePairs(messagesFromTurn);
-        const windowPairs = allPairs.slice(-windowSize);
+        const allPairs    = buildProsePairs(messagesFromTurn);
+        const headNode    = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
+        let windowPairs;
+        if (!headNode) {
+            // No prior commits — fall back to trailing window (nothing canonized yet)
+            windowPairs = allPairs.slice(-windowSize);
+        } else {
+            // Anchor to the committed head: classify the gap [headSeqNum, headSeqNum + windowSize)
+            const commitBoundary = headNode.sequenceNum - syncFrom + 1;
+            const pairStartIdx   = commitBoundary <= 0 ? 0 : allPairs.findIndex(p => p.validIdx >= commitBoundary);
+            windowPairs          = pairStartIdx === -1 ? [] : allPairs.slice(pairStartIdx, pairStartIdx + windowSize);
+        }
         if (windowPairs.length > 0) {
             _stagedProsePairs = windowPairs;
             _splitPairIdx     = windowPairs.length;
             console.log(
                 `[CNZ-DBG] onEnterRagWorkshop: seeded _stagedProsePairs from live chat` +
                 ` — ${windowPairs.length} pairs (validIdx ${windowPairs[0].validIdx}–${windowPairs[windowPairs.length - 1].validIdx})` +
-                ` syncFrom=${syncFrom} windowSize=${windowSize}`
+                ` syncFrom=${syncFrom} windowSize=${windowSize} headSeqNum=${headNode?.sequenceNum ?? 'none'}`
             );
         } else {
             console.warn('[CNZ-DBG] onEnterRagWorkshop: live chat also yielded 0 pairs — chat may be empty or all system messages.');
@@ -2346,33 +2360,33 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
         const allPairs   = buildProsePairs(messagesFromTurn);
         const windowSize = settings.chunkEveryN ?? 20;
-        // coverAll: use every pair since syncFrom; otherwise cap at the rolling window.
-        const windowPairs = coverAll ? allPairs : allPairs.slice(-windowSize);
+        // hookPairs: most recent N turns — what's dramatically active, for hookseeker.
+        const hookPairs = coverAll ? allPairs : allPairs.slice(-windowSize);
 
-        if (!windowPairs.length) {
+        if (!hookPairs.length) {
             console.log('[CNZ] No complete pairs in window — skipping sync.');
             return;
         }
 
         // ── DEBUG: turn window coverage ───────────────────────────────────────
         {
-            const firstPair = windowPairs[0];
-            const lastPair  = windowPairs[windowPairs.length - 1];
+            const firstPair = hookPairs[0];
+            const lastPair  = hookPairs[hookPairs.length - 1];
             const firstTurn = (firstPair.validIdx ?? 0) + 1;
-            const lastTurn  = (lastPair.validIdx  ?? windowPairs.length - 1) + 1;
+            const lastTurn  = (lastPair.validIdx  ?? hookPairs.length - 1) + 1;
             console.log(
-                `[CNZ-DBG] runCnzSync window: ${windowPairs.length} pairs` +
+                `[CNZ-DBG] runCnzSync hookPairs: ${hookPairs.length} pairs` +
                 ` | validIdx range ${firstPair.validIdx}–${lastPair.validIdx}` +
                 ` | approx turns ${firstTurn}–${lastTurn}` +
                 ` | allPairs=${allPairs.length} windowSize=${windowSize} coverAll=${coverAll} syncFrom=${syncFrom}`
             );
-            console.log('[CNZ-DBG] windowPairs summary:', windowPairs.map(p =>
+            console.log('[CNZ-DBG] hookPairs summary:', hookPairs.map(p =>
                 `[${p.validIdx}] ${p.user?.name ?? '?'} → ${p.ai?.name ?? '?'}`
             ));
         }
 
-        // Build hookseeker transcript from the chosen window
-        const windowMessages  = windowPairs.flatMap(p => [p.user, p.ai]);
+        // Build hookseeker transcript from the hook window (most recent N turns)
+        const windowMessages  = hookPairs.flatMap(p => [p.user, p.ai]);
         const hooksTranscript = buildTranscript(windowMessages);
 
         // Build lorebook transcript — optionally from last sync point.
@@ -2404,6 +2418,25 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         if (!_ledgerManifest) {
             await fetchOrBootstrapLedger(char.avatar);
         }
+
+        // ragPairs: the committed gap [headSeqNum, headSeqNum + windowSize).
+        // Distinct from hookPairs — hookseeker wants recent turns; RAG wants the canonical record.
+        const headNodeForRag = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
+        let ragPairs;
+        if (!headNodeForRag || coverAll) {
+            ragPairs = allPairs;
+        } else {
+            // valid[k] in allPairs is the (syncFrom + k)-th non-system message (1-indexed absolute).
+            // Head committed sequenceNum total non-system messages; first uncommitted is at k = sequenceNum - syncFrom + 1.
+            const commitBoundary = headNodeForRag.sequenceNum - syncFrom + 1;
+            const pairStartIdx   = commitBoundary <= 0 ? 0 : allPairs.findIndex(p => p.validIdx >= commitBoundary);
+            ragPairs             = pairStartIdx === -1 ? [] : allPairs.slice(pairStartIdx, pairStartIdx + windowSize);
+        }
+        console.log(
+            `[CNZ-DBG] ragPairs: ${ragPairs.length} pairs` +
+            (ragPairs.length > 0 ? ` | validIdx ${ragPairs[0].validIdx}–${ragPairs[ragPairs.length - 1].validIdx}` : '') +
+            ` | headSeqNum=${headNodeForRag?.sequenceNum ?? 'none'} syncFrom=${syncFrom}`
+        );
 
         // ── 4. Fire Lorebook Sync + Hookseeker (staggered, with auto-retry) ──
         let lorebookSyncText, hookseekerText;
@@ -2506,12 +2539,12 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         } else
         try {
             // Set module state for ragFireChunk/ragDrainQueue machinery
-            _stagedProsePairs      = windowPairs;
-            _splitPairIdx          = windowPairs.length;   // all window pairs are archive
+            _stagedProsePairs      = ragPairs;
+            _splitPairIdx          = ragPairs.length;      // all gap pairs are archive
             _ragGlobalGenId++;                             // invalidate any stale callbacks
             _ragInFlightCount      = 0;
             _ragCallQueue          = [];
-            _ragChunks             = buildRagChunks(windowPairs);
+            _ragChunks             = buildRagChunks(ragPairs);
             _lastSummaryUsedForRag = hookseekerText.trim();
 
             // Pre-populate headers from chat file — skips AI for already-classified chunks
@@ -2584,9 +2617,9 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         // ── 10. Rolling trim ──────────────────────────────────────────────────
         // Only prune when both lorebook and hookseeker succeeded — canonized
         // content must be safely committed before the source turns are deleted.
-        if (settings.pruneOnSync && lbOk && hooksOk && windowPairs.length > 0) {
+        if (settings.pruneOnSync && lbOk && hooksOk && ragPairs.length > 0) {
             try {
-                await pruneCanonizedTurns(messages, windowPairs[0].user);
+                await pruneCanonizedTurns(messages, ragPairs[0].user);
             } catch (err) {
                 console.error('[CNZ] Rolling trim failed:', err);
                 toastr.warning(`CNZ: Rolling trim failed — ${err.message}`);
@@ -2784,6 +2817,7 @@ function refreshSettingsUI() {
 
     $('#cnz-set-sync-from-turn').val(s.syncFromTurn ?? 1);
     $('#cnz-set-chunk-every-n').val(s.chunkEveryN ?? 20);
+    $('#cnz-set-gap-snooze').val(s.gapSnoozeTurns ?? 5);
     $('#cnz-set-hookseeker-horizon').val(s.hookseekerHorizon ?? 70);
     $('#cnz-set-lorebook-sync-start').val(s.lorebookSyncStart ?? 'syncTurn');
     $('#cnz-set-prune-on-sync').prop('checked', s.pruneOnSync ?? false);
@@ -2841,6 +2875,12 @@ function bindSettingsHandlers() {
     $('#cnz-set-chunk-every-n').on('input', function () {
         const val = Math.max(1, parseInt($(this).val()) || 20);
         getSettings().chunkEveryN = val;
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-gap-snooze').on('input', function () {
+        const val = Math.max(1, parseInt($(this).val()) || 5);
+        getSettings().gapSnoozeTurns = val;
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
@@ -3073,7 +3113,7 @@ function injectSettingsPanel() {
 
 // ─── Event Handlers ───────────────────────────────────────────────────────────
 
-function onMessageReceived() {
+async function onMessageReceived() {
     const context = SillyTavern.getContext();
     if (!context || context.groupId || context.characterId == null) return;
     if (!getSettings().autoSync) return;
@@ -3081,13 +3121,79 @@ function onMessageReceived() {
     const messages = context.chat ?? [];
     const count    = messages.filter(m => !m.is_system).length;
     const every    = getSettings().chunkEveryN ?? 20;
+    if (every <= 0 || count <= 0) return;
 
-    if (every > 0 && count > 0 && count % every === 0) {
+    // ── Snooze check ──────────────────────────────────────────────────────────
+    if (count <= _snoozeUntilCount) return;
+
+    // ── Gap detection ─────────────────────────────────────────────────────────
+    // Ledger not loaded yet (character just opened, healer hasn't run) —
+    // fall back to legacy modulo trigger so auto-sync still fires.
+    if (!_ledgerManifest) {
+        if (count % every !== 0) return;
         const char = context.characters[context.characterId];
         runCnzSync(char, messages).catch(err =>
             console.error('[CNZ] runCnzSync uncaught error:', err),
         );
+        return;
     }
+
+    // headNode.sequenceNum is the total non-system count at the last commit.
+    // _ledgerManifest is the authoritative source here; onWandButtonClick uses
+    // lastLorebookSyncAt (a separate counter) — both are updated by runCnzSync
+    // so they agree in the common case.
+    const headNode   = _ledgerManifest.nodes?.[_ledgerManifest.headNodeId];
+    const priorCount = headNode?.sequenceNum ?? 0;
+    const gap        = count - priorCount;
+
+    if (gap < every) return;  // not enough new turns yet
+
+    const char = context.characters[context.characterId];
+
+    if (gap < every * 2) {
+        // Standard case — one window's worth of new turns, run silently.
+        runCnzSync(char, messages).catch(err =>
+            console.error('[CNZ] runCnzSync uncaught error:', err),
+        );
+        return;
+    }
+
+    // ── Large-gap path ────────────────────────────────────────────────────────
+    // Auto-run the standard window sync first so the user gets fast feedback,
+    // then offer to also canonize the remaining older turns.
+    if (_syncInProgress) return;  // already running from a prior trigger
+
+    try {
+        await runCnzSync(char, messages);
+    } catch (err) {
+        console.error('[CNZ] runCnzSync uncaught error:', err);
+        return;
+    }
+
+    // Re-read the head after the window sync — it may have covered the gap.
+    const newHead      = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
+    const newPrior     = newHead?.sequenceNum ?? 0;
+    const remaining    = count - newPrior;
+    const snoozeTurns  = getSettings().gapSnoozeTurns ?? 5;
+
+    if (remaining < every) return;  // window sync was enough
+
+    const choice = await showSyncChoicePopup(
+        `<h3>More turns need canonizing</h3>
+        <p>${remaining} earlier turn(s) predate the latest sync window and haven't been canonized yet.</p>`,
+        `Sync remaining ${remaining} turns`,
+        `Snooze (skip next ${snoozeTurns} turns)`,
+    );
+
+    if (choice === 'full') {
+        runCnzSync(char, messages, { coverAll: true }).catch(err =>
+            console.error('[CNZ] runCnzSync uncaught error:', err),
+        );
+    } else if (choice === 'window') {
+        _snoozeUntilCount = count + snoozeTurns;
+        console.log(`[CNZ] Large-gap offer snoozed until turn ${_snoozeUntilCount}.`);
+    }
+    // 'cancel' — dismiss, do nothing; user may trigger manually via wand
 }
 
 function onChatChanged() {

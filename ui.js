@@ -279,6 +279,12 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
         </div>
 
         <div class="cnz-settings-inline-row">
+          <label for="cnz-set-gap-snooze">Gap snooze (turns) ${tip('When a large gap is detected and you dismiss the top-up offer, auto-sync will stay quiet for this many additional turns before asking again.')}</label>
+          <input id="cnz-set-gap-snooze" type="number" min="1" step="1"
+                 value="${escapeHtml(String(s.gapSnoozeTurns ?? 5))}">
+        </div>
+
+        <div class="cnz-settings-inline-row">
           <label for="cnz-set-hookseeker-horizon">Summary horizon (turns) ${tip('How many of the most recent turns are fed to the narrative hook / summary generator. Higher values give richer context at the cost of more tokens. Typically 50–100.')}</label>
           <input id="cnz-set-hookseeker-horizon" type="number" min="1" step="1"
                  value="${escapeHtml(String(s.hookseekerHorizon ?? 70))}">
