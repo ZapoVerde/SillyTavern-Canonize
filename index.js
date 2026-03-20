@@ -1470,7 +1470,7 @@ function onLbRegenClick() {
     const lbId       = ++_lorebookGenId;
     const horizon    = getSettings().chunkEveryN ?? 20;
     const transcript = buildModalTranscript(horizon);
-    runFactFinderCall(transcript)
+    runLorebookSyncCall(transcript)
         .then(text => { if (_lorebookGenId !== lbId) return; populateLbFreeform(text); })
         .catch(err => {
             if (_lorebookGenId !== lbId) return;
@@ -2096,7 +2096,7 @@ function pruneCanonizedTurns(messages, windowFirstMsg) {
  * @param {object} char     Character object from ST context at trigger time.
  * @param {Array}  messages Full chat message array at trigger time.
  */
-async function runStneSync(char, messages) {
+async function runStneSync(char, messages, { coverAll = false } = {}) {
     if (_syncInProgress) {
         console.warn('[STNE] Sync already in progress — skipping this trigger.');
         return;
@@ -2104,7 +2104,7 @@ async function runStneSync(char, messages) {
     _syncInProgress = true;
 
     const nonSystemCount = messages.filter(m => !m.is_system).length;
-    console.log(`[STNE] runStneSync start — char=${char.name} turns=${nonSystemCount}`);
+    console.log(`[STNE] runStneSync start — char=${char.name} turns=${nonSystemCount} coverAll=${coverAll}`);
 
     // Step flags for toast reporting
     let lbOk     = false;
@@ -2124,22 +2124,25 @@ async function runStneSync(char, messages) {
             return m.is_system || nsIdx >= syncFrom;
         });
 
-        const allPairs    = buildProsePairs(messagesFromTurn);
-        const windowSize  = settings.chunkEveryN ?? 20;
-        const windowPairs = allPairs.slice(-windowSize);
+        const allPairs   = buildProsePairs(messagesFromTurn);
+        const windowSize = settings.chunkEveryN ?? 20;
+        // coverAll: use every pair since syncFrom; otherwise cap at the rolling window.
+        const windowPairs = coverAll ? allPairs : allPairs.slice(-windowSize);
 
         if (!windowPairs.length) {
             console.log('[STNE] No complete pairs in window — skipping sync.');
             return;
         }
 
-        // Build hookseeker transcript from the rolling window
+        // Build hookseeker transcript from the chosen window
         const windowMessages  = windowPairs.flatMap(p => [p.user, p.ai]);
         const hooksTranscript = buildTranscript(windowMessages);
 
-        // Build lorebook transcript — optionally from last sync point
+        // Build lorebook transcript — optionally from last sync point.
+        // In coverAll mode we always use the full window transcript so that
+        // the entire gap is visible to the lorebook curator.
         let lbTranscript;
-        if (settings.lorebookSyncStart === 'lastSync' && getMetaSettings().lastLorebookSyncAt != null) {
+        if (!coverAll && settings.lorebookSyncStart === 'lastSync' && getMetaSettings().lastLorebookSyncAt != null) {
             const lastAt = getMetaSettings().lastLorebookSyncAt;
             let nsIdx2 = 0;
             const messagesFromLastSync = messages.filter(m => {
@@ -2837,6 +2840,82 @@ function onChatChanged() {
 
 // ─── Wand Menu Button ─────────────────────────────────────────────────────────
 
+/**
+ * Shows a three-button choice dialog. Returns a Promise that resolves to
+ * 'full', 'window', or 'cancel'.
+ * @param {string} bodyHtml   Inner HTML for the message body.
+ * @param {string} fullLabel  Label for the "full gap" button.
+ * @param {string} winLabel   Label for the "standard window" button.
+ */
+function showSyncChoicePopup(bodyHtml, fullLabel, winLabel) {
+    return new Promise(resolve => {
+        const $overlay = $(`
+            <div class="stne-choice-overlay">
+                <div class="stne-choice-dialog">
+                    ${bodyHtml}
+                    <div class="stne-choice-buttons">
+                        <button class="stne-choice-full menu_button">${fullLabel}</button>
+                        <button class="stne-choice-win menu_button">${winLabel}</button>
+                        <button class="stne-choice-cancel menu_button">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        `);
+        $overlay.find('.stne-choice-full').on('click',   () => { $overlay.remove(); resolve('full'); });
+        $overlay.find('.stne-choice-win').on('click',    () => { $overlay.remove(); resolve('window'); });
+        $overlay.find('.stne-choice-cancel').on('click', () => { $overlay.remove(); resolve('cancel'); });
+        $('body').append($overlay);
+    });
+}
+
+async function onWandButtonClick() {
+    const ctx = SillyTavern.getContext();
+    if (!ctx || ctx.groupId || ctx.characterId == null) {
+        toastr.error('STNE: No character selected.');
+        return;
+    }
+    if (_syncInProgress) {
+        toastr.warning('STNE: Sync already in progress — please wait.');
+        return;
+    }
+
+    const char         = ctx.characters[ctx.characterId];
+    const messages     = ctx.chat ?? [];
+    const currentCount = messages.filter(m => !m.is_system).length;
+    const lastSyncAt   = getMetaSettings().lastLorebookSyncAt;
+    const windowSize   = getSettings().chunkEveryN ?? 20;
+    const gap          = lastSyncAt != null ? currentCount - lastSyncAt : Infinity;
+
+    // Already covered — open modal with the existing dataset.
+    if (gap < windowSize) {
+        openReviewModal();
+        return;
+    }
+
+    // Gap >= windowSize: a full new window (or more) has accumulated.
+    // Ask the user how much to cover.
+    let coverAll = false;
+    if (isFinite(gap)) {
+        const extraWarning = gap > windowSize
+            ? `<p class="stne-choice-warn">⚠ ${gap - windowSize} turn(s) in the middle may never have been captured by auto-sync.</p>`
+            : '';
+        const choice = await showSyncChoicePopup(
+            `<h3>How much should this sync cover?</h3>
+            <p>${gap} turn(s) have accumulated since the last sync (window size: ${windowSize}).</p>
+            ${extraWarning}`,
+            `Full gap (${gap} turns)`,
+            `Standard window (last ${windowSize} turns)`,
+        );
+        if (choice === 'cancel') return;
+        coverAll = choice === 'full';
+    }
+    // Never synced — no choice needed, run a standard window sync.
+
+    toastr.info(`STNE: Running sync (${coverAll ? `full ${gap}-turn gap` : `last ${windowSize} turns`})…`);
+    await runStneSync(char, messages, { coverAll });
+    openReviewModal();
+}
+
 function injectWandButton() {
     if ($('#stne-wand-btn').length) return;
     const btn = $(
@@ -2845,7 +2924,10 @@ function injectWandButton() {
         '<span>Run Canonize</span>' +
         '</div>'
     );
-    btn.on('click', () => openReviewModal());
+    btn.on('click', () => onWandButtonClick().catch(err => {
+        console.error('[STNE] Wand button error:', err);
+        toastr.error(`STNE: ${err.message}`);
+    }));
     $('#extensionsMenu').append(btn);
 }
 

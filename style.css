@@ -941,6 +941,60 @@
     cursor: pointer;
 }
 
+/* ─── Sync Choice Dialog ─────────────────────────────────────────────────── */
+
+.stne-choice-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.stne-choice-dialog {
+    background: var(--grey-800, #2a2a2a);
+    border: 1px solid var(--grey-600, #555);
+    border-radius: 8px;
+    padding: 24px 28px;
+    max-width: 420px;
+    width: 90%;
+    color: var(--text-default, #ddd);
+}
+
+.stne-choice-dialog h3 {
+    margin: 0 0 12px;
+    font-size: 1.05em;
+}
+
+.stne-choice-dialog p {
+    margin: 0 0 10px;
+    font-size: 0.9em;
+    line-height: 1.5;
+}
+
+.stne-choice-warn {
+    color: var(--yellow, #f0b429);
+}
+
+.stne-choice-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 18px;
+    flex-wrap: wrap;
+}
+
+.stne-choice-buttons .menu_button {
+    flex: 1;
+    min-width: 100px;
+}
+
+.stne-choice-cancel {
+    flex: 0 0 auto !important;
+    opacity: 0.7;
+}
+
 /* ─── Mobile ──────────────────────────────────────────────────────────────── */
 
 @media (max-width: 600px) {
