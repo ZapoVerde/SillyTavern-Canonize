@@ -1,9 +1,9 @@
 /**
- * @file data/default-user/extensions/stne/index.js
+ * @file data/default-user/extensions/cnz/index.js
  * @stamp {"utc":"2026-03-19T00:00:00.000Z"}
  * @architectural-role Feature Entry Point
  * @description
- * SillyTavern Narrative Engine (STNE) — autonomous background engine that
+ * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
  * silently fires AI calls every N turns to update the narrative lorebook and
  * build RAG chunks, then commits results without user intervention.
  * A lightweight review modal is optional (Phase 3). The Ledger engine tracks
@@ -12,7 +12,7 @@
  * timeline (Phase 4).
  *
  * Phase 1: Skeleton & Ledger Foundation
- * Phase 2: Fact-Finder (background sync) — runStneSync fully implemented
+ * Phase 2: Fact-Finder (background sync) — runCnzSync fully implemented
  *   - Fact-Finder: lorebook updates from last N turns
  *   - Hookseeker: narrative thread summary written to scenario anchor block
  *   - RAG chunks built, classified, uploaded as chat attachment
@@ -26,10 +26,10 @@ import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML } from './ui.js
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const EXT_NAME            = 'stne';
+const EXT_NAME            = 'cnz';
 const DEFAULT_CONCURRENCY = 5;
-const HOOKS_START         = '<!-- STNE_HOOKS_START -->';
-const HOOKS_END           = '<!-- STNE_HOOKS_END -->';
+const HOOKS_START         = '<!-- CNZ_HOOKS_START -->';
+const HOOKS_END           = '<!-- CNZ_HOOKS_END -->';
 
 const DEFAULT_LOREBOOK_SYNC_PROMPT = `
 [SYSTEM: TASK — LOREBOOK CURATOR]
@@ -134,7 +134,7 @@ const PROFILE_DEFAULTS = Object.freeze({
 });
 
 // ─── Session State ─────────────────────────────────────────────────────────────
-// Primary STNE state — persists across sync cycles.
+// Primary CNZ state — persists across sync cycles.
 
 let _lorebookData   = null;  // {entries:{}} — server copy of the active lorebook
 let _draftLorebook  = null;  // working copy for staged changes
@@ -303,7 +303,7 @@ function interpolate(template, vars) {
 // ─── Scenario Anchor Management ───────────────────────────────────────────────
 
 /**
- * Returns the text between the STNE hooks anchor comments, or null if absent.
+ * Returns the text between the CNZ hooks anchor comments, or null if absent.
  * Pure function — no side effects.
  * @param {string} scenarioText
  * @returns {string|null}
@@ -316,7 +316,7 @@ function extractHookseekerBlock(scenarioText) {
 }
 
 /**
- * Replaces the content between the STNE hooks anchor comments with `newContent`.
+ * Replaces the content between the CNZ hooks anchor comments with `newContent`.
  * If the anchors are absent, appends them (with two newlines of separation) to the
  * end of `scenarioText`. Returns the full updated scenario string.
  * Pure function — no side effects.
@@ -496,7 +496,7 @@ function renderChunkChatLabel(chunkIndex) {
     if (!$msgDiv.length) return;
 
     // Replace any existing label on this message
-    $msgDiv.find('.stne-chunk-label').remove();
+    $msgDiv.find('.cnz-chunk-label').remove();
 
     // For pending/in-flight chunks don't inject yet — label appears on completion
     if (chunk.status === 'pending' || chunk.status === 'in-flight') return;
@@ -505,8 +505,8 @@ function renderChunkChatLabel(chunkIndex) {
         ? `${chunk.turnRange}: ${chunk.header}`
         : chunk.turnRange;   // stale/error — show turn range only
 
-    const $label = $('<div class="stne-chunk-label"></div>');
-    $label.append($('<span class="stne-chunk-label-prefix">◆ CANONIZE </span>'));
+    const $label = $('<div class="cnz-chunk-label"></div>');
+    $label.append($('<span class="cnz-chunk-label-prefix">◆ CANONIZE </span>'));
     $label.append($('<span>').text(bodyText));
     $msgDiv.find('div.mes_text').after($label);
 }
@@ -526,12 +526,12 @@ function renderAllChunkChatLabels() {
  * Called on chat/character switch so stale labels don't bleed across chats.
  */
 function clearChunkChatLabels() {
-    $('#chat').find('.stne-chunk-label').remove();
+    $('#chat').find('.cnz-chunk-label').remove();
 }
 
 /**
  * Renders the separator template for a given chunk.
- * This rendered string is stored as stne_turn_label on the chat message and used
+ * This rendered string is stored as cnz_turn_label on the chat message and used
  * as a validity key — if it doesn't match on reload, the chunk is re-classified.
  * @param {object} chunk
  * @returns {string}
@@ -551,7 +551,7 @@ function renderSeparator(chunk) {
 
 /**
  * Writes a completed chunk's header into the last AI message of its pair window
- * as message.extra.stne_chunk_header / stne_turn_label, then saves the chat.
+ * as message.extra.cnz_chunk_header / cnz_turn_label, then saves the chat.
  * The chat file is the source of truth — this makes headers survive page reloads.
  * @param {number} chunkIndex
  */
@@ -562,17 +562,17 @@ async function writeChunkHeaderToChat(chunkIndex) {
     const pair = _stagedProsePairs[lastPairIdx];
     if (!pair?.ai) return;
     if (!pair.ai.extra) pair.ai.extra = {};
-    pair.ai.extra.stne_chunk_header = chunk.header;
-    pair.ai.extra.stne_turn_label   = renderSeparator(chunk);
+    pair.ai.extra.cnz_chunk_header = chunk.header;
+    pair.ai.extra.cnz_turn_label   = renderSeparator(chunk);
     try {
         await SillyTavern.getContext().saveChat();
     } catch (err) {
-        console.error('[STNE] writeChunkHeaderToChat: saveChat failed:', err);
+        console.error('[CNZ] writeChunkHeaderToChat: saveChat failed:', err);
     }
 }
 
 /**
- * Reads stne_chunk_header / stne_turn_label from each chunk's last AI message.
+ * Reads cnz_chunk_header / cnz_turn_label from each chunk's last AI message.
  * If the stored turn label matches the current rendered separator (same chunk
  * boundaries and same separator template), the chunk is pre-populated as complete
  * and skips AI classification.  Mismatches are left as 'pending'.
@@ -583,9 +583,9 @@ function hydrateChunkHeadersFromChat() {
         if (chunk.status === 'complete') continue;   // qvink or already hydrated
         const lastPairIdx = (chunk.pairEnd ?? chunk.chunkIndex + 1) - 1;
         const pair = _stagedProsePairs[lastPairIdx];
-        if (!pair?.ai?.extra?.stne_chunk_header) continue;
-        if (pair.ai.extra.stne_turn_label !== renderSeparator(chunk)) continue;
-        chunk.header = pair.ai.extra.stne_chunk_header;
+        if (!pair?.ai?.extra?.cnz_chunk_header) continue;
+        if (pair.ai.extra.cnz_turn_label !== renderSeparator(chunk)) continue;
+        chunk.header = pair.ai.extra.cnz_chunk_header;
         chunk.status = 'complete';
     }
 }
@@ -599,7 +599,7 @@ function hydrateChunkHeadersFromChat() {
 function renderRagCard(chunkIndex) {
     const chunk = _ragChunks[chunkIndex];
     if (!chunk) return;
-    const $card = $(`.stne-rag-card[data-chunk-index="${chunkIndex}"]`);
+    const $card = $(`.cnz-rag-card[data-chunk-index="${chunkIndex}"]`);
     if (!$card.length) return;
 
     const isInFlight = chunk.status === 'in-flight';
@@ -609,11 +609,11 @@ function renderRagCard(chunkIndex) {
     const disabled   = isInFlight || _ragRawDetached;
 
     $card.attr('data-status', chunk.status);
-    const $header = $card.find('.stne-rag-card-header').val(chunk.header).prop('disabled', disabled);
+    const $header = $card.find('.cnz-rag-card-header').val(chunk.header).prop('disabled', disabled);
     autoResizeRagCardHeader($header[0]);
-    $card.find('.stne-rag-card-spinner').toggleClass('stne-hidden', !isInFlight);
-    $card.find('.stne-rag-queue-label').toggleClass('stne-hidden', !isPending).text(queueText);
-    $card.find('.stne-rag-card-regen').prop('disabled', _ragRawDetached);
+    $card.find('.cnz-rag-card-spinner').toggleClass('cnz-hidden', !isInFlight);
+    $card.find('.cnz-rag-queue-label').toggleClass('cnz-hidden', !isPending).text(queueText);
+    $card.find('.cnz-rag-card-regen').prop('disabled', _ragRawDetached);
 }
 
 /**
@@ -630,7 +630,7 @@ async function ragFireChunk(chunkIndex) {
 
     chunk.status = 'in-flight';
     _ragInFlightCount++;
-    console.log(`[STNE-DBG] ragFireChunk START chunk=${chunkIndex} localGenId=${localGenId} globalGenId=${globalGenId} inFlight=${_ragInFlightCount} queue=${_ragCallQueue.length}`);
+    console.log(`[CNZ-DBG] ragFireChunk START chunk=${chunkIndex} localGenId=${localGenId} globalGenId=${globalGenId} inFlight=${_ragInFlightCount} queue=${_ragCallQueue.length}`);
     renderRagCard(chunkIndex);
 
     try {
@@ -640,14 +640,14 @@ async function ragFireChunk(chunkIndex) {
 
         // ── DEBUG: pairs entering the classifier ──────────────────────────────
         console.log(
-            `[STNE-DBG] ragFireChunk chunk=${chunkIndex} (${chunk.turnRange})` +
+            `[CNZ-DBG] ragFireChunk chunk=${chunkIndex} (${chunk.turnRange})` +
             ` pairStart=${pairStart} pairEnd=${pairEnd} _splitPairIdx=${_splitPairIdx}` +
             ` → targetPairs.length=${targetPairs.length}`
         );
         if (targetPairs.length === 0) {
-            console.warn(`[STNE-DBG] ragFireChunk chunk=${chunkIndex} — targetPairs is EMPTY, AI will receive no turns!`);
+            console.warn(`[CNZ-DBG] ragFireChunk chunk=${chunkIndex} — targetPairs is EMPTY, AI will receive no turns!`);
         } else {
-            console.log('[STNE-DBG] ragFireChunk targetPairs:', targetPairs.map(p =>
+            console.log('[CNZ-DBG] ragFireChunk targetPairs:', targetPairs.map(p =>
                 `[validIdx=${p.validIdx}] ${p.user?.name ?? '?'}→${p.ai?.name ?? '?'}`
             ));
         }
@@ -656,7 +656,7 @@ async function ragFireChunk(chunkIndex) {
 
         const globalStale = _ragGlobalGenId !== globalGenId;
         const localStale  = chunk.genId !== localGenId;
-        console.log(`[STNE-DBG] ragFireChunk RESPONSE chunk=${chunkIndex} globalStale=${globalStale} localStale=${localStale} inFlight=${_ragInFlightCount}`);
+        console.log(`[CNZ-DBG] ragFireChunk RESPONSE chunk=${chunkIndex} globalStale=${globalStale} localStale=${localStale} inFlight=${_ragInFlightCount}`);
         if (globalStale || localStale) return;
 
         if (_lastSummaryUsedForRag !== summaryAtCall) {
@@ -665,19 +665,19 @@ async function ragFireChunk(chunkIndex) {
             chunk.header = header.trim() || chunk.turnRange;
             chunk.status = 'complete';
             writeChunkHeaderToChat(chunkIndex).catch(err =>
-                console.error('[STNE] writeChunkHeaderToChat error:', err),
+                console.error('[CNZ] writeChunkHeaderToChat error:', err),
             );
         }
     } catch (err) {
         const globalStale = _ragGlobalGenId !== globalGenId;
         const localStale  = chunk.genId !== localGenId;
-        console.error(`[STNE-DBG] ragFireChunk ERROR chunk=${chunkIndex} globalStale=${globalStale} localStale=${localStale} inFlight=${_ragInFlightCount}`, err);
-        if (err.cause) console.error(`[STNE-DBG] ragFireChunk ERROR cause:`, err.cause);
+        console.error(`[CNZ-DBG] ragFireChunk ERROR chunk=${chunkIndex} globalStale=${globalStale} localStale=${localStale} inFlight=${_ragInFlightCount}`, err);
+        if (err.cause) console.error(`[CNZ-DBG] ragFireChunk ERROR cause:`, err.cause);
         if (globalStale || localStale) return;
         chunk.status = 'pending';
     } finally {
         const globalStale = _ragGlobalGenId !== globalGenId;
-        console.log(`[STNE-DBG] ragFireChunk FINALLY chunk=${chunkIndex} globalStale=${globalStale} inFlight(before)=${_ragInFlightCount} — will decrement: ${!globalStale}`);
+        console.log(`[CNZ-DBG] ragFireChunk FINALLY chunk=${chunkIndex} globalStale=${globalStale} inFlight(before)=${_ragInFlightCount} — will decrement: ${!globalStale}`);
         if (!globalStale) {
             _ragInFlightCount = Math.max(0, _ragInFlightCount - 1);
             ragDrainQueue();
@@ -695,13 +695,13 @@ async function ragFireChunk(chunkIndex) {
  */
 function ragDrainQueue() {
     const max = getSettings().maxConcurrentCalls ?? DEFAULT_CONCURRENCY;
-    console.log(`[STNE-DBG] ragDrainQueue inFlight=${_ragInFlightCount} max=${max} queue=${JSON.stringify(_ragCallQueue)}`);
+    console.log(`[CNZ-DBG] ragDrainQueue inFlight=${_ragInFlightCount} max=${max} queue=${JSON.stringify(_ragCallQueue)}`);
     while (_ragInFlightCount < max && _ragCallQueue.length > 0) {
         const idx = _ragCallQueue.shift();
         ragFireChunk(idx);
     }
     if (_ragInFlightCount >= max && _ragCallQueue.length > 0) {
-        console.warn(`[STNE-DBG] ragDrainQueue BLOCKED — inFlight=${_ragInFlightCount} >= max=${max}, ${_ragCallQueue.length} chunks still queued`);
+        console.warn(`[CNZ-DBG] ragDrainQueue BLOCKED — inFlight=${_ragInFlightCount} >= max=${max}, ${_ragCallQueue.length} chunks still queued`);
     }
 }
 
@@ -719,7 +719,7 @@ async function waitForRagChunks(timeoutMs = 120_000) {
     for (const c of _ragChunks) {
         if (c.status === 'in-flight') c.status = 'pending';
     }
-    console.warn('[STNE] waitForRagChunks timed out — some chunks may be incomplete.');
+    console.warn('[CNZ] waitForRagChunks timed out — some chunks may be incomplete.');
 }
 
 /**
@@ -742,21 +742,21 @@ async function runRagClassifierCall(summaryText, targetPairs) {
 
     // ── DEBUG: prompt content sent to AI ─────────────────────────────────────
     console.log(
-        `[STNE-DBG] runRagClassifierCall — targetPairs=${targetPairs.length}` +
+        `[CNZ-DBG] runRagClassifierCall — targetPairs=${targetPairs.length}` +
         ` summaryText.length=${(summaryText ?? '').length}` +
         ` formattedTurns.length=${formattedTurns.length}`
     );
     if (!formattedTurns) {
-        console.warn('[STNE-DBG] runRagClassifierCall — formattedTurns is EMPTY; AI will see no TARGET TURNS content.');
+        console.warn('[CNZ-DBG] runRagClassifierCall — formattedTurns is EMPTY; AI will see no TARGET TURNS content.');
     } else {
-        console.log('[STNE-DBG] runRagClassifierCall TARGET TURNS snippet:', formattedTurns.slice(0, 300));
+        console.log('[CNZ-DBG] runRagClassifierCall TARGET TURNS snippet:', formattedTurns.slice(0, 300));
     }
 
     const ragResponse = await generateWithRagProfile(prompt);
     // ── DEBUG: raw AI response ────────────────────────────────────────────────
-    console.log(`[STNE-DBG] runRagClassifierCall AI response (${ragResponse?.length ?? 0} chars):`, ragResponse);
+    console.log(`[CNZ-DBG] runRagClassifierCall AI response (${ragResponse?.length ?? 0} chars):`, ragResponse);
     if (!ragResponse?.trim()) {
-        console.warn('[STNE-DBG] runRagClassifierCall — AI response is EMPTY.');
+        console.warn('[CNZ-DBG] runRagClassifierCall — AI response is EMPTY.');
     }
     return ragResponse;
 }
@@ -801,7 +801,7 @@ async function uploadRagFile(text, fileName) {
  * Registers a Data Bank file as a character attachment.
  * In Phase 2 the `key` is the chat filename (char.chat), not the avatar key,
  * so RAG files are scoped to the specific chat that generated them.
- * @param {string} key      Attachment scope key (chat filename for STNE syncs).
+ * @param {string} key      Attachment scope key (chat filename for CNZ syncs).
  * @param {string} url      File URL returned by uploadRagFile.
  * @param {string} fileName Human-readable file name.
  * @param {number} byteSize Byte length of the uploaded text.
@@ -1146,7 +1146,7 @@ function enrichLbSuggestions(freshParsed) {
     for (const s of enriched) {
         if (s.linkedUid === null) continue;
         if (seenUids.has(s.linkedUid)) {
-            console.warn(`[STNE] Two lorebook suggestions resolved to uid ${s.linkedUid}; treating second as NEW.`);
+            console.warn(`[CNZ] Two lorebook suggestions resolved to uid ${s.linkedUid}; treating second as NEW.`);
             s.linkedUid = null;
         } else {
             seenUids.add(s.linkedUid);
@@ -1200,11 +1200,11 @@ async function patchCharacterScenario(char, newScenario) {
 /**
  * Returns the sanitized Data Bank filename for a given character avatar key.
  * @param {string} avatarKey  e.g. "seraphina.png"
- * @returns {string}          e.g. "stne_ledger_seraphina.png.json"
+ * @returns {string}          e.g. "cnz_ledger_seraphina.png.json"
  */
 function ledgerFileName(avatarKey) {
     const safe = avatarKey.replace(/[^A-Za-z0-9_\-.]/g, '_');
-    return `stne_ledger_${safe}.json`;
+    return `cnz_ledger_${safe}.json`;
 }
 
 /**
@@ -1376,7 +1376,7 @@ async function restoreHooksToNode(char, node) {
 function compileRagFromChunks() { return buildRagDocument(_ragChunks); }
 
 function autoResizeRagRaw() {
-    const el = document.getElementById('stne-rag-raw');
+    const el = document.getElementById('cnz-rag-raw');
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = el.scrollHeight + 'px';
@@ -1395,28 +1395,28 @@ function buildRagCardHTML(chunk) {
     const queuePos   = _ragCallQueue.indexOf(i);
     const queueText  = queuePos >= 0 ? `queued ${queuePos + 1}` : 'pending';
     return `
-<div class="stne-rag-card" data-chunk-index="${i}" data-status="${chunk.status}">
-  <div class="stne-rag-card-header-row">
-    <textarea class="stne-input stne-rag-card-header"
+<div class="cnz-rag-card" data-chunk-index="${i}" data-status="${chunk.status}">
+  <div class="cnz-rag-card-header-row">
+    <textarea class="cnz-input cnz-rag-card-header"
               data-chunk-index="${i}"
               ${isInFlight || _ragRawDetached ? 'disabled' : ''}>${escapeHtml(chunk.header)}</textarea>
-    <span class="stne-rag-card-spinner fa-solid fa-spinner fa-spin${isInFlight ? '' : ' stne-hidden'}"></span>
-    <span class="stne-rag-queue-label${isPending ? '' : ' stne-hidden'}">${queueText}</span>
-    <button class="stne-btn stne-btn-secondary stne-btn-sm stne-rag-card-regen"
+    <span class="cnz-rag-card-spinner fa-solid fa-spinner fa-spin${isInFlight ? '' : ' cnz-hidden'}"></span>
+    <span class="cnz-rag-queue-label${isPending ? '' : ' cnz-hidden'}">${queueText}</span>
+    <button class="cnz-btn cnz-btn-secondary cnz-btn-sm cnz-rag-card-regen"
             data-chunk-index="${i}"
             title="Regenerate this chunk's semantic header"
             ${_ragRawDetached ? 'disabled' : ''}>&#x21bb;</button>
   </div>
-  <div class="stne-rag-card-body">${escapeHtml(chunk.content)}</div>
+  <div class="cnz-rag-card-body">${escapeHtml(chunk.content)}</div>
 </div>`;
 }
 
 function renderRagWorkshop() {
-    const $cards = $('#stne-rag-cards').empty();
+    const $cards = $('#cnz-rag-cards').empty();
     for (const chunk of _ragChunks) {
         $cards.append(buildRagCardHTML(chunk));
     }
-    $cards.find('.stne-rag-card-header').each(function () { autoResizeRagCardHeader(this); });
+    $cards.find('.cnz-rag-card-header').each(function () { autoResizeRagCardHeader(this); });
 }
 
 function ragRegenCard(chunkIndex) {
@@ -1432,13 +1432,13 @@ function ragRegenCard(chunkIndex) {
 }
 
 function onRagTabSwitch(tabName) {
-    $('#stne-rag-tab-bar .stne-tab-btn').each(function () {
-        $(this).toggleClass('stne-tab-active', $(this).data('tab') === tabName);
+    $('#cnz-rag-tab-bar .cnz-tab-btn').each(function () {
+        $(this).toggleClass('cnz-tab-active', $(this).data('tab') === tabName);
     });
-    $('#stne-rag-tab-sectioned').toggleClass('stne-hidden', tabName !== 'sectioned');
-    $('#stne-rag-tab-raw').toggleClass('stne-hidden',      tabName !== 'raw');
+    $('#cnz-rag-tab-sectioned').toggleClass('cnz-hidden', tabName !== 'sectioned');
+    $('#cnz-rag-tab-raw').toggleClass('cnz-hidden',      tabName !== 'raw');
     if (tabName === 'raw' && !_ragRawDetached) {
-        $('#stne-rag-raw').val(compileRagFromChunks());
+        $('#cnz-rag-raw').val(compileRagFromChunks());
         requestAnimationFrame(() => autoResizeRagRaw());
     }
 }
@@ -1447,34 +1447,34 @@ function onRagRawInput() {
     autoResizeRagRaw();
     if (!_ragRawDetached) {
         _ragRawDetached = true;
-        $('#stne-rag-raw').addClass('stne-rag-detached');
-        $('#stne-rag-raw-detached-label').removeClass('stne-hidden');
-        $('#stne-rag-detached-warn').removeClass('stne-hidden');
-        $('#stne-rag-detached-revert').removeClass('stne-hidden');
-        $('.stne-rag-card-header, .stne-rag-card-regen').prop('disabled', true);
+        $('#cnz-rag-raw').addClass('cnz-rag-detached');
+        $('#cnz-rag-raw-detached-label').removeClass('cnz-hidden');
+        $('#cnz-rag-detached-warn').removeClass('cnz-hidden');
+        $('#cnz-rag-detached-revert').removeClass('cnz-hidden');
+        $('.cnz-rag-card-header, .cnz-rag-card-regen').prop('disabled', true);
     }
 }
 
 function onRagRevertRaw() {
     _ragRawDetached = false;
-    $('#stne-rag-raw').val(compileRagFromChunks()).removeClass('stne-rag-detached');
+    $('#cnz-rag-raw').val(compileRagFromChunks()).removeClass('cnz-rag-detached');
     autoResizeRagRaw();
-    $('#stne-rag-raw-detached-label, #stne-rag-detached-warn, #stne-rag-detached-revert').addClass('stne-hidden');
+    $('#cnz-rag-raw-detached-label, #cnz-rag-detached-warn, #cnz-rag-detached-revert').addClass('cnz-hidden');
     renderRagWorkshop();
 }
 
 function showRagNoSummaryMessage() {
-    $('#stne-rag-no-summary').removeClass('stne-hidden');
-    $('#stne-rag-tab-bar, #stne-rag-tab-sectioned, #stne-rag-tab-raw').addClass('stne-hidden');
-    $('#stne-rag-detached-warn, #stne-rag-detached-revert').addClass('stne-hidden');
+    $('#cnz-rag-no-summary').removeClass('cnz-hidden');
+    $('#cnz-rag-tab-bar, #cnz-rag-tab-sectioned, #cnz-rag-tab-raw').addClass('cnz-hidden');
+    $('#cnz-rag-detached-warn, #cnz-rag-detached-revert').addClass('cnz-hidden');
 }
 
 function hideRagNoSummaryMessage() {
-    $('#stne-rag-no-summary').addClass('stne-hidden');
-    $('#stne-rag-tab-bar').removeClass('stne-hidden');
-    const activeTab = $('#stne-rag-tab-bar .stne-tab-active').data('tab') ?? 'sectioned';
-    $('#stne-rag-tab-sectioned').toggleClass('stne-hidden', activeTab !== 'sectioned');
-    $('#stne-rag-tab-raw').toggleClass('stne-hidden', activeTab !== 'raw');
+    $('#cnz-rag-no-summary').addClass('cnz-hidden');
+    $('#cnz-rag-tab-bar').removeClass('cnz-hidden');
+    const activeTab = $('#cnz-rag-tab-bar .cnz-tab-active').data('tab') ?? 'sectioned';
+    $('#cnz-rag-tab-sectioned').toggleClass('cnz-hidden', activeTab !== 'sectioned');
+    $('#cnz-rag-tab-raw').toggleClass('cnz-hidden', activeTab !== 'raw');
 }
 
 function getRagModeLabel() {
@@ -1482,15 +1482,15 @@ function getRagModeLabel() {
 }
 
 function onEnterRagWorkshop() {
-    $('#stne-rag-disabled').addClass('stne-hidden');
-    $('#stne-rag-mode-note').text(getRagModeLabel()).removeClass('stne-hidden');
+    $('#cnz-rag-disabled').addClass('cnz-hidden');
+    $('#cnz-rag-mode-note').text(getRagModeLabel()).removeClass('cnz-hidden');
 
-    const summaryText = $('#stne-situation-text').val().trim();
-    const hasError    = !$('#stne-error-1').hasClass('stne-hidden');
+    const summaryText = $('#cnz-situation-text').val().trim();
+    const hasError    = !$('#cnz-error-1').hasClass('cnz-hidden');
 
     // ── DEBUG: workshop entry state ───────────────────────────────────────────
     console.log(
-        `[STNE-DBG] onEnterRagWorkshop` +
+        `[CNZ-DBG] onEnterRagWorkshop` +
         ` _stagedProsePairs.length=${_stagedProsePairs.length}` +
         ` _splitPairIdx=${_splitPairIdx}` +
         ` _ragChunks.length=${_ragChunks.length}` +
@@ -1502,14 +1502,14 @@ function onEnterRagWorkshop() {
         const first = _stagedProsePairs[0];
         const last  = _stagedProsePairs[_stagedProsePairs.length - 1];
         console.log(
-            `[STNE-DBG] onEnterRagWorkshop stagedPairs indices:` +
+            `[CNZ-DBG] onEnterRagWorkshop stagedPairs indices:` +
             ` first.validIdx=${first.validIdx} (${first.user?.name}→${first.ai?.name})` +
             ` last.validIdx=${last.validIdx} (${last.user?.name}→${last.ai?.name})`
         );
     } else {
-        console.warn('[STNE-DBG] onEnterRagWorkshop — _stagedProsePairs is EMPTY; falling back to live chat context.');
+        console.warn('[CNZ-DBG] onEnterRagWorkshop — _stagedProsePairs is EMPTY; falling back to live chat context.');
         // No prior sync this session — seed staged pairs from the live chat so the
-        // workshop has something to classify. Use the same window size as runStneSync.
+        // workshop has something to classify. Use the same window size as runCnzSync.
         const settings   = getSettings();
         const syncFrom   = Math.max(1, settings.syncFromTurn ?? 1);
         const windowSize = settings.chunkEveryN ?? 20;
@@ -1525,23 +1525,23 @@ function onEnterRagWorkshop() {
             _stagedProsePairs = windowPairs;
             _splitPairIdx     = windowPairs.length;
             console.log(
-                `[STNE-DBG] onEnterRagWorkshop: seeded _stagedProsePairs from live chat` +
+                `[CNZ-DBG] onEnterRagWorkshop: seeded _stagedProsePairs from live chat` +
                 ` — ${windowPairs.length} pairs (validIdx ${windowPairs[0].validIdx}–${windowPairs[windowPairs.length - 1].validIdx})` +
                 ` syncFrom=${syncFrom} windowSize=${windowSize}`
             );
         } else {
-            console.warn('[STNE-DBG] onEnterRagWorkshop: live chat also yielded 0 pairs — chat may be empty or all system messages.');
+            console.warn('[CNZ-DBG] onEnterRagWorkshop: live chat also yielded 0 pairs — chat may be empty or all system messages.');
         }
     }
 
-    // Build or refresh chunks from staged pairs (already set by runStneSync or fallback above)
+    // Build or refresh chunks from staged pairs (already set by runCnzSync or fallback above)
     if (_ragChunks.length === 0 && _stagedProsePairs.length > 0) {
         const archivePairs = _stagedProsePairs.slice(0, _splitPairIdx);
-        console.log(`[STNE-DBG] onEnterRagWorkshop: building chunks from scratch — archivePairs.length=${archivePairs.length}`);
+        console.log(`[CNZ-DBG] onEnterRagWorkshop: building chunks from scratch — archivePairs.length=${archivePairs.length}`);
         if (archivePairs.length > 0) {
             _ragChunks = buildRagChunks(archivePairs);
             _splitIndexWhenRagBuilt = _splitPairIdx;
-            console.log(`[STNE-DBG] onEnterRagWorkshop: built ${_ragChunks.length} chunks covering validIdx 0–${_splitPairIdx - 1}`);
+            console.log(`[CNZ-DBG] onEnterRagWorkshop: built ${_ragChunks.length} chunks covering validIdx 0–${_splitPairIdx - 1}`);
             // Labels haven't been rendered yet (no prior sync ran) — render the
             // turn-range placeholders now; AI-classified headers appear via ragFireChunk
             renderAllChunkChatLabels();
@@ -1551,15 +1551,15 @@ function onEnterRagWorkshop() {
         if (_splitIndexWhenRagBuilt !== null && _splitPairIdx !== _splitIndexWhenRagBuilt) {
             toastr.warning('Sync window has changed — Narrative Memory chunks will be rebuilt.');
             const archivePairs = _stagedProsePairs.slice(0, _splitPairIdx);
-            console.log(`[STNE-DBG] onEnterRagWorkshop: rebuilding chunks (splitIdx changed ${_splitIndexWhenRagBuilt}→${_splitPairIdx}) — archivePairs.length=${archivePairs.length}`);
+            console.log(`[CNZ-DBG] onEnterRagWorkshop: rebuilding chunks (splitIdx changed ${_splitIndexWhenRagBuilt}→${_splitPairIdx}) — archivePairs.length=${archivePairs.length}`);
             _ragChunks = buildRagChunks(archivePairs);
             _splitIndexWhenRagBuilt = _splitPairIdx;
         } else {
-            console.log(`[STNE-DBG] onEnterRagWorkshop: reusing ${_ragChunks.length} existing chunks`);
+            console.log(`[CNZ-DBG] onEnterRagWorkshop: reusing ${_ragChunks.length} existing chunks`);
         }
         renderRagWorkshop();
     } else {
-        console.warn('[STNE-DBG] onEnterRagWorkshop: NO CHUNKS BUILT — both _ragChunks and _stagedProsePairs are empty. Workshop will be blank.');
+        console.warn('[CNZ-DBG] onEnterRagWorkshop: NO CHUNKS BUILT — both _ragChunks and _stagedProsePairs are empty. Workshop will be blank.');
     }
 
     // Hydrate headers from chat file — pre-populates complete chunks, skips their AI calls
@@ -1568,9 +1568,9 @@ function onEnterRagWorkshop() {
     if (!summaryText || hasError)  { showRagNoSummaryMessage(); return; }
     hideRagNoSummaryMessage();
 
-    const activeTab = $('#stne-rag-tab-bar .stne-tab-active').data('tab') ?? 'sectioned';
+    const activeTab = $('#cnz-rag-tab-bar .cnz-tab-active').data('tab') ?? 'sectioned';
     if (activeTab === 'raw' && !_ragRawDetached) {
-        $('#stne-rag-raw').val(compileRagFromChunks());
+        $('#cnz-rag-raw').val(compileRagFromChunks());
         requestAnimationFrame(() => autoResizeRagRaw());
     }
 
@@ -1599,9 +1599,9 @@ function onLeaveRagWorkshop() {
 
 function setHooksLoading(isLoading) {
     _hooksLoading = isLoading;
-    $('#stne-spin-hooks').toggleClass('stne-hidden', !isLoading);
-    $('#stne-regen-hooks').prop('disabled', isLoading);
-    $('#stne-situation-text').prop('disabled', isLoading);
+    $('#cnz-spin-hooks').toggleClass('cnz-hidden', !isLoading);
+    $('#cnz-regen-hooks').prop('disabled', isLoading);
+    $('#cnz-situation-text').prop('disabled', isLoading);
 }
 
 /**
@@ -1637,19 +1637,19 @@ function buildSyncWindowTranscript(horizonTurns) {
 
 function onRegenHooksClick() {
     setHooksLoading(true);
-    $('#stne-error-1').addClass('stne-hidden').text('');
+    $('#cnz-error-1').addClass('cnz-hidden').text('');
     const hooksId  = ++_hooksGenId;
     const horizon  = getSettings().hookseekerHorizon ?? 70;
     const transcript = buildSyncWindowTranscript(horizon);
     runHookseekerCall(transcript, _priorSituation)
         .then(text => {
             if (_hooksGenId !== hooksId) return;
-            $('#stne-situation-text').val(text.trim());
+            $('#cnz-situation-text').val(text.trim());
             setHooksLoading(false);
         })
         .catch(err => {
             if (_hooksGenId !== hooksId) return;
-            $('#stne-error-1').text(`Hooks generation failed: ${err.message}`).removeClass('stne-hidden');
+            $('#cnz-error-1').text(`Hooks generation failed: ${err.message}`).removeClass('cnz-hidden');
             setHooksLoading(false);
         });
 }
@@ -1658,17 +1658,17 @@ function onRegenHooksClick() {
 
 function setLbLoading(isLoading) {
     _lorebookLoading = isLoading;
-    $('#stne-lb-spinner').toggleClass('stne-hidden', !isLoading);
-    $('#stne-lb-regen').prop('disabled', isLoading);
-    $('#stne-lb-freeform').prop('disabled', isLoading);
-    if (isLoading) $('#stne-lb-freeform').val('');
+    $('#cnz-lb-spinner').toggleClass('cnz-hidden', !isLoading);
+    $('#cnz-lb-regen').prop('disabled', isLoading);
+    $('#cnz-lb-freeform').prop('disabled', isLoading);
+    if (isLoading) $('#cnz-lb-freeform').val('');
 }
 
 function populateLbFreeform(text) {
     setLbLoading(false);
-    $('#stne-lb-freeform').val(text);
+    $('#cnz-lb-freeform').val(text);
     _lorebookFreeformLastParsed = null;
-    if (!$('#stne-lb-tab-ingester').hasClass('stne-hidden')) {
+    if (!$('#cnz-lb-tab-ingester').hasClass('cnz-hidden')) {
         const freshParsed = parseLbSuggestions(text);
         _lorebookSuggestions = enrichLbSuggestions(freshParsed);
         _lorebookFreeformLastParsed = text;
@@ -1680,15 +1680,15 @@ function populateLbFreeform(text) {
 
 function showLbError(message) {
     setLbLoading(false);
-    $('#stne-lb-error').text(message).removeClass('stne-hidden');
+    $('#cnz-lb-error').text(message).removeClass('cnz-hidden');
 }
 
 function onLbRegenClick() {
     setLbLoading(true);
-    $('#stne-lb-error').addClass('stne-hidden').text('');
+    $('#cnz-lb-error').addClass('cnz-hidden').text('');
     const lbId       = ++_lorebookGenId;
     const horizon    = getSettings().chunkEveryN ?? 20;
-    const upToLatest = $('#stne-lb-up-to-latest').is(':checked');
+    const upToLatest = $('#cnz-lb-up-to-latest').is(':checked');
     const transcript = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon);
     runLorebookSyncCall(transcript)
         .then(text => { if (_lorebookGenId !== lbId) return; populateLbFreeform(text); })
@@ -1699,14 +1699,14 @@ function onLbRegenClick() {
 }
 
 function onLbTabSwitch(tabName) {
-    $('#stne-lb-tab-bar .stne-tab-btn').each(function () {
-        $(this).toggleClass('stne-tab-active', $(this).data('tab') === tabName);
+    $('#cnz-lb-tab-bar .cnz-tab-btn').each(function () {
+        $(this).toggleClass('cnz-tab-active', $(this).data('tab') === tabName);
     });
-    $('#stne-lb-tab-freeform').toggleClass('stne-hidden',  tabName !== 'freeform');
-    $('#stne-lb-tab-ingester').toggleClass('stne-hidden',  tabName !== 'ingester');
+    $('#cnz-lb-tab-freeform').toggleClass('cnz-hidden',  tabName !== 'freeform');
+    $('#cnz-lb-tab-ingester').toggleClass('cnz-hidden',  tabName !== 'ingester');
 
     if (tabName === 'ingester' && !_lorebookLoading) {
-        const currentText = $('#stne-lb-freeform').val();
+        const currentText = $('#cnz-lb-freeform').val();
         if (currentText !== _lorebookFreeformLastParsed) {
             const freshParsed = parseLbSuggestions(currentText);
             _lorebookSuggestions = enrichLbSuggestions(freshParsed);
@@ -1720,12 +1720,12 @@ function onLbTabSwitch(tabName) {
 }
 
 function populateLbIngesterDropdown() {
-    const $sel = $('#stne-lb-suggestion-select').empty();
+    const $sel = $('#cnz-lb-suggestion-select').empty();
     if (!_lorebookSuggestions.length) {
         $sel.append('<option disabled selected>(no suggestions — check Freeform tab or regen)</option>');
-        $('#stne-lb-apply-one, #stne-lb-apply-all-unresolved').prop('disabled', true);
-        $('#stne-lb-editor-name, #stne-lb-editor-keys, #stne-lb-editor-content').val('');
-        $('#stne-lb-ingester-diff').empty();
+        $('#cnz-lb-apply-one, #cnz-lb-apply-all-unresolved').prop('disabled', true);
+        $('#cnz-lb-editor-name, #cnz-lb-editor-keys, #cnz-lb-editor-content').val('');
+        $('#cnz-lb-ingester-diff').empty();
         return;
     }
     _lorebookSuggestions.forEach((s, i) => {
@@ -1733,16 +1733,16 @@ function populateLbIngesterDropdown() {
         $sel.append(`<option value="${i}">${escapeHtml(`${prefix}${s.type}: ${s.name}`)}</option>`);
     });
     $sel.val(_lbActiveIngesterIndex);
-    $('#stne-lb-apply-one, #stne-lb-apply-all-unresolved').prop('disabled', false);
+    $('#cnz-lb-apply-one, #cnz-lb-apply-all-unresolved').prop('disabled', false);
 }
 
 function renderLbIngesterDetail(suggestion) {
     if (!suggestion) return;
-    $('#stne-lb-editor-name').val(suggestion.name);
-    $('#stne-lb-editor-keys').val(suggestion.keys.join(', '));
-    $('#stne-lb-editor-content').val(suggestion.content);
-    $('#stne-lb-error-ingester').addClass('stne-hidden').text('');
-    $('#stne-lb-revert-draft').prop('disabled', suggestion.linkedUid === null);
+    $('#cnz-lb-editor-name').val(suggestion.name);
+    $('#cnz-lb-editor-keys').val(suggestion.keys.join(', '));
+    $('#cnz-lb-editor-content').val(suggestion.content);
+    $('#cnz-lb-error-ingester').addClass('cnz-hidden').text('');
+    $('#cnz-lb-revert-draft').prop('disabled', suggestion.linkedUid === null);
     updateLbDiff();
 }
 
@@ -1765,8 +1765,8 @@ function wordDiff(base, proposed) {
     }
     const out = []; let del = [], ins = [];
     const flush = () => {
-        if (del.length) { out.push(`<span class="stne-diff-del">${escapeHtml(del.join(''))}</span>`); del = []; }
-        if (ins.length) { out.push(`<span class="stne-diff-ins">${escapeHtml(ins.join(''))}</span>`); ins = []; }
+        if (del.length) { out.push(`<span class="cnz-diff-del">${escapeHtml(del.join(''))}</span>`); del = []; }
+        if (ins.length) { out.push(`<span class="cnz-diff-ins">${escapeHtml(ins.join(''))}</span>`); ins = []; }
     };
     let i = 0, j = 0;
     while (i < m || j < n) {
@@ -1781,20 +1781,20 @@ function wordDiff(base, proposed) {
 function updateLbDiff() {
     const s = _lorebookSuggestions[_lbActiveIngesterIndex];
     if (!s) return;
-    const name    = $('#stne-lb-editor-name').val();
-    const keys    = $('#stne-lb-editor-keys').val().split(',').map(k => k.trim()).filter(Boolean);
-    const content = $('#stne-lb-editor-content').val();
+    const name    = $('#cnz-lb-editor-name').val();
+    const keys    = $('#cnz-lb-editor-keys').val().split(',').map(k => k.trim()).filter(Boolean);
+    const content = $('#cnz-lb-editor-content').val();
     const proposed = toVirtualDoc(name, keys, content);
     let base = '';
     if (s.linkedUid !== null) {
         const entry = _draftLorebook?.entries?.[String(s.linkedUid)];
         if (entry) base = toVirtualDoc(entry.comment || '', Array.isArray(entry.key) ? entry.key : [], entry.content || '');
     }
-    $('#stne-lb-ingester-diff').html(wordDiff(base, proposed));
+    $('#cnz-lb-ingester-diff').html(wordDiff(base, proposed));
 }
 
 function onLbSuggestionSelectChange() {
-    const idx = parseInt($('#stne-lb-suggestion-select').val(), 10);
+    const idx = parseInt($('#cnz-lb-suggestion-select').val(), 10);
     if (!isNaN(idx) && _lorebookSuggestions[idx]) {
         _lbActiveIngesterIndex = idx;
         renderLbIngesterDetail(_lorebookSuggestions[idx]);
@@ -1804,12 +1804,12 @@ function onLbSuggestionSelectChange() {
 function onLbIngesterEditorInput() {
     const s = _lorebookSuggestions[_lbActiveIngesterIndex];
     if (s) {
-        const newName = $('#stne-lb-editor-name').val();
+        const newName = $('#cnz-lb-editor-name').val();
         s.name    = newName;
-        s.keys    = $('#stne-lb-editor-keys').val().split(',').map(k => k.trim()).filter(Boolean);
-        s.content = $('#stne-lb-editor-content').val();
+        s.keys    = $('#cnz-lb-editor-keys').val().split(',').map(k => k.trim()).filter(Boolean);
+        s.content = $('#cnz-lb-editor-content').val();
         const prefix = s._applied ? '\u2713 ' : (s._rejected ? '\u2717 ' : '');
-        $('#stne-lb-suggestion-select option').eq(_lbActiveIngesterIndex).text(escapeHtml(`${prefix}${s.type}: ${newName}`));
+        $('#cnz-lb-suggestion-select option').eq(_lbActiveIngesterIndex).text(escapeHtml(`${prefix}${s.type}: ${newName}`));
     }
     clearTimeout(_lbDebounceTimer);
     _lbDebounceTimer = setTimeout(updateLbDiff, 100);
@@ -1821,7 +1821,7 @@ function onLbIngesterRevertAi() {
     s.name = s._aiSnapshot.name; s.keys = [...s._aiSnapshot.keys]; s.content = s._aiSnapshot.content;
     renderLbIngesterDetail(s);
     const prefix = s._applied ? '\u2713 ' : (s._rejected ? '\u2717 ' : '');
-    $('#stne-lb-suggestion-select option').eq(_lbActiveIngesterIndex).text(escapeHtml(`${prefix}${s.type}: ${s.name}`));
+    $('#cnz-lb-suggestion-select option').eq(_lbActiveIngesterIndex).text(escapeHtml(`${prefix}${s.type}: ${s.name}`));
 }
 
 function onLbIngesterRevertDraft() {
@@ -1832,7 +1832,7 @@ function onLbIngesterRevertDraft() {
     s.name = entry.comment || ''; s.keys = Array.isArray(entry.key) ? [...entry.key] : []; s.content = entry.content || '';
     renderLbIngesterDetail(s);
     const prefix = s._applied ? '\u2713 ' : (s._rejected ? '\u2717 ' : '');
-    $('#stne-lb-suggestion-select option').eq(_lbActiveIngesterIndex).text(escapeHtml(`${prefix}${s.type}: ${s.name}`));
+    $('#cnz-lb-suggestion-select option').eq(_lbActiveIngesterIndex).text(escapeHtml(`${prefix}${s.type}: ${s.name}`));
 }
 
 function onLbIngesterNext() {
@@ -1842,7 +1842,7 @@ function onLbIngesterNext() {
         const i = (_lbActiveIngesterIndex + offset) % total;
         if (!_lorebookSuggestions[i]._applied && !_lorebookSuggestions[i]._rejected) {
             _lbActiveIngesterIndex = i;
-            $('#stne-lb-suggestion-select').val(i);
+            $('#cnz-lb-suggestion-select').val(i);
             renderLbIngesterDetail(_lorebookSuggestions[i]);
             return;
         }
@@ -1853,9 +1853,9 @@ function onLbIngesterNext() {
 function onLbIngesterApply() {
     const s = _lorebookSuggestions[_lbActiveIngesterIndex];
     if (!s) return;
-    const name    = $('#stne-lb-editor-name').val().trim();
-    const keys    = $('#stne-lb-editor-keys').val().split(',').map(k => k.trim()).filter(Boolean);
-    const content = $('#stne-lb-editor-content').val().trim();
+    const name    = $('#cnz-lb-editor-name').val().trim();
+    const keys    = $('#cnz-lb-editor-keys').val().split(',').map(k => k.trim()).filter(Boolean);
+    const content = $('#cnz-lb-editor-content').val().trim();
     if (!name || !content) return;
     s.name = name; s.keys = keys; s.content = content;
     if (s.linkedUid !== null) {
@@ -1865,10 +1865,10 @@ function onLbIngesterApply() {
         const newUid = nextLorebookUid();
         _draftLorebook.entries[String(newUid)] = makeLbDraftEntry(newUid, name, keys, content);
         s.linkedUid = newUid;
-        $('#stne-lb-revert-draft').prop('disabled', false);
+        $('#cnz-lb-revert-draft').prop('disabled', false);
     }
     s._applied = true; s._rejected = false;
-    $('#stne-lb-suggestion-select option').eq(_lbActiveIngesterIndex).text(escapeHtml(`\u2713 ${s.type}: ${s.name}`));
+    $('#cnz-lb-suggestion-select option').eq(_lbActiveIngesterIndex).text(escapeHtml(`\u2713 ${s.type}: ${s.name}`));
     updateLbDiff();
 }
 
@@ -1876,7 +1876,7 @@ function onLbIngesterReject() {
     const s = _lorebookSuggestions[_lbActiveIngesterIndex];
     if (!s) return;
     s._rejected = true; s._applied = false;
-    $('#stne-lb-suggestion-select option').eq(_lbActiveIngesterIndex).text(escapeHtml(`\u2717 ${s.type}: ${s.name}`));
+    $('#cnz-lb-suggestion-select option').eq(_lbActiveIngesterIndex).text(escapeHtml(`\u2717 ${s.type}: ${s.name}`));
 }
 
 async function onLbApplyAllUnresolved() {
@@ -1908,27 +1908,27 @@ async function onLbApplyAllUnresolved() {
 
 // ─── Modal: Commit Receipts Panel ─────────────────────────────────────────────
 
-function showReceiptsPanel() { $('#stne-receipts').removeClass('stne-hidden'); }
+function showReceiptsPanel() { $('#cnz-receipts').removeClass('cnz-hidden'); }
 
 function showRecoveryGuide() {
-    $('#stne-recovery-guide').removeClass('stne-hidden');
-    $('#stne-cancel').text('Close');
+    $('#cnz-recovery-guide').removeClass('cnz-hidden');
+    $('#cnz-cancel').text('Close');
 }
 
 function upsertReceiptItem(id, html) {
     if (!$(`#${id}`).length) {
-        $('#stne-receipts-content').append(`<div id="${id}" class="stne-receipt-row"></div>`);
+        $('#cnz-receipts-content').append(`<div id="${id}" class="cnz-receipt-row"></div>`);
     }
     $(`#${id}`).html(html);
 }
 
 function receiptSuccess(text, hint = null) {
-    return `<span class="stne-receipt-item success">&#x2713; ${escapeHtml(text)}</span>` +
-           (hint ? `<div class="stne-receipt-hint">${escapeHtml(hint)}</div>` : '');
+    return `<span class="cnz-receipt-item success">&#x2713; ${escapeHtml(text)}</span>` +
+           (hint ? `<div class="cnz-receipt-hint">${escapeHtml(hint)}</div>` : '');
 }
 
 function receiptFailure(text) {
-    return `<span class="stne-receipt-item failure">&#x2717; ${escapeHtml(text)}</span>`;
+    return `<span class="cnz-receipt-item failure">&#x2717; ${escapeHtml(text)}</span>`;
 }
 
 // ─── Modal: Review & Commit Step ─────────────────────────────────────────────
@@ -1946,15 +1946,15 @@ function countDraftChanges() {
 function populateRagPanel() {
     const context = SillyTavern.getContext();
     const char    = context.characters[context.characterId];
-    if (!char || !getSettings().enableRag) { $('#stne-step4-rag').addClass('stne-hidden'); return; }
+    if (!char || !getSettings().enableRag) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
     const allAttachments = extension_settings.character_attachments?.[char.chat] ?? [];
-    if (!allAttachments.length) { $('#stne-step4-rag').addClass('stne-hidden'); return; }
+    if (!allAttachments.length) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
     const rows = allAttachments.map(a =>
-        `<div class="stne-rag-item stne-rag-item--existing">&#x2713; ${escapeHtml(a.name.replace(/\.txt$/i, ''))}</div>`,
+        `<div class="cnz-rag-item cnz-rag-item--existing">&#x2713; ${escapeHtml(a.name.replace(/\.txt$/i, ''))}</div>`,
     );
-    $('#stne-rag-timeline').html(rows.join(''));
-    $('#stne-rag-warning').addClass('stne-hidden');
-    $('#stne-step4-rag').removeClass('stne-hidden');
+    $('#cnz-rag-timeline').html(rows.join(''));
+    $('#cnz-rag-warning').addClass('cnz-hidden');
+    $('#cnz-step4-rag').removeClass('cnz-hidden');
 }
 
 function populateStep4Summary() {
@@ -1964,28 +1964,28 @@ function populateStep4Summary() {
     const pendingText = pendingLb > 0
         ? ` \u26a0 ${pendingLb} suggestion${pendingLb !== 1 ? 's' : ''} pending review`
         : '';
-    const hooksText    = $('#stne-situation-text').val().trim();
+    const hooksText    = $('#cnz-situation-text').val().trim();
     const hooksPreview = hooksText.length > 100 ? hooksText.slice(0, 100) + '\u2026' : (hooksText || '(empty)');
-    $('#stne-step4-hooks').text(`Hooks: ${hooksPreview}`);
-    $('#stne-step4-lore').text(`Lore: ${loreLabel} staged for update/creation${pendingText}`);
+    $('#cnz-step4-hooks').text(`Hooks: ${hooksPreview}`);
+    $('#cnz-step4-lore').text(`Lore: ${loreLabel} staged for update/creation${pendingText}`);
     populateRagPanel();
 }
 
 function abortCommitWithError(message) {
-    $('#stne-error-4').text(message).removeClass('stne-hidden');
-    $('#stne-confirm, #stne-cancel, #stne-move-back').prop('disabled', false);
+    $('#cnz-error-4').text(message).removeClass('cnz-hidden');
+    $('#cnz-confirm, #cnz-cancel, #cnz-move-back').prop('disabled', false);
     showRecoveryGuide();
 }
 
 async function onConfirmClick() {
-    const hooksText = $('#stne-situation-text').val().trim();
+    const hooksText = $('#cnz-situation-text').val().trim();
 
     const context = SillyTavern.getContext();
     const char    = context.characters[context.characterId];
-    if (!char) { toastr.error('STNE: No character in context.'); return; }
+    if (!char) { toastr.error('CNZ: No character in context.'); return; }
 
-    $('#stne-confirm, #stne-cancel, #stne-move-back').prop('disabled', true);
-    $('#stne-error-4').addClass('stne-hidden').text('');
+    $('#cnz-confirm, #cnz-cancel, #cnz-move-back').prop('disabled', true);
+    $('#cnz-error-4').addClass('cnz-hidden').text('');
     showReceiptsPanel();
 
     // Freshness lock — abort if another sync committed since modal opened
@@ -2017,41 +2017,41 @@ async function onConfirmClick() {
                 const changedNames = Object.values(_draftLorebook.entries ?? {})
                     .filter(e => { const o = preLorebook.entries[String(e.uid)]; return !o || o.content !== e.content || JSON.stringify(o.key) !== JSON.stringify(e.key); })
                     .map(e => e.comment || String(e.uid));
-                upsertReceiptItem('stne-receipt-lorebook', receiptSuccess(
+                upsertReceiptItem('cnz-receipt-lorebook', receiptSuccess(
                     `Lorebook committed: ${changedNames.length ? changedNames.map(n => `"${n}"`).join(', ') : '(no changes staged)'}`,
                 ));
-                $('#stne-cancel').text('Close');
+                $('#cnz-cancel').text('Close');
             } catch (err) {
-                upsertReceiptItem('stne-receipt-lorebook', receiptFailure(`Lorebook save failed: ${err.message}`));
+                upsertReceiptItem('cnz-receipt-lorebook', receiptFailure(`Lorebook save failed: ${err.message}`));
                 abortCommitWithError(err.message);
                 return;
             }
         } else {
             _finalizeSteps.lorebookSaved = true;
-            upsertReceiptItem('stne-receipt-lorebook', receiptSuccess('Lorebook: no changes staged'));
+            upsertReceiptItem('cnz-receipt-lorebook', receiptSuccess('Lorebook: no changes staged'));
         }
     }
 
     // ── Step 2: RAG upload ───────────────────────────────────────────────────
     if (!_finalizeSteps.ragSaved) {
         try {
-            const ragText = _ragRawDetached ? $('#stne-rag-raw').val() : buildRagDocument(_ragChunks);
+            const ragText = _ragRawDetached ? $('#cnz-rag-raw').val() : buildRagDocument(_ragChunks);
             if (ragText.trim()) {
                 const nonSystemCount = (context.chat ?? []).filter(m => !m.is_system).length;
-                const ragFileName = `${char.name}_stne_t${nonSystemCount}.txt`
+                const ragFileName = `${char.name}_cnz_t${nonSystemCount}.txt`
                     .replace(/\s+/g, '_').replace(/[^A-Za-z0-9_\-.]/g, '');
                 const ragUrl  = await uploadRagFile(ragText, ragFileName);
                 _lastRagUrl   = ragUrl;
                 const byteSize = new TextEncoder().encode(ragText).length;
                 registerCharacterAttachment(char.chat, ragUrl, ragFileName, byteSize);
                 _finalizeSteps.ragSaved = true;
-                upsertReceiptItem('stne-receipt-rag', receiptSuccess(`Narrative Memory saved: "${ragFileName}" (${_ragChunks.length} chunks)`));
+                upsertReceiptItem('cnz-receipt-rag', receiptSuccess(`Narrative Memory saved: "${ragFileName}" (${_ragChunks.length} chunks)`));
             } else {
                 _finalizeSteps.ragSaved = true;
-                upsertReceiptItem('stne-receipt-rag', receiptSuccess('Narrative Memory: no chunks to upload'));
+                upsertReceiptItem('cnz-receipt-rag', receiptSuccess('Narrative Memory: no chunks to upload'));
             }
         } catch (err) {
-            upsertReceiptItem('stne-receipt-rag', receiptFailure(`RAG save failed: ${err.message}`));
+            upsertReceiptItem('cnz-receipt-rag', receiptFailure(`RAG save failed: ${err.message}`));
             abortCommitWithError(`Lorebook saved — RAG upload failed: ${err.message}`);
             return;
         }
@@ -2065,12 +2065,12 @@ async function onConfirmClick() {
             const newScenario = writeHookseekerBlock(freshChar.scenario ?? '', hooksText);
             await patchCharacterScenario(freshChar, newScenario);
             _priorSituation = hooksText;
-            upsertReceiptItem('stne-receipt-hooks', receiptSuccess('Narrative Hooks updated in character scenario'));
+            upsertReceiptItem('cnz-receipt-hooks', receiptSuccess('Narrative Hooks updated in character scenario'));
         }
     } catch (err) {
-        console.error('[STNE] Hooks save failed:', err);
+        console.error('[CNZ] Hooks save failed:', err);
         // Non-fatal — log and continue
-        upsertReceiptItem('stne-receipt-hooks', receiptFailure(`Hooks save failed: ${err.message}`));
+        upsertReceiptItem('cnz-receipt-hooks', receiptFailure(`Hooks save failed: ${err.message}`));
     }
 
     // ── Step 4: Ledger commit ────────────────────────────────────────────────
@@ -2092,76 +2092,76 @@ async function onConfirmClick() {
         _sessionStartId                    = node.nodeId;
 
         await commitLedgerManifest(char.avatar);
-        upsertReceiptItem('stne-receipt-ledger', receiptSuccess('Narrative Ledger updated'));
+        upsertReceiptItem('cnz-receipt-ledger', receiptSuccess('Narrative Ledger updated'));
     } catch (err) {
-        console.error('[STNE] Ledger commit failed:', err);
-        upsertReceiptItem('stne-receipt-ledger', receiptFailure(`Ledger save failed: ${err.message} (content saved)`));
+        console.error('[CNZ] Ledger commit failed:', err);
+        upsertReceiptItem('cnz-receipt-ledger', receiptFailure(`Ledger save failed: ${err.message} (content saved)`));
         // Non-fatal
     }
 
-    $('#stne-confirm').addClass('stne-hidden');
-    $('#stne-cancel').text('Close').prop('disabled', false);
+    $('#cnz-confirm').addClass('cnz-hidden');
+    $('#cnz-cancel').text('Close').prop('disabled', false);
 }
 
 // ─── Modal: Orchestration ─────────────────────────────────────────────────────
 
 function injectModal() {
-    if ($('#stne-overlay').length) return;
+    if ($('#cnz-overlay').length) return;
     $('body').append(buildModalHTML());
     $('body').append(buildPromptModalHTML());
 
     // Step 1 — Hooks Workshop
-    $('#stne-regen-hooks').on('click', onRegenHooksClick);
+    $('#cnz-regen-hooks').on('click', onRegenHooksClick);
 
     // Step 2 — Lorebook Workshop
-    $('#stne-lb-regen').on('click',                onLbRegenClick);
-    $('#stne-lb-suggestion-select').on('change',   onLbSuggestionSelectChange);
-    $('#stne-lb-editor-name').on('input',          onLbIngesterEditorInput);
-    $('#stne-lb-editor-keys').on('input',          onLbIngesterEditorInput);
-    $('#stne-lb-editor-content').on('input',       onLbIngesterEditorInput);
-    $('#stne-lb-ingester-next').on('click',        onLbIngesterNext);
-    $('#stne-lb-revert-ai').on('click',            onLbIngesterRevertAi);
-    $('#stne-lb-revert-draft').on('click',         onLbIngesterRevertDraft);
-    $('#stne-lb-reject-one').on('click',           onLbIngesterReject);
-    $('#stne-lb-apply-one').on('click',            onLbIngesterApply);
-    $('#stne-lb-apply-all-unresolved').on('click', onLbApplyAllUnresolved);
-    $('#stne-modal').on('click', '#stne-lb-tab-bar .stne-tab-btn', function () {
+    $('#cnz-lb-regen').on('click',                onLbRegenClick);
+    $('#cnz-lb-suggestion-select').on('change',   onLbSuggestionSelectChange);
+    $('#cnz-lb-editor-name').on('input',          onLbIngesterEditorInput);
+    $('#cnz-lb-editor-keys').on('input',          onLbIngesterEditorInput);
+    $('#cnz-lb-editor-content').on('input',       onLbIngesterEditorInput);
+    $('#cnz-lb-ingester-next').on('click',        onLbIngesterNext);
+    $('#cnz-lb-revert-ai').on('click',            onLbIngesterRevertAi);
+    $('#cnz-lb-revert-draft').on('click',         onLbIngesterRevertDraft);
+    $('#cnz-lb-reject-one').on('click',           onLbIngesterReject);
+    $('#cnz-lb-apply-one').on('click',            onLbIngesterApply);
+    $('#cnz-lb-apply-all-unresolved').on('click', onLbApplyAllUnresolved);
+    $('#cnz-modal').on('click', '#cnz-lb-tab-bar .cnz-tab-btn', function () {
         onLbTabSwitch($(this).data('tab'));
     });
 
     // Step 3 — Narrative Memory Workshop
-    $('#stne-modal').on('click', '#stne-rag-tab-bar .stne-tab-btn', function () {
+    $('#cnz-modal').on('click', '#cnz-rag-tab-bar .cnz-tab-btn', function () {
         onRagTabSwitch($(this).data('tab'));
     });
-    $('#stne-modal').on('input', '.stne-rag-card-header', function () {
+    $('#cnz-modal').on('input', '.cnz-rag-card-header', function () {
         const idx = parseInt($(this).data('chunk-index'), 10);
         autoResizeRagCardHeader(this);
         if (!isNaN(idx) && _ragChunks[idx]) {
             _ragChunks[idx].header = $(this).val();
             _ragChunks[idx].status = 'manual';
-            $(`.stne-rag-card[data-chunk-index="${idx}"]`).attr('data-status', 'manual');
+            $(`.cnz-rag-card[data-chunk-index="${idx}"]`).attr('data-status', 'manual');
         }
     });
-    $('#stne-modal').on('click', '.stne-rag-card-regen', function () {
+    $('#cnz-modal').on('click', '.cnz-rag-card-regen', function () {
         const idx = parseInt($(this).data('chunk-index'), 10);
         if (!isNaN(idx)) ragRegenCard(idx);
     });
-    $('#stne-rag-raw').on('input', onRagRawInput);
-    $('#stne-rag-revert-raw-btn').on('click', onRagRevertRaw);
+    $('#cnz-rag-raw').on('input', onRagRawInput);
+    $('#cnz-rag-revert-raw-btn').on('click', onRagRevertRaw);
 
     // Shared wizard footer
-    $('#stne-cancel').on('click',    closeModal);
-    $('#stne-move-back').on('click', () => updateWizard(_currentStep - 1));
-    $('#stne-move-next').on('click', () => updateWizard(_currentStep + 1));
-    $('#stne-confirm').on('click',   onConfirmClick);
+    $('#cnz-cancel').on('click',    closeModal);
+    $('#cnz-move-back').on('click', () => updateWizard(_currentStep - 1));
+    $('#cnz-move-next').on('click', () => updateWizard(_currentStep + 1));
+    $('#cnz-confirm').on('click',   onConfirmClick);
 }
 
 function showModal() {
-    $('#stne-overlay').removeClass('stne-hidden');
+    $('#cnz-overlay').removeClass('cnz-hidden');
 }
 
 function closeModal() {
-    $('#stne-overlay').addClass('stne-hidden');
+    $('#cnz-overlay').addClass('cnz-hidden');
     // Kill all in-flight AI callbacks
     _hooksGenId++;
     _lorebookGenId++;
@@ -2185,27 +2185,27 @@ function closeModal() {
 }
 
 function initWizardSession() {
-    $('#stne-lb-title').text(`Lorebook: ${_lorebookName}`);
-    $('#stne-lb-freeform').val('');
-    $('#stne-lb-error').addClass('stne-hidden').text('');
-    $('#stne-lb-error-ingester').addClass('stne-hidden').text('');
-    $('#stne-error-1').addClass('stne-hidden').text('');
-    $('#stne-error-4').addClass('stne-hidden').text('');
-    $('#stne-receipts').addClass('stne-hidden');
-    $('#stne-receipts-content').empty();
-    $('#stne-recovery-guide').addClass('stne-hidden');
-    $('#stne-cancel').text('Cancel').prop('disabled', false);
+    $('#cnz-lb-title').text(`Lorebook: ${_lorebookName}`);
+    $('#cnz-lb-freeform').val('');
+    $('#cnz-lb-error').addClass('cnz-hidden').text('');
+    $('#cnz-lb-error-ingester').addClass('cnz-hidden').text('');
+    $('#cnz-error-1').addClass('cnz-hidden').text('');
+    $('#cnz-error-4').addClass('cnz-hidden').text('');
+    $('#cnz-receipts').addClass('cnz-hidden');
+    $('#cnz-receipts-content').empty();
+    $('#cnz-recovery-guide').addClass('cnz-hidden');
+    $('#cnz-cancel').text('Cancel').prop('disabled', false);
     // RAG Workshop reset
-    $('#stne-rag-cards').empty();
-    $('#stne-rag-no-summary, #stne-rag-disabled').addClass('stne-hidden');
-    $('#stne-rag-detached-warn, #stne-rag-detached-revert').addClass('stne-hidden');
-    $('#stne-rag-raw').val('').removeClass('stne-rag-detached');
-    $('#stne-rag-raw-detached-label').addClass('stne-hidden');
-    $('#stne-rag-tab-bar .stne-tab-btn').each(function () {
-        $(this).toggleClass('stne-tab-active', $(this).data('tab') === 'sectioned');
+    $('#cnz-rag-cards').empty();
+    $('#cnz-rag-no-summary, #cnz-rag-disabled').addClass('cnz-hidden');
+    $('#cnz-rag-detached-warn, #cnz-rag-detached-revert').addClass('cnz-hidden');
+    $('#cnz-rag-raw').val('').removeClass('cnz-rag-detached');
+    $('#cnz-rag-raw-detached-label').addClass('cnz-hidden');
+    $('#cnz-rag-tab-bar .cnz-tab-btn').each(function () {
+        $(this).toggleClass('cnz-tab-active', $(this).data('tab') === 'sectioned');
     });
-    $('#stne-rag-tab-sectioned').removeClass('stne-hidden');
-    $('#stne-rag-tab-raw').addClass('stne-hidden');
+    $('#cnz-rag-tab-sectioned').removeClass('cnz-hidden');
+    $('#cnz-rag-tab-raw').addClass('cnz-hidden');
     // Lorebook ingester reset
     _lorebookSuggestions        = [];
     _lbActiveIngesterIndex      = 0;
@@ -2227,24 +2227,24 @@ function updateWizard(n) {
     if (_currentStep === 3 && n < 3) onLeaveRagWorkshop();
     _currentStep = n;
     for (let i = 1; i <= 4; i++) {
-        $(`#stne-step-${i}`).toggleClass('stne-hidden', i !== n);
+        $(`#cnz-step-${i}`).toggleClass('cnz-hidden', i !== n);
     }
-    $('#stne-move-back').toggleClass('stne-hidden', n === 1);
-    $('#stne-move-next').toggleClass('stne-hidden', n === 4);
-    $('#stne-confirm').toggleClass('stne-hidden',   n !== 4);
+    $('#cnz-move-back').toggleClass('cnz-hidden', n === 1);
+    $('#cnz-move-next').toggleClass('cnz-hidden', n === 4);
+    $('#cnz-confirm').toggleClass('cnz-hidden',   n !== 4);
     if (n === 3) onEnterRagWorkshop();
     if (n === 4) populateStep4Summary();
 }
 
 /**
- * Opens the STNE review modal. Loads committed hooks from character scenario,
+ * Opens the CNZ review modal. Loads committed hooks from character scenario,
  * ensures lorebook and ledger are bootstrapped, then shows Step 1.
  * Called from the sync toast "Review" link.
  */
 async function openReviewModal() {
     const ctx  = SillyTavern.getContext();
     const char = ctx?.characters?.[ctx?.characterId];
-    if (!char) { toastr.error('STNE: No character selected.'); return; }
+    if (!char) { toastr.error('CNZ: No character selected.'); return; }
 
     // Ensure lorebook is loaded
     const lbName = getSettings().lorebookName || char.name;
@@ -2254,7 +2254,7 @@ async function openReviewModal() {
             _lorebookData  = await lbEnsureLorebook(_lorebookName);
             _draftLorebook = structuredClone(_lorebookData);
         } catch (err) {
-            console.error('[STNE] openReviewModal: lorebook load failed:', err);
+            console.error('[CNZ] openReviewModal: lorebook load failed:', err);
             _lorebookData  = { entries: {} };
             _draftLorebook = { entries: {} };
         }
@@ -2263,20 +2263,20 @@ async function openReviewModal() {
     // Ensure ledger is bootstrapped
     if (!_ledgerManifest) {
         await fetchOrBootstrapLedger(char.avatar).catch(err =>
-            console.error('[STNE] openReviewModal: ledger bootstrap failed:', err),
+            console.error('[CNZ] openReviewModal: ledger bootstrap failed:', err),
         );
     }
 
     // Populate hooks from committed state (scenario anchor block)
     const hooksText = extractHookseekerBlock(char.scenario ?? '');
-    $('#stne-situation-text').val(hooksText ?? '');
+    $('#cnz-situation-text').val(hooksText ?? '');
 
     initWizardSession();
     showModal();
     updateWizard(1);
 }
 
-// ─── STNE Core ────────────────────────────────────────────────────────────────
+// ─── CNZ Core ────────────────────────────────────────────────────────────────
 
 /**
  * Soft-prunes canonized turns by advancing syncFromTurn to the first message
@@ -2288,14 +2288,14 @@ async function openReviewModal() {
 function pruneCanonizedTurns(messages, windowFirstMsg) {
     const targetIdx = messages.indexOf(windowFirstMsg);
     if (targetIdx <= 0) {
-        console.log('[STNE] Rolling trim: window starts at message 0 — nothing to prune.');
+        console.log('[CNZ] Rolling trim: window starts at message 0 — nothing to prune.');
         return;
     }
     let nsCount = 0;
     for (let i = 0; i <= targetIdx; i++) {
         if (!messages[i].is_system) nsCount++;
     }
-    console.log(`[STNE] Rolling trim: advancing context offset to non-system turn ${nsCount}.`);
+    console.log(`[CNZ] Rolling trim: advancing context offset to non-system turn ${nsCount}.`);
     getSettings().syncFromTurn = nsCount;
     saveSettingsDebounced();
 }
@@ -2316,15 +2316,15 @@ function pruneCanonizedTurns(messages, windowFirstMsg) {
  * @param {object} char     Character object from ST context at trigger time.
  * @param {Array}  messages Full chat message array at trigger time.
  */
-async function runStneSync(char, messages, { coverAll = false } = {}) {
+async function runCnzSync(char, messages, { coverAll = false } = {}) {
     if (_syncInProgress) {
-        console.warn('[STNE] Sync already in progress — skipping this trigger.');
+        console.warn('[CNZ] Sync already in progress — skipping this trigger.');
         return;
     }
     _syncInProgress = true;
 
     const nonSystemCount = messages.filter(m => !m.is_system).length;
-    console.log(`[STNE] runStneSync start — char=${char.name} turns=${nonSystemCount} coverAll=${coverAll}`);
+    console.log(`[CNZ] runCnzSync start — char=${char.name} turns=${nonSystemCount} coverAll=${coverAll}`);
 
     // Step flags for toast reporting
     let lbOk     = false;
@@ -2350,7 +2350,7 @@ async function runStneSync(char, messages, { coverAll = false } = {}) {
         const windowPairs = coverAll ? allPairs : allPairs.slice(-windowSize);
 
         if (!windowPairs.length) {
-            console.log('[STNE] No complete pairs in window — skipping sync.');
+            console.log('[CNZ] No complete pairs in window — skipping sync.');
             return;
         }
 
@@ -2361,12 +2361,12 @@ async function runStneSync(char, messages, { coverAll = false } = {}) {
             const firstTurn = (firstPair.validIdx ?? 0) + 1;
             const lastTurn  = (lastPair.validIdx  ?? windowPairs.length - 1) + 1;
             console.log(
-                `[STNE-DBG] runStneSync window: ${windowPairs.length} pairs` +
+                `[CNZ-DBG] runCnzSync window: ${windowPairs.length} pairs` +
                 ` | validIdx range ${firstPair.validIdx}–${lastPair.validIdx}` +
                 ` | approx turns ${firstTurn}–${lastTurn}` +
                 ` | allPairs=${allPairs.length} windowSize=${windowSize} coverAll=${coverAll} syncFrom=${syncFrom}`
             );
-            console.log('[STNE-DBG] windowPairs summary:', windowPairs.map(p =>
+            console.log('[CNZ-DBG] windowPairs summary:', windowPairs.map(p =>
                 `[${p.validIdx}] ${p.user?.name ?? '?'} → ${p.ai?.name ?? '?'}`
             ));
         }
@@ -2419,16 +2419,16 @@ async function runStneSync(char, messages, { coverAll = false } = {}) {
                     break;
                 } catch (err) {
                     lastErr = err;
-                    console.warn(`[STNE] AI calls failed (attempt ${attempt}/${MAX_ATTEMPTS}):`, err);
+                    console.warn(`[CNZ] AI calls failed (attempt ${attempt}/${MAX_ATTEMPTS}):`, err);
                     if (attempt < MAX_ATTEMPTS) {
-                        toastr.warning(`STNE: AI call failed — retrying (${attempt}/${MAX_ATTEMPTS})…`);
+                        toastr.warning(`CNZ: AI call failed — retrying (${attempt}/${MAX_ATTEMPTS})…`);
                         await new Promise(r => setTimeout(r, 2000 * attempt));
                     }
                 }
             }
             if (lastErr) {
-                console.error('[STNE] AI calls failed after all retries:', lastErr);
-                toastr.error(`STNE: AI calls failed after ${MAX_ATTEMPTS} attempts — ${lastErr.message}`);
+                console.error('[CNZ] AI calls failed after all retries:', lastErr);
+                toastr.error(`CNZ: AI calls failed after ${MAX_ATTEMPTS} attempts — ${lastErr.message}`);
                 return;
             }
         }
@@ -2480,10 +2480,10 @@ async function runStneSync(char, messages, { coverAll = false } = {}) {
             // Track the sync point for 'lastSync' mode
             getMetaSettings().lastLorebookSyncAt = nonSystemCount;
             saveSettingsDebounced();
-            console.log(`[STNE] Lorebook updated: ${createdUids.length} created, ${Object.keys(modifiedEntries).length} modified.`);
+            console.log(`[CNZ] Lorebook updated: ${createdUids.length} created, ${Object.keys(modifiedEntries).length} modified.`);
         } catch (err) {
-            console.error('[STNE] Lorebook update failed:', err);
-            toastr.warning(`STNE: Lorebook update failed — ${err.message}`);
+            console.error('[CNZ] Lorebook update failed:', err);
+            toastr.warning(`CNZ: Lorebook update failed — ${err.message}`);
         }
 
         // ── 6. Write Hookseeker output into character scenario ────────────────
@@ -2494,15 +2494,15 @@ async function runStneSync(char, messages, { coverAll = false } = {}) {
             const newScenario = writeHookseekerBlock(freshChar.scenario ?? '', hookseekerText.trim());
             await patchCharacterScenario(freshChar, newScenario);
             hooksOk = true;
-            console.log('[STNE] Scenario hooks block updated.');
+            console.log('[CNZ] Scenario hooks block updated.');
         } catch (err) {
-            console.error('[STNE] Scenario update failed:', err);
-            toastr.warning(`STNE: Scenario update failed — ${err.message}`);
+            console.error('[CNZ] Scenario update failed:', err);
+            toastr.warning(`CNZ: Scenario update failed — ${err.message}`);
         }
 
         // ── 7. Build, classify, and upload RAG chunks ─────────────────────────
         if (!settings.enableRag) {
-            console.log('[STNE] RAG disabled — skipping chunk build and upload.');
+            console.log('[CNZ] RAG disabled — skipping chunk build and upload.');
         } else
         try {
             // Set module state for ragFireChunk/ragDrainQueue machinery
@@ -2527,7 +2527,7 @@ async function runStneSync(char, messages, { coverAll = false } = {}) {
             renderAllChunkChatLabels();
 
             const ragText     = buildRagDocument(_ragChunks);
-            const ragFileName = `${char.name}_stne_t${nonSystemCount}.txt`
+            const ragFileName = `${char.name}_cnz_t${nonSystemCount}.txt`
                 .replace(/\s+/g, '_')
                 .replace(/[^A-Za-z0-9_\-.]/g, '');
             ragUrl = await uploadRagFile(ragText, ragFileName);
@@ -2535,10 +2535,10 @@ async function runStneSync(char, messages, { coverAll = false } = {}) {
 
             const byteSize = new TextEncoder().encode(ragText).length;
             registerCharacterAttachment(char.chat, ragUrl, ragFileName, byteSize);
-            console.log(`[STNE] RAG uploaded: ${ragFileName} (${_ragChunks.length} chunks, ${byteSize} bytes).`);
+            console.log(`[CNZ] RAG uploaded: ${ragFileName} (${_ragChunks.length} chunks, ${byteSize} bytes).`);
         } catch (err) {
-            console.error('[STNE] RAG upload failed:', err);
-            toastr.warning(`STNE: RAG upload failed — ${err.message}`);
+            console.error('[CNZ] RAG upload failed:', err);
+            toastr.warning(`CNZ: RAG upload failed — ${err.message}`);
         }
 
         // ── 8. Commit Ledger node ─────────────────────────────────────────────
@@ -2559,26 +2559,26 @@ async function runStneSync(char, messages, { coverAll = false } = {}) {
 
             await commitLedgerManifest(char.avatar);
             ledgerOk = true;
-            console.log(`[STNE] Ledger committed: nodeId=${node.nodeId}`);
+            console.log(`[CNZ] Ledger committed: nodeId=${node.nodeId}`);
         } catch (err) {
-            console.error('[STNE] Ledger commit failed:', err);
-            toastr.warning(`STNE: Ledger commit failed — ${err.message}`);
+            console.error('[CNZ] Ledger commit failed:', err);
+            toastr.warning(`CNZ: Ledger commit failed — ${err.message}`);
         }
 
         // ── 9. Report outcome ─────────────────────────────────────────────────
         if (lbOk && hooksOk && ragUrl) {
             toastr.success(
-                `STNE: Chunk ${nonSystemCount} synced. <a href="#" id="stne-review-link">Review</a>`,
+                `CNZ: Chunk ${nonSystemCount} synced. <a href="#" id="cnz-review-link">Review</a>`,
                 '',
                 { timeOut: 8000, escapeHtml: false },
             );
-            $(document).one('click', '#stne-review-link', (e) => {
+            $(document).one('click', '#cnz-review-link', (e) => {
                 e.preventDefault();
                 openReviewModal();
             });
         } else {
             // Partial success — individual steps already warned
-            console.log(`[STNE] Sync partial: lb=${lbOk} hooks=${hooksOk} rag=${!!ragUrl} ledger=${ledgerOk}`);
+            console.log(`[CNZ] Sync partial: lb=${lbOk} hooks=${hooksOk} rag=${!!ragUrl} ledger=${ledgerOk}`);
         }
 
         // ── 10. Rolling trim ──────────────────────────────────────────────────
@@ -2588,8 +2588,8 @@ async function runStneSync(char, messages, { coverAll = false } = {}) {
             try {
                 await pruneCanonizedTurns(messages, windowPairs[0].user);
             } catch (err) {
-                console.error('[STNE] Rolling trim failed:', err);
-                toastr.warning(`STNE: Rolling trim failed — ${err.message}`);
+                console.error('[CNZ] Rolling trim failed:', err);
+                toastr.warning(`CNZ: Rolling trim failed — ${err.message}`);
             }
         }
 
@@ -2606,7 +2606,7 @@ async function runStneSync(char, messages, { coverAll = false } = {}) {
  *
  * Outcomes:
  *   - Same timeline (head hash matches) → silent return.
- *   - No matching node (pre-STNE or unrelated chat) → silent return.
+ *   - No matching node (pre-CNZ or unrelated chat) → silent return.
  *   - Branch detected → restore + toastr.warning.
  *   - Restoration failure → toastr.error.
  *
@@ -2650,13 +2650,13 @@ async function runHealer(char, _chatFileName) {
     // Head matches — same timeline, nothing to do.
     if (lastValidNodeIdx === chain.length - 1) return;
 
-    // No node matched — chat predates STNE or is unrelated.
+    // No node matched — chat predates CNZ or is unrelated.
     if (lastValidNodeIdx === -1) return;
 
     // ── Branch detected ───────────────────────────────────────────────────────
     const targetNode = chain[lastValidNodeIdx];
     const turnNum    = targetNode.sequenceNum;
-    console.log(`[STNE] Healer: branch detected — restoring to Turn ${turnNum} (nodeId=${targetNode.nodeId})`);
+    console.log(`[CNZ] Healer: branch detected — restoring to Turn ${turnNum} (nodeId=${targetNode.nodeId})`);
 
     try {
         await restoreLorebookToNode(targetNode);
@@ -2673,11 +2673,11 @@ async function runHealer(char, _chatFileName) {
 
         await commitLedgerManifest(char.avatar);
 
-        toastr.warning(`STNE: Branch detected — restored to Turn ${turnNum}.`);
-        console.log(`[STNE] Healer: restoration complete. Head → ${targetNode.nodeId}`);
+        toastr.warning(`CNZ: Branch detected — restored to Turn ${turnNum}.`);
+        console.log(`[CNZ] Healer: restoration complete. Head → ${targetNode.nodeId}`);
     } catch (err) {
-        console.error('[STNE] Healer: restoration failed:', err);
-        toastr.error('STNE: Branch detected but restoration failed — lorebook may be inconsistent.');
+        console.error('[CNZ] Healer: restoration failed:', err);
+        toastr.error('CNZ: Branch detected but restoration failed — lorebook may be inconsistent.');
     }
 }
 
@@ -2694,24 +2694,24 @@ async function runHealer(char, _chatFileName) {
  * @param {string|null} trailingPromptKey  Optional settings key for a trailing prompt shown below the main textarea.
  */
 function openPromptModal(settingsKey, title, defaultValue, vars = [], trailingPromptKey = null) {
-    const $overlay         = $('#stne-pm-overlay');
-    const $textarea        = $('#stne-pm-textarea');
-    const $titleEl         = $('#stne-pm-title');
-    const $reset           = $('#stne-pm-reset');
-    const $close           = $('#stne-pm-close');
-    const $vars            = $('#stne-pm-vars');
-    const $trailingSection = $('#stne-pm-trailing-section');
-    const $trailingArea    = $('#stne-pm-trailing-textarea');
+    const $overlay         = $('#cnz-pm-overlay');
+    const $textarea        = $('#cnz-pm-textarea');
+    const $titleEl         = $('#cnz-pm-title');
+    const $reset           = $('#cnz-pm-reset');
+    const $close           = $('#cnz-pm-close');
+    const $vars            = $('#cnz-pm-vars');
+    const $trailingSection = $('#cnz-pm-trailing-section');
+    const $trailingArea    = $('#cnz-pm-trailing-textarea');
 
     $titleEl.text(title);
     $textarea.val(getSettings()[settingsKey] ?? defaultValue);
-    $vars.html(vars.map(v => `<code class="stne-pm-var">{{${v}}}</code>`).join(' '));
+    $vars.html(vars.map(v => `<code class="cnz-pm-var">{{${v}}}</code>`).join(' '));
 
     if (trailingPromptKey) {
         $trailingArea.val(getSettings()[trailingPromptKey] ?? '');
-        $trailingSection.removeClass('stne-hidden');
+        $trailingSection.removeClass('cnz-hidden');
     } else {
-        $trailingSection.addClass('stne-hidden');
+        $trailingSection.addClass('cnz-hidden');
     }
 
     // Unbind any previous open's handlers before re-binding
@@ -2720,7 +2720,7 @@ function openPromptModal(settingsKey, title, defaultValue, vars = [], trailingPr
     $reset.off('click.pm');
     $close.off('click.pm');
     $overlay.off('click.pm');
-    $('#stne-pm-modal').off('click.pm').on('click.pm', e => e.stopPropagation());
+    $('#cnz-pm-modal').off('click.pm').on('click.pm', e => e.stopPropagation());
 
     $textarea.on('input.pm', function () {
         getSettings()[settingsKey] = $(this).val();
@@ -2746,14 +2746,14 @@ function openPromptModal(settingsKey, title, defaultValue, vars = [], trailingPr
 
     const closePromptModal = (e) => {
         e?.stopPropagation();
-        $overlay.addClass('stne-hidden');
+        $overlay.addClass('cnz-hidden');
     };
     $close.on('click.pm', closePromptModal);
     $overlay.on('click.pm', function (e) {
         if (e.target === this) closePromptModal(e);
     });
 
-    $overlay.removeClass('stne-hidden');
+    $overlay.removeClass('cnz-hidden');
     requestAnimationFrame(() => $textarea[0]?.focus());
 }
 
@@ -2769,7 +2769,7 @@ function isStateDirty() {
 function updateDirtyIndicator() {
     const meta  = getMetaSettings();
     const label = meta.currentProfileName + (isStateDirty() ? ' *' : '');
-    const $sel  = $('#stne-profile-select');
+    const $sel  = $('#cnz-profile-select');
     $sel.find(`option[value="${CSS.escape(meta.currentProfileName)}"]`).text(label);
     $sel.val(meta.currentProfileName);
 }
@@ -2782,35 +2782,35 @@ function updateDirtyIndicator() {
 function refreshSettingsUI() {
     const s = getSettings();
 
-    $('#stne-set-sync-from-turn').val(s.syncFromTurn ?? 1);
-    $('#stne-set-chunk-every-n').val(s.chunkEveryN ?? 20);
-    $('#stne-set-hookseeker-horizon').val(s.hookseekerHorizon ?? 70);
-    $('#stne-set-lorebook-sync-start').val(s.lorebookSyncStart ?? 'syncTurn');
-    $('#stne-set-prune-on-sync').prop('checked', s.pruneOnSync ?? false);
-    $('#stne-set-enable-rag').prop('checked', s.enableRag ?? false);
-    $('#stne-rag-settings-body').toggleClass('stne-disabled', !(s.enableRag ?? false));
-    $('#stne-set-rag-separator').val(s.ragSeparator ?? DEFAULT_SEPARATOR);
-    $('#stne-set-rag-contents').val(s.ragContents ?? 'summary+full');
+    $('#cnz-set-sync-from-turn').val(s.syncFromTurn ?? 1);
+    $('#cnz-set-chunk-every-n').val(s.chunkEveryN ?? 20);
+    $('#cnz-set-hookseeker-horizon').val(s.hookseekerHorizon ?? 70);
+    $('#cnz-set-lorebook-sync-start').val(s.lorebookSyncStart ?? 'syncTurn');
+    $('#cnz-set-prune-on-sync').prop('checked', s.pruneOnSync ?? false);
+    $('#cnz-set-enable-rag').prop('checked', s.enableRag ?? false);
+    $('#cnz-rag-settings-body').toggleClass('cnz-disabled', !(s.enableRag ?? false));
+    $('#cnz-set-rag-separator').val(s.ragSeparator ?? DEFAULT_SEPARATOR);
+    $('#cnz-set-rag-contents').val(s.ragContents ?? 'summary+full');
 
     const hasSummary = (s.ragContents ?? 'summary+full') !== 'full';
-    $('#stne-rag-summary-source-row').toggleClass('stne-hidden', !hasSummary);
-    $('#stne-set-rag-summary-source').val(s.ragSummarySource ?? 'defined');
-    $('#stne-set-rag-max-tokens').val(s.ragMaxTokens ?? 100);
-    $('#stne-set-rag-chunk-size').val(s.ragChunkSize ?? 2);
-    $('#stne-set-rag-chunk-overlap').val(s.ragChunkOverlap ?? 0);
+    $('#cnz-rag-summary-source-row').toggleClass('cnz-hidden', !hasSummary);
+    $('#cnz-set-rag-summary-source').val(s.ragSummarySource ?? 'defined');
+    $('#cnz-set-rag-max-tokens').val(s.ragMaxTokens ?? 100);
+    $('#cnz-set-rag-chunk-size').val(s.ragChunkSize ?? 2);
+    $('#cnz-set-rag-chunk-overlap').val(s.ragChunkOverlap ?? 0);
     updateRagAiControlsVisibility();
 
     // Re-initialize connection profile dropdowns with the newly loaded values.
     try {
         ConnectionManagerRequestService.handleDropdown(
-            '#stne-set-profile',
+            '#cnz-set-profile',
             s.profileId ?? '',
             (profile) => { getSettings().profileId = profile?.id ?? null; saveSettingsDebounced(); updateDirtyIndicator(); },
         );
     } catch (e) { /* silent */ }
     try {
         ConnectionManagerRequestService.handleDropdown(
-            '#stne-set-rag-profile',
+            '#cnz-set-rag-profile',
             s.ragProfileId ?? '',
             (profile) => { getSettings().ragProfileId = profile?.id ?? null; saveSettingsDebounced(); updateDirtyIndicator(); },
         );
@@ -2822,7 +2822,7 @@ function refreshSettingsUI() {
 /** Rebuilds the profile <select> options from the current profiles dict. */
 function refreshProfileDropdown() {
     const meta = getMetaSettings();
-    const $sel = $('#stne-profile-select');
+    const $sel = $('#cnz-profile-select');
     $sel.empty();
     for (const name of Object.keys(meta.profiles)) {
         $sel.append($('<option>').val(name).text(name));
@@ -2832,57 +2832,57 @@ function refreshProfileDropdown() {
 
 function bindSettingsHandlers() {
     // ── Summary / Lorebook ────────────────────────────────────────────────────
-    $('#stne-set-sync-from-turn').on('input', function () {
+    $('#cnz-set-sync-from-turn').on('input', function () {
         const val = Math.max(1, parseInt($(this).val()) || 1);
         getSettings().syncFromTurn = val;
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
-    $('#stne-set-chunk-every-n').on('input', function () {
+    $('#cnz-set-chunk-every-n').on('input', function () {
         const val = Math.max(1, parseInt($(this).val()) || 20);
         getSettings().chunkEveryN = val;
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
-    $('#stne-set-hookseeker-horizon').on('input', function () {
+    $('#cnz-set-hookseeker-horizon').on('input', function () {
         const val = Math.max(1, parseInt($(this).val()) || 70);
         getSettings().hookseekerHorizon = val;
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
-    $('#stne-set-lorebook-sync-start').on('change', function () {
+    $('#cnz-set-lorebook-sync-start').on('change', function () {
         getSettings().lorebookSyncStart = $(this).val();
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
-    $('#stne-set-prune-on-sync').on('change', function () {
+    $('#cnz-set-prune-on-sync').on('change', function () {
         getSettings().pruneOnSync = $(this).prop('checked');
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
-    $('#stne-edit-summary-prompt').on('click', () =>
+    $('#cnz-edit-summary-prompt').on('click', () =>
         openPromptModal('hookseekerPrompt', 'Edit Summary Prompt', DEFAULT_HOOKSEEKER_PROMPT,
             ['transcript', 'prev_summary'], 'hookseekerTrailingPrompt'));
 
-    $('#stne-edit-lorebook-prompt').on('click', () =>
+    $('#cnz-edit-lorebook-prompt').on('click', () =>
         openPromptModal('lorebookSyncPrompt', 'Edit Lorebook Sync Prompt', DEFAULT_LOREBOOK_SYNC_PROMPT,
             ['lorebook_entries', 'transcript']));
 
     // ── RAG ───────────────────────────────────────────────────────────────────
-    $('#stne-set-enable-rag').on('change', function () {
+    $('#cnz-set-enable-rag').on('change', function () {
         getSettings().enableRag = $(this).prop('checked');
         saveSettingsDebounced(); updateDirtyIndicator();
-        $('#stne-rag-settings-body').toggleClass('stne-disabled', !getSettings().enableRag);
+        $('#cnz-rag-settings-body').toggleClass('cnz-disabled', !getSettings().enableRag);
     });
 
-    $('#stne-set-rag-separator').on('change', function () {
+    $('#cnz-set-rag-separator').on('change', function () {
         const newVal   = $(this).val();
         const oldVal   = getSettings().ragSeparator ?? '';
         if (newVal === oldVal) return;
 
         // Count stored chunk headers in the current chat
         const chat       = SillyTavern.getContext().chat ?? [];
-        const storedCount = chat.filter(m => m.extra?.stne_chunk_header).length;
+        const storedCount = chat.filter(m => m.extra?.cnz_chunk_header).length;
 
         if (storedCount > 0) {
             const approxTurns = storedCount * (getSettings().ragChunkSize ?? 2);
@@ -2898,13 +2898,13 @@ function bindSettingsHandlers() {
             }
             // Clear stored headers from all chat messages
             for (const m of chat) {
-                if (m.extra?.stne_chunk_header) {
-                    delete m.extra.stne_chunk_header;
-                    delete m.extra.stne_turn_label;
+                if (m.extra?.cnz_chunk_header) {
+                    delete m.extra.cnz_chunk_header;
+                    delete m.extra.cnz_turn_label;
                 }
             }
             SillyTavern.getContext().saveChat().catch(err =>
-                console.error('[STNE] saveChat after separator clear failed:', err),
+                console.error('[CNZ] saveChat after separator clear failed:', err),
             );
             // Mark any in-memory chunks as pending so they reclassify on next open
             for (const c of _ragChunks) {
@@ -2916,21 +2916,21 @@ function bindSettingsHandlers() {
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
-    $('#stne-set-rag-contents').on('change', function () {
+    $('#cnz-set-rag-contents').on('change', function () {
         getSettings().ragContents = $(this).val();
         saveSettingsDebounced(); updateDirtyIndicator();
         const hasSummary = $(this).val() !== 'full';
-        $('#stne-rag-summary-source-row').toggleClass('stne-hidden', !hasSummary);
+        $('#cnz-rag-summary-source-row').toggleClass('cnz-hidden', !hasSummary);
         updateRagAiControlsVisibility();
     });
 
-    $('#stne-set-rag-summary-source').on('change', function () {
+    $('#cnz-set-rag-summary-source').on('change', function () {
         getSettings().ragSummarySource = $(this).val();
         saveSettingsDebounced(); updateDirtyIndicator();
         updateRagAiControlsVisibility();
     });
 
-    $('#stne-set-rag-max-tokens').on('input', function () {
+    $('#cnz-set-rag-max-tokens').on('input', function () {
         const val = parseInt($(this).val(), 10);
         if (!isNaN(val) && val >= 1) {
             getSettings().ragMaxTokens = val;
@@ -2938,25 +2938,25 @@ function bindSettingsHandlers() {
         }
     });
 
-    $('#stne-set-rag-chunk-size').on('input', function () {
+    $('#cnz-set-rag-chunk-size').on('input', function () {
         const val = Math.max(1, parseInt($(this).val()) || 2);
         getSettings().ragChunkSize = val;
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
-    $('#stne-set-rag-chunk-overlap').on('change', function () {
+    $('#cnz-set-rag-chunk-overlap').on('change', function () {
         getSettings().ragChunkOverlap = parseInt($(this).val()) || 0;
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
-    $('#stne-edit-classifier-prompt').on('click', () =>
+    $('#cnz-edit-classifier-prompt').on('click', () =>
         openPromptModal('ragClassifierPrompt', 'Edit Classifier Prompt', DEFAULT_RAG_CLASSIFIER_PROMPT,
             ['summary', 'target_turns']));
 
     // ── Connection profiles ───────────────────────────────────────────────────
     try {
         ConnectionManagerRequestService.handleDropdown(
-            '#stne-set-profile',
+            '#cnz-set-profile',
             getSettings().profileId ?? '',
             (profile) => {
                 getSettings().profileId = profile?.id ?? null;
@@ -2964,12 +2964,12 @@ function bindSettingsHandlers() {
             },
         );
     } catch (e) {
-        console.warn('[STNE] Could not initialize profile dropdown:', e);
+        console.warn('[CNZ] Could not initialize profile dropdown:', e);
     }
 
     try {
         ConnectionManagerRequestService.handleDropdown(
-            '#stne-set-rag-profile',
+            '#cnz-set-rag-profile',
             getSettings().ragProfileId ?? '',
             (profile) => {
                 getSettings().ragProfileId = profile?.id ?? null;
@@ -2977,11 +2977,11 @@ function bindSettingsHandlers() {
             },
         );
     } catch (e) {
-        console.warn('[STNE] Could not initialize RAG profile dropdown:', e);
+        console.warn('[CNZ] Could not initialize RAG profile dropdown:', e);
     }
 
     // ── Profile management ────────────────────────────────────────────────────
-    $('#stne-profile-select').on('change', function () {
+    $('#cnz-profile-select').on('change', function () {
         const newName = $(this).val();
         const meta    = getMetaSettings();
         if (!meta.profiles[newName]) return;
@@ -2991,14 +2991,14 @@ function bindSettingsHandlers() {
         refreshSettingsUI();
     });
 
-    $('#stne-profile-save').on('click', function () {
+    $('#cnz-profile-save').on('click', function () {
         const meta = getMetaSettings();
         meta.profiles[meta.currentProfileName] = structuredClone(meta.activeState);
         saveSettingsDebounced();
         updateDirtyIndicator();
     });
 
-    $('#stne-profile-add').on('click', async function () {
+    $('#cnz-profile-add').on('click', async function () {
         const rawName = await callPopup('<h3>New profile name</h3>', 'input', '');
         const name    = (rawName ?? '').trim();
         if (!name) return;
@@ -3013,7 +3013,7 @@ function bindSettingsHandlers() {
         refreshProfileDropdown();
     });
 
-    $('#stne-profile-rename').on('click', async function () {
+    $('#cnz-profile-rename').on('click', async function () {
         const meta    = getMetaSettings();
         const rawName = await callPopup('<h3>Rename profile</h3>', 'input', meta.currentProfileName);
         const newName = (rawName ?? '').trim();
@@ -3029,7 +3029,7 @@ function bindSettingsHandlers() {
         refreshProfileDropdown();
     });
 
-    $('#stne-profile-delete').on('click', async function () {
+    $('#cnz-profile-delete').on('click', async function () {
         const meta = getMetaSettings();
         if (Object.keys(meta.profiles).length <= 1) {
             toastr.warning('Cannot delete the only profile.');
@@ -3057,11 +3057,11 @@ function updateRagAiControlsVisibility() {
     const s = getSettings();
     const hasSummary    = (s.ragContents ?? 'summary+full') !== 'full';
     const isDefinedHere = (s.ragSummarySource ?? 'defined') === 'defined';
-    $('#stne-rag-ai-controls').toggleClass('stne-disabled', !(hasSummary && isDefinedHere));
+    $('#cnz-rag-ai-controls').toggleClass('cnz-disabled', !(hasSummary && isDefinedHere));
 }
 
 function injectSettingsPanel() {
-    if ($('#stne-settings').length) return;
+    if ($('#cnz-settings').length) return;
     const meta = getMetaSettings();
     $('#extensions_settings').append(
         buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName),
@@ -3084,8 +3084,8 @@ function onMessageReceived() {
 
     if (every > 0 && count > 0 && count % every === 0) {
         const char = context.characters[context.characterId];
-        runStneSync(char, messages).catch(err =>
-            console.error('[STNE] runStneSync uncaught error:', err),
+        runCnzSync(char, messages).catch(err =>
+            console.error('[CNZ] runCnzSync uncaught error:', err),
         );
     }
 }
@@ -3115,7 +3115,7 @@ function onChatChanged() {
     // Same character, different chat — Healer territory
     if (chatFileName) {
         runHealer(char, chatFileName).catch(err =>
-            console.error('[STNE] runHealer uncaught error:', err),
+            console.error('[CNZ] runHealer uncaught error:', err),
         );
     }
 }
@@ -3132,20 +3132,20 @@ function onChatChanged() {
 function showSyncChoicePopup(bodyHtml, fullLabel, winLabel) {
     return new Promise(resolve => {
         const $overlay = $(`
-            <div class="stne-choice-overlay">
-                <div class="stne-choice-dialog">
+            <div class="cnz-choice-overlay">
+                <div class="cnz-choice-dialog">
                     ${bodyHtml}
-                    <div class="stne-choice-buttons">
-                        <button class="stne-choice-full menu_button">${fullLabel}</button>
-                        <button class="stne-choice-win menu_button">${winLabel}</button>
-                        <button class="stne-choice-cancel menu_button">Cancel</button>
+                    <div class="cnz-choice-buttons">
+                        <button class="cnz-choice-full menu_button">${fullLabel}</button>
+                        <button class="cnz-choice-win menu_button">${winLabel}</button>
+                        <button class="cnz-choice-cancel menu_button">Cancel</button>
                     </div>
                 </div>
             </div>
         `);
-        $overlay.find('.stne-choice-full').on('click',   () => { $overlay.remove(); resolve('full'); });
-        $overlay.find('.stne-choice-win').on('click',    () => { $overlay.remove(); resolve('window'); });
-        $overlay.find('.stne-choice-cancel').on('click', () => { $overlay.remove(); resolve('cancel'); });
+        $overlay.find('.cnz-choice-full').on('click',   () => { $overlay.remove(); resolve('full'); });
+        $overlay.find('.cnz-choice-win').on('click',    () => { $overlay.remove(); resolve('window'); });
+        $overlay.find('.cnz-choice-cancel').on('click', () => { $overlay.remove(); resolve('cancel'); });
         $('body').append($overlay);
     });
 }
@@ -3153,11 +3153,11 @@ function showSyncChoicePopup(bodyHtml, fullLabel, winLabel) {
 async function onWandButtonClick() {
     const ctx = SillyTavern.getContext();
     if (!ctx || ctx.groupId || ctx.characterId == null) {
-        toastr.error('STNE: No character selected.');
+        toastr.error('CNZ: No character selected.');
         return;
     }
     if (_syncInProgress) {
-        toastr.warning('STNE: Sync already in progress — please wait.');
+        toastr.warning('CNZ: Sync already in progress — please wait.');
         return;
     }
 
@@ -3179,7 +3179,7 @@ async function onWandButtonClick() {
     let coverAll = false;
     if (isFinite(gap)) {
         const extraWarning = gap > windowSize
-            ? `<p class="stne-choice-warn">⚠ ${gap - windowSize} turn(s) in the middle may never have been captured by auto-sync.</p>`
+            ? `<p class="cnz-choice-warn">⚠ ${gap - windowSize} turn(s) in the middle may never have been captured by auto-sync.</p>`
             : '';
         const choice = await showSyncChoicePopup(
             `<h3>How much should this sync cover?</h3>
@@ -3193,22 +3193,22 @@ async function onWandButtonClick() {
     }
     // Never synced — no choice needed, run a standard window sync.
 
-    toastr.info(`STNE: Running sync (${coverAll ? `full ${gap}-turn gap` : `last ${windowSize} turns`})…`);
-    await runStneSync(char, messages, { coverAll });
+    toastr.info(`CNZ: Running sync (${coverAll ? `full ${gap}-turn gap` : `last ${windowSize} turns`})…`);
+    await runCnzSync(char, messages, { coverAll });
     openReviewModal();
 }
 
 function injectWandButton() {
-    if ($('#stne-wand-btn').length) return;
+    if ($('#cnz-wand-btn').length) return;
     const btn = $(
-        '<div id="stne-wand-btn" class="list-group-item flex-container flexGap5" title="Run Canonize">' +
+        '<div id="cnz-wand-btn" class="list-group-item flex-container flexGap5" title="Run Canonize">' +
         '<i class="fa-solid fa-book-open"></i>' +
         '<span>Run Canonize</span>' +
         '</div>'
     );
     btn.on('click', () => onWandButtonClick().catch(err => {
-        console.error('[STNE] Wand button error:', err);
-        toastr.error(`STNE: ${err.message}`);
+        console.error('[CNZ] Wand button error:', err);
+        toastr.error(`CNZ: ${err.message}`);
     }));
     $('#extensionsMenu').append(btn);
 }
@@ -3234,7 +3234,7 @@ async function init() {
         const hidden = data.chat.length - filtered.length;
         if (hidden > 0) {
             data.chat.splice(0, data.chat.length, ...filtered);
-            console.log(`[STNE] Context mask: hid ${hidden} canonized turn(s) from LLM prompt.`);
+            console.log(`[CNZ] Context mask: hid ${hidden} canonized turn(s) from LLM prompt.`);
         }
     });
 
@@ -3244,7 +3244,7 @@ async function init() {
         const ctx  = SillyTavern.getContext();
         const char = ctx?.characters?.[ctx?.characterId];
         if (char) runHealer(char, char.chat).catch(err =>
-            console.error('[STNE] Startup Healer uncaught error:', err),
+            console.error('[CNZ] Startup Healer uncaught error:', err),
         );
     }, 1000);
 }

@@ -1,6 +1,6 @@
 /**
- * @file data/default-user/extensions/STNE/style.css
- * STNE — Narrative Engine modal and settings panel styles.
+ * @file data/default-user/extensions/canonize/style.css
+ * CNZ — Narrative Engine modal and settings panel styles.
  * All magic values (colours, dimensions, spacing) are declared as custom
  * properties in :root so they can be overridden by ST themes.
  */
@@ -8,55 +8,55 @@
 /* ─── Design Tokens ──────────────────────────────────────────────────────── */
 
 :root {
-    --stne-overlay-bg:         rgba(0, 0, 0, 0.65);
-    --stne-modal-bg:           var(--black-tinted, #1a1a2e);
-    --stne-modal-border:       var(--border-color-light, #444);
-    --stne-modal-radius:       8px;
-    --stne-modal-width:        95%;
-    --stne-modal-max-width:    640px;
-    --stne-modal-pad:          20px;
-    --stne-gap:                12px;
-    --stne-gap-sm:             6px;
+    --cnz-overlay-bg:         rgba(0, 0, 0, 0.65);
+    --cnz-modal-bg:           var(--black-tinted, #1a1a2e);
+    --cnz-modal-border:       var(--border-color-light, #444);
+    --cnz-modal-radius:       8px;
+    --cnz-modal-width:        95%;
+    --cnz-modal-max-width:    640px;
+    --cnz-modal-pad:          20px;
+    --cnz-gap:                12px;
+    --cnz-gap-sm:             6px;
 
-    --stne-text:               var(--SmartThemeBodyColorText, #e0e0e0);
-    --stne-text-muted:         var(--SmartThemeBodyColorSecondary, #999);
+    --cnz-text:               var(--SmartThemeBodyColorText, #e0e0e0);
+    --cnz-text-muted:         var(--SmartThemeBodyColorSecondary, #999);
 
-    --stne-input-bg:           var(--black-tinted-extra, #111);
-    --stne-input-border:       var(--border-color-light, #444);
-    --stne-input-radius:       4px;
-    --stne-input-pad:          6px 8px;
-    --stne-textarea-h:         130px;
-    --stne-textarea-h-tall:    210px;
-    --stne-settings-textarea-h: 80px;
+    --cnz-input-bg:           var(--black-tinted-extra, #111);
+    --cnz-input-border:       var(--border-color-light, #444);
+    --cnz-input-radius:       4px;
+    --cnz-input-pad:          6px 8px;
+    --cnz-textarea-h:         130px;
+    --cnz-textarea-h-tall:    210px;
+    --cnz-settings-textarea-h: 80px;
 
-    --stne-suggestions-bg:     rgba(255, 255, 255, 0.03);
-    --stne-suggestions-border: var(--border-color-light, #444);
+    --cnz-suggestions-bg:     rgba(255, 255, 255, 0.03);
+    --cnz-suggestions-border: var(--border-color-light, #444);
 
-    --stne-warn-fg:            #f0c040;
-    --stne-warn-bg:            rgba(240, 192, 64, 0.12);
+    --cnz-warn-fg:            #f0c040;
+    --cnz-warn-bg:            rgba(240, 192, 64, 0.12);
 
-    --stne-error-fg:           #e05555;
-    --stne-error-bg:           rgba(224, 85, 85, 0.12);
+    --cnz-error-fg:           #e05555;
+    --cnz-error-bg:           rgba(224, 85, 85, 0.12);
 
-    --stne-btn-radius:         4px;
-    --stne-btn-pad:            6px 14px;
-    --stne-btn-font:           0.85rem;
-    --stne-btn-primary-bg:     var(--SmartThemeBlurTintColor, #5c85d6);
-    --stne-btn-primary-fg:     #ffffff;
-    --stne-btn-success-fg:     #6bbf6b;
+    --cnz-btn-radius:         4px;
+    --cnz-btn-pad:            6px 14px;
+    --cnz-btn-font:           0.85rem;
+    --cnz-btn-primary-bg:     var(--SmartThemeBlurTintColor, #5c85d6);
+    --cnz-btn-primary-fg:     #ffffff;
+    --cnz-btn-success-fg:     #6bbf6b;
 
-    --stne-z-modal:            9999;
+    --cnz-z-modal:            9999;
 }
 
 /* ─── Utility ────────────────────────────────────────────────────────────── */
 
-.stne-hidden {
+.cnz-hidden {
     display: none !important;
 }
 
 /* ─── Overlay & Modal Shell ──────────────────────────────────────────────── */
 
-.stne-overlay {
+.cnz-overlay {
     position: fixed;
     top: 0;
     right: 0;
@@ -65,8 +65,8 @@
     width: 100vw;
     height: 100vh;
     height: 100dvh;
-    background: var(--stne-overlay-bg);
-    z-index: var(--stne-z-modal);
+    background: var(--cnz-overlay-bg);
+    z-index: var(--cnz-z-modal);
     display: flex;
     align-items: flex-start;
     justify-content: center;
@@ -75,75 +75,75 @@
     box-sizing: border-box;
 }
 
-.stne-modal {
-    background: var(--stne-modal-bg);
-    border: 1px solid var(--stne-modal-border);
-    border-radius: var(--stne-modal-radius);
-    width: var(--stne-modal-width);
-    max-width: var(--stne-modal-max-width);
-    padding: var(--stne-modal-pad);
+.cnz-modal {
+    background: var(--cnz-modal-bg);
+    border: 1px solid var(--cnz-modal-border);
+    border-radius: var(--cnz-modal-radius);
+    width: var(--cnz-modal-width);
+    max-width: var(--cnz-modal-max-width);
+    padding: var(--cnz-modal-pad);
     display: flex;
     flex-direction: column;
-    gap: var(--stne-gap);
-    color: var(--stne-text);
+    gap: var(--cnz-gap);
+    color: var(--cnz-text);
 }
 
 /* ─── Step Panels ────────────────────────────────────────────────────────── */
 
-.stne-step {
+.cnz-step {
     display: flex;
     flex-direction: column;
-    gap: var(--stne-gap);
+    gap: var(--cnz-gap);
 }
 
-.stne-title {
+.cnz-title {
     margin: 0;
     font-size: 1rem;
     font-weight: 600;
-    color: var(--stne-text);
+    color: var(--cnz-text);
 }
 
 /* ─── Section Headers (label + spinner + regen button) ───────────────────── */
 
-.stne-section-header {
+.cnz-section-header {
     display: flex;
     align-items: center;
-    gap: var(--stne-gap-sm);
+    gap: var(--cnz-gap-sm);
 }
 
-.stne-section-header .stne-label {
+.cnz-section-header .cnz-label {
     flex: 1;
     margin-bottom: 0;
 }
 
-.stne-section-spin {
+.cnz-section-spin {
     font-size: 0.75rem;
-    color: var(--stne-text-muted);
+    color: var(--cnz-text-muted);
 }
 
 /* ─── Labels ─────────────────────────────────────────────────────────────── */
 
-.stne-label {
+.cnz-label {
     display: block;
     font-size: 0.8rem;
-    color: var(--stne-text-muted);
+    color: var(--cnz-text-muted);
     margin-bottom: 2px;
 }
 
 /* ─── Suggestions Box ────────────────────────────────────────────────────── */
 
-.stne-suggestions-box {
+.cnz-suggestions-box {
     min-height: 52px;
-    background: var(--stne-suggestions-bg);
-    border: 1px solid var(--stne-suggestions-border);
-    border-radius: var(--stne-input-radius);
-    padding: var(--stne-input-pad);
+    background: var(--cnz-suggestions-bg);
+    border: 1px solid var(--cnz-suggestions-border);
+    border-radius: var(--cnz-input-radius);
+    padding: var(--cnz-input-pad);
     font-size: 0.85rem;
     line-height: 1.5;
-    color: var(--stne-text);
+    color: var(--cnz-text);
 }
 
-.stne-suggestions-box pre {
+.cnz-suggestions-box pre {
     margin: 0;
     white-space: pre-wrap;
     word-break: break-word;
@@ -155,454 +155,454 @@
 
 /* ─── Textareas ──────────────────────────────────────────────────────────── */
 
-.stne-textarea {
+.cnz-textarea {
     width: 100%;
-    height: var(--stne-textarea-h);
+    height: var(--cnz-textarea-h);
     resize: vertical;
     box-sizing: border-box;
-    background: var(--stne-input-bg);
-    color: var(--stne-text);
-    border: 1px solid var(--stne-input-border);
-    border-radius: var(--stne-input-radius);
-    padding: var(--stne-input-pad);
+    background: var(--cnz-input-bg);
+    color: var(--cnz-text);
+    border: 1px solid var(--cnz-input-border);
+    border-radius: var(--cnz-input-radius);
+    padding: var(--cnz-input-pad);
     font-size: 0.85rem;
     font-family: inherit;
     line-height: 1.45;
 }
 
-.stne-textarea-tall {
-    height: var(--stne-textarea-h-tall);
+.cnz-textarea-tall {
+    height: var(--cnz-textarea-h-tall);
 }
 
-.stne-textarea:focus {
+.cnz-textarea:focus {
     outline: none;
-    border-color: var(--stne-btn-primary-bg);
+    border-color: var(--cnz-btn-primary-bg);
 }
 
-.stne-textarea:disabled {
+.cnz-textarea:disabled {
     opacity: 0.45;
     cursor: not-allowed;
 }
 
-#stne-rag-raw {
+#cnz-rag-raw {
     height: auto;
-    min-height: var(--stne-textarea-h-tall);
+    min-height: var(--cnz-textarea-h-tall);
     overflow-y: auto; 
     resize: none;
 }
 
 /* ─── Turns Row ──────────────────────────────────────────────────────────── */
 
-.stne-turns-row {
+.cnz-turns-row {
     display: flex;
     align-items: center;
     gap: 10px;
 }
 
-.stne-turns-row .stne-label {
+.cnz-turns-row .cnz-label {
     margin: 0;
     flex-shrink: 0;
 }
 
-.stne-turns-input {
+.cnz-turns-input {
     width: 68px;
-    background: var(--stne-input-bg);
-    color: var(--stne-text);
-    border: 1px solid var(--stne-input-border);
-    border-radius: var(--stne-input-radius);
-    padding: var(--stne-input-pad);
+    background: var(--cnz-input-bg);
+    color: var(--cnz-text);
+    border: 1px solid var(--cnz-input-border);
+    border-radius: var(--cnz-input-radius);
+    padding: var(--cnz-input-pad);
     font-size: 0.85rem;
     text-align: center;
 }
 
-.stne-turns-input:focus {
+.cnz-turns-input:focus {
     outline: none;
-    border-color: var(--stne-btn-primary-bg);
+    border-color: var(--cnz-btn-primary-bg);
 }
 
 /* ─── Warnings & Errors ──────────────────────────────────────────────────── */
 
-.stne-warn {
+.cnz-warn {
     font-size: 0.8rem;
-    color: var(--stne-warn-fg);
-    background: var(--stne-warn-bg);
-    border-radius: var(--stne-input-radius);
+    color: var(--cnz-warn-fg);
+    background: var(--cnz-warn-bg);
+    border-radius: var(--cnz-input-radius);
     padding: 4px 10px;
 }
 
-.stne-recovery-guide ol {
+.cnz-recovery-guide ol {
     margin: 6px 0 0 1.2em;
     padding: 0;
     line-height: 1.7;
 }
 
-.stne-error-banner {
+.cnz-error-banner {
     font-size: 0.82rem;
-    color: var(--stne-error-fg);
-    background: var(--stne-error-bg);
-    border-radius: var(--stne-input-radius);
+    color: var(--cnz-error-fg);
+    background: var(--cnz-error-bg);
+    border-radius: var(--cnz-input-radius);
     padding: 8px 10px;
     line-height: 1.4;
 }
 
-.stne-error-inline {
+.cnz-error-inline {
     font-size: 0.82rem;
-    color: var(--stne-error-fg);
+    color: var(--cnz-error-fg);
 }
 
 /* ─── Buttons ────────────────────────────────────────────────────────────── */
 
-.stne-buttons {
+.cnz-buttons {
     display: flex;
-    gap: var(--stne-gap-sm);
+    gap: var(--cnz-gap-sm);
     flex-wrap: wrap;
     justify-content: flex-end;
 }
 
-.stne-wizard-footer {
-    border-top: 1px solid var(--stne-modal-border);
-    padding-top: var(--stne-gap);
-    margin-top: var(--stne-gap);
+.cnz-wizard-footer {
+    border-top: 1px solid var(--cnz-modal-border);
+    padding-top: var(--cnz-gap);
+    margin-top: var(--cnz-gap);
 }
 
-.stne-btn {
-    padding: var(--stne-btn-pad);
-    border-radius: var(--stne-btn-radius);
+.cnz-btn {
+    padding: var(--cnz-btn-pad);
+    border-radius: var(--cnz-btn-radius);
     cursor: pointer;
-    font-size: var(--stne-btn-font);
+    font-size: var(--cnz-btn-font);
     border: 1px solid transparent;
     transition: opacity 0.15s ease;
     white-space: nowrap;
 }
 
-.stne-btn:disabled {
+.cnz-btn:disabled {
     opacity: 0.38;
     cursor: not-allowed;
 }
 
-.stne-btn-primary {
-    background: var(--stne-btn-primary-bg);
-    color: var(--stne-btn-primary-fg);
-    border-color: var(--stne-btn-primary-bg);
+.cnz-btn-primary {
+    background: var(--cnz-btn-primary-bg);
+    color: var(--cnz-btn-primary-fg);
+    border-color: var(--cnz-btn-primary-bg);
 }
 
-.stne-btn-primary:not(:disabled):hover {
+.cnz-btn-primary:not(:disabled):hover {
     opacity: 0.85;
 }
 
-.stne-btn-secondary {
+.cnz-btn-secondary {
     background: transparent;
-    color: var(--stne-text);
-    border-color: var(--stne-modal-border);
+    color: var(--cnz-text);
+    border-color: var(--cnz-modal-border);
 }
 
-.stne-btn-secondary:not(:disabled):hover {
-    border-color: var(--stne-text-muted);
+.cnz-btn-secondary:not(:disabled):hover {
+    border-color: var(--cnz-text-muted);
 }
 
-.stne-btn-danger {
+.cnz-btn-danger {
     background: rgba(224, 85, 85, 0.15);
-    color: var(--stne-error-fg);
+    color: var(--cnz-error-fg);
     border-color: rgba(224, 85, 85, 0.3);
 }
 
-.stne-btn-danger:not(:disabled):hover {
+.cnz-btn-danger:not(:disabled):hover {
     background: rgba(224, 85, 85, 0.25);
-    border-color: var(--stne-error-fg);
+    border-color: var(--cnz-error-fg);
 }
 
-.stne-btn-success {
+.cnz-btn-success {
     background: rgba(60, 180, 60, 0.15);
-    color: var(--stne-btn-success-fg);
+    color: var(--cnz-btn-success-fg);
     border-color: rgba(60, 180, 60, 0.35);
 }
 
-.stne-btn-success:not(:disabled):hover {
+.cnz-btn-success:not(:disabled):hover {
     background: rgba(60, 180, 60, 0.28);
-    border-color: var(--stne-btn-success-fg);
+    border-color: var(--cnz-btn-success-fg);
 }
 
-.stne-btn-inline {
+.cnz-btn-inline {
     padding: 2px 8px;
     font-size: 0.78rem;
     margin-left: 8px;
     vertical-align: middle;
 }
 
-.stne-btn-sm {
+.cnz-btn-sm {
     padding: 2px 8px;
     font-size: 0.78rem;
 }
 
 /* ─── Settings Panel ─────────────────────────────────────────────────────── */
 
-.stne-settings-group {
+.cnz-settings-group {
     display: flex;
     flex-direction: column;
-    gap: var(--stne-gap);
+    gap: var(--cnz-gap);
     padding: 4px 0 8px;
 }
 
-.stne-settings-row {
+.cnz-settings-row {
     display: flex;
     flex-direction: column;
     gap: 4px;
 }
 
-.stne-settings-row label {
+.cnz-settings-row label {
     font-size: 0.8rem;
-    color: var(--stne-text-muted);
+    color: var(--cnz-text-muted);
 }
 
-.stne-settings-row input[type="number"] {
+.cnz-settings-row input[type="number"] {
     width: 68px;
-    background: var(--stne-input-bg);
-    color: var(--stne-text);
-    border: 1px solid var(--stne-input-border);
-    border-radius: var(--stne-input-radius);
-    padding: var(--stne-input-pad);
+    background: var(--cnz-input-bg);
+    color: var(--cnz-text);
+    border: 1px solid var(--cnz-input-border);
+    border-radius: var(--cnz-input-radius);
+    padding: var(--cnz-input-pad);
     font-size: 0.85rem;
 }
 
-.stne-settings-label-row {
+.cnz-settings-label-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
 }
 
-.stne-settings-textarea {
+.cnz-settings-textarea {
     width: 100%;
-    height: var(--stne-settings-textarea-h);
+    height: var(--cnz-settings-textarea-h);
     resize: vertical;
     box-sizing: border-box;
-    background: var(--stne-input-bg);
-    color: var(--stne-text);
-    border: 1px solid var(--stne-input-border);
-    border-radius: var(--stne-input-radius);
-    padding: var(--stne-input-pad);
+    background: var(--cnz-input-bg);
+    color: var(--cnz-text);
+    border: 1px solid var(--cnz-input-border);
+    border-radius: var(--cnz-input-radius);
+    padding: var(--cnz-input-pad);
     font-size: 0.75rem;
     font-family: monospace;
     line-height: 1.4;
 }
 
-.stne-settings-textarea:focus,
-.stne-settings-row input[type="number"]:focus {
+.cnz-settings-textarea:focus,
+.cnz-settings-row input[type="number"]:focus {
     outline: none;
-    border-color: var(--stne-btn-primary-bg);
+    border-color: var(--cnz-btn-primary-bg);
 }
 
 /* ─── Tab Bar ────────────────────────────────────────────────────────────── */
 
-.stne-tab-bar {
+.cnz-tab-bar {
     display: flex;
     gap: 2px;
-    border-bottom: 1px solid var(--stne-modal-border);
+    border-bottom: 1px solid var(--cnz-modal-border);
     margin-bottom: 4px;
 }
 
-.stne-tab-btn {
+.cnz-tab-btn {
     padding: 5px 14px;
-    border-radius: var(--stne-btn-radius) var(--stne-btn-radius) 0 0;
+    border-radius: var(--cnz-btn-radius) var(--cnz-btn-radius) 0 0;
     cursor: pointer;
-    font-size: var(--stne-btn-font);
+    font-size: var(--cnz-btn-font);
     border: 1px solid transparent;
     border-bottom: none;
     background: transparent;
-    color: var(--stne-text-muted);
+    color: var(--cnz-text-muted);
     transition: color 0.15s ease, background 0.15s ease;
 }
 
-.stne-tab-btn:hover {
-    color: var(--stne-text);
+.cnz-tab-btn:hover {
+    color: var(--cnz-text);
 }
 
-.stne-tab-active {
-    background: var(--stne-modal-bg);
-    color: var(--stne-text);
-    border-color: var(--stne-modal-border);
+.cnz-tab-active {
+    background: var(--cnz-modal-bg);
+    color: var(--cnz-text);
+    border-color: var(--cnz-modal-border);
     position: relative;
     bottom: -1px;
 }
 
-.stne-tab-panel {
+.cnz-tab-panel {
     display: flex;
     flex-direction: column;
-    gap: var(--stne-gap);
+    gap: var(--cnz-gap);
 }
 
 /* ─── Select & Text Input ────────────────────────────────────────────────── */
 
-.stne-select,
-.stne-input {
+.cnz-select,
+.cnz-input {
     width: 100%;
     box-sizing: border-box;
-    background: var(--stne-input-bg);
-    color: var(--stne-text);
-    border: 1px solid var(--stne-input-border);
-    border-radius: var(--stne-input-radius);
-    padding: var(--stne-input-pad);
+    background: var(--cnz-input-bg);
+    color: var(--cnz-text);
+    border: 1px solid var(--cnz-input-border);
+    border-radius: var(--cnz-input-radius);
+    padding: var(--cnz-input-pad);
     font-size: 0.85rem;
     font-family: inherit;
 }
 
-.stne-select:focus,
-.stne-input:focus {
+.cnz-select:focus,
+.cnz-input:focus {
     outline: none;
-    border-color: var(--stne-btn-primary-bg);
+    border-color: var(--cnz-btn-primary-bg);
 }
 
 /* ─── Ingester Diff Viewer ────────────────────────────────────────────────── */
 
-.stne-ingester-diff {
-    min-height: var(--stne-textarea-h);
-    max-height: calc(var(--stne-textarea-h) * 2);
+.cnz-ingester-diff {
+    min-height: var(--cnz-textarea-h);
+    max-height: calc(var(--cnz-textarea-h) * 2);
     overflow-y: auto;
-    background: var(--stne-input-bg);
-    border: 1px solid var(--stne-input-border);
-    border-radius: var(--stne-input-radius);
-    padding: var(--stne-input-pad);
+    background: var(--cnz-input-bg);
+    border: 1px solid var(--cnz-input-border);
+    border-radius: var(--cnz-input-radius);
+    padding: var(--cnz-input-pad);
     font-size: 0.85rem;
     font-family: inherit;
     line-height: 1.45;
-    color: var(--stne-text);
+    color: var(--cnz-text);
     white-space: pre-wrap;
     word-break: break-word;
 }
 
-.stne-diff-del {
+.cnz-diff-del {
     background: rgba(220, 60, 60, 0.35);
     color: #ffd0d0;
     text-decoration: line-through;
 }
 
-.stne-diff-ins {
+.cnz-diff-ins {
     background: rgba(60, 180, 60, 0.35);
     color: #d0ffd0;
 }
 
 /* ─── Left-aligned button row ────────────────────────────────────────────── */
 
-.stne-buttons-left {
+.cnz-buttons-left {
     justify-content: flex-start;
 }
 
 /* ─── Split button row (left group / right group) ────────────────────────── */
 
-.stne-buttons-split {
+.cnz-buttons-split {
     justify-content: space-between;
 }
 
-.stne-btn-group {
+.cnz-btn-group {
     display: flex;
-    gap: var(--stne-gap-sm);
+    gap: var(--cnz-gap-sm);
 }
 
 /* ─── Select + adjacent nav button ──────────────────────────────────────── */
 
-.stne-select-with-nav {
+.cnz-select-with-nav {
     display: flex;
-    gap: var(--stne-gap-sm);
+    gap: var(--cnz-gap-sm);
     align-items: stretch;
 }
 
-.stne-select-with-nav .stne-select {
+.cnz-select-with-nav .cnz-select {
     flex: 1;
     min-width: 0;
 }
 
 /* ─── Commit Receipts Panel ──────────────────────────────────────────────── */
 
-.stne-receipts {
-    border: 1px solid var(--stne-modal-border);
-    border-radius: var(--stne-input-radius);
+.cnz-receipts {
+    border: 1px solid var(--cnz-modal-border);
+    border-radius: var(--cnz-input-radius);
     padding: 10px 12px;
     background: rgba(255, 255, 255, 0.02);
 }
 
-.stne-receipts-title {
+.cnz-receipts-title {
     font-size: 0.78rem;
     font-weight: 600;
-    color: var(--stne-text-muted);
+    color: var(--cnz-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     margin-bottom: 8px;
 }
 
-.stne-receipts-content {
+.cnz-receipts-content {
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 
-.stne-receipt-row {
+.cnz-receipt-row {
     display: flex;
     flex-direction: column;
     gap: 2px;
 }
 
-.stne-receipt-item {
+.cnz-receipt-item {
     font-size: 0.83rem;
     line-height: 1.4;
 }
 
-.stne-receipt-item.success {
+.cnz-receipt-item.success {
     color: #6bbf6b;
 }
 
-.stne-receipt-item.failure {
-    color: var(--stne-error-fg);
+.cnz-receipt-item.failure {
+    color: var(--cnz-error-fg);
 }
 
-.stne-receipt-hint {
+.cnz-receipt-hint {
     font-size: 0.76rem;
-    color: var(--stne-text-muted);
+    color: var(--cnz-text-muted);
     padding-left: 16px;
 }
 
 /* ─── Settings Section Headers ───────────────────────────────────────────── */
 
-.stne-settings-subgroup {
+.cnz-settings-subgroup {
     display: flex;
     flex-direction: column;
-    gap: var(--stne-gap);
+    gap: var(--cnz-gap);
     padding-left: 12px;
-    border-left: 2px solid var(--stne-modal-border);
+    border-left: 2px solid var(--cnz-modal-border);
     transition: opacity 0.15s ease;
 }
 
-.stne-settings-subgroup.stne-disabled {
+.cnz-settings-subgroup.cnz-disabled {
     opacity: 0.38;
     pointer-events: none;
 }
 
-.stne-settings-section-header {
+.cnz-settings-section-header {
     font-size: 0.75rem;
     font-weight: 600;
-    color: var(--stne-text-muted);
+    color: var(--cnz-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     padding: 8px 0 2px;
-    border-top: 1px solid var(--stne-modal-border);
+    border-top: 1px solid var(--cnz-modal-border);
     margin-top: 4px;
 }
 
 /* ─── RAG Workshop (Step 4) ──────────────────────────────────────────────── */
 
-.stne-mode-note {
+.cnz-mode-note {
     font-size: 0.82rem;
-    color: var(--stne-text-muted, #888);
+    color: var(--cnz-text-muted, #888);
     margin-bottom: 0.6em;
 }
 
-.stne-rag-cards {
+.cnz-rag-cards {
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 
-.stne-rag-card {
-    border: 1px solid var(--stne-modal-border);
-    border-radius: var(--stne-input-radius);
+.cnz-rag-card {
+    border: 1px solid var(--cnz-modal-border);
+    border-radius: var(--cnz-input-radius);
     padding: 8px 10px;
     background: rgba(255, 255, 255, 0.02);
     display: flex;
@@ -611,21 +611,21 @@
     transition: border-color 0.15s ease;
 }
 
-.stne-rag-card[data-status="stale"] {
+.cnz-rag-card[data-status="stale"] {
     border-color: rgba(240, 192, 64, 0.45);
 }
 
-.stne-rag-card[data-status="in-flight"] {
+.cnz-rag-card[data-status="in-flight"] {
     border-color: rgba(92, 133, 214, 0.45);
 }
 
-.stne-rag-card-header-row {
+.cnz-rag-card-header-row {
     display: flex;
     align-items: center;
     gap: 6px;
 }
 
-.stne-rag-card-header {
+.cnz-rag-card-header {
     flex: 1;
     min-width: 0;
     font-size: 0.82rem;
@@ -642,50 +642,50 @@
     word-wrap: break-word;
 }
 
-.stne-rag-card-header:disabled {
+.cnz-rag-card-header:disabled {
     opacity: 0.45;
     cursor: not-allowed;
 }
 
-.stne-rag-card-spinner {
+.cnz-rag-card-spinner {
     font-size: 0.72rem;
-    color: var(--stne-text-muted);
+    color: var(--cnz-text-muted);
     flex-shrink: 0;
 }
 
-.stne-rag-queue-label {
+.cnz-rag-queue-label {
     font-size: 0.7rem;
-    color: var(--stne-text-muted);
+    color: var(--cnz-text-muted);
     flex-shrink: 0;
     font-style: italic;
 }
 
-.stne-rag-card-body {
+.cnz-rag-card-body {
     font-size: 0.78rem;
-    color: var(--stne-text-muted);
+    color: var(--cnz-text-muted);
     white-space: pre-wrap;
     word-break: break-word;
     line-height: 1.4;
     max-height: 110px;
     overflow-y: auto;
-    border-top: 1px solid var(--stne-modal-border);
+    border-top: 1px solid var(--cnz-modal-border);
     padding-top: 6px;
 }
 
 /* Detached raw textarea amber border */
-#stne-rag-raw.stne-rag-detached {
-    border-color: var(--stne-warn-fg);
+#cnz-rag-raw.cnz-rag-detached {
+    border-color: var(--cnz-warn-fg);
 }
 
 /* ─── Step 5 RAG Panel ───────────────────────────────────────────────────── */
 
-.stne-rag-panel {
+.cnz-rag-panel {
     display: flex;
     flex-direction: column;
     gap: 4px;
 }
 
-.stne-rag-timeline {
+.cnz-rag-timeline {
     display: flex;
     flex-direction: column;
     gap: 1px;
@@ -693,68 +693,68 @@
     overflow-y: auto;
     padding: 5px 8px;
     background: rgba(255, 255, 255, 0.02);
-    border: 1px solid var(--stne-modal-border);
-    border-radius: var(--stne-input-radius);
+    border: 1px solid var(--cnz-modal-border);
+    border-radius: var(--cnz-input-radius);
 }
 
-.stne-rag-item {
+.cnz-rag-item {
     font-size: 0.8rem;
     line-height: 1.5;
     white-space: normal; 
     word-break: break-word;
 }
 
-.stne-rag-item--existing  { color: var(--stne-text-muted); }
-.stne-rag-item--pending   { color: #6bbf6b; font-weight: 500; }
-.stne-rag-item--duplicate { color: var(--stne-warn-fg); font-weight: 500; }
+.cnz-rag-item--existing  { color: var(--cnz-text-muted); }
+.cnz-rag-item--pending   { color: #6bbf6b; font-weight: 500; }
+.cnz-rag-item--duplicate { color: var(--cnz-warn-fg); font-weight: 500; }
 
 /* ─── Auto-trigger Banner ────────────────────────────────────────────────── */
 
-.stne-autotrigger-banner {
+.cnz-autotrigger-banner {
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
-    z-index: 9998;   /* below --stne-z-modal: 9999 */
+    z-index: 9998;   /* below --cnz-z-modal: 9999 */
     display: flex;
     align-items: center;
     gap: 10px;
     padding: 8px 16px;
-    background: var(--stne-warn-bg);
-    border-bottom: 1px solid var(--stne-warn-fg);
-    color: var(--stne-warn-fg);
+    background: var(--cnz-warn-bg);
+    border-bottom: 1px solid var(--cnz-warn-fg);
+    color: var(--cnz-warn-fg);
     font-size: 0.85rem;
     box-sizing: border-box;
 }
 
-.stne-autotrigger-banner i {
+.cnz-autotrigger-banner i {
     flex-shrink: 0;
 }
 
-#stne-autotrigger-msg {
+#cnz-autotrigger-msg {
     flex: 1;
 }
 
-#stne-autotrigger-open {
+#cnz-autotrigger-open {
     padding: 3px 12px;
-    border-radius: var(--stne-btn-radius);
-    border: 1px solid var(--stne-warn-fg);
+    border-radius: var(--cnz-btn-radius);
+    border: 1px solid var(--cnz-warn-fg);
     background: transparent;
-    color: var(--stne-warn-fg);
+    color: var(--cnz-warn-fg);
     font-size: 0.82rem;
     cursor: pointer;
     white-space: nowrap;
     flex-shrink: 0;
 }
 
-#stne-autotrigger-open:hover {
+#cnz-autotrigger-open:hover {
     background: rgba(240, 192, 64, 0.2);
 }
 
-#stne-autotrigger-dismiss {
+#cnz-autotrigger-dismiss {
     background: transparent;
     border: none;
-    color: var(--stne-warn-fg);
+    color: var(--cnz-warn-fg);
     font-size: 0.9rem;
     cursor: pointer;
     flex-shrink: 0;
@@ -762,22 +762,22 @@
     line-height: 1;
 }
 
-#stne-autotrigger-dismiss:hover {
+#cnz-autotrigger-dismiss:hover {
     opacity: 0.7;
 }
 
 /* ─── Prompt Editor Modal ────────────────────────────────────────────────── */
 
 /* Sits above the wizard modal so it can be opened from settings */
-.stne-pm-overlay {
-    z-index: calc(var(--stne-z-modal) + 10);
+.cnz-pm-overlay {
+    z-index: calc(var(--cnz-z-modal) + 10);
 }
 
-.stne-pm-modal {
+.cnz-pm-modal {
     max-width: 700px;
 }
 
-.stne-pm-textarea {
+.cnz-pm-textarea {
     height: 420px;
     font-size: 0.8rem;
     font-family: monospace;
@@ -785,19 +785,19 @@
     resize: vertical;
 }
 
-.stne-pm-trailing-section {
+.cnz-pm-trailing-section {
     margin-top: 10px;
     display: flex;
     flex-direction: column;
     gap: 4px;
 }
 
-.stne-pm-trailing-label {
+.cnz-pm-trailing-label {
     font-size: 0.8rem;
     opacity: 0.8;
 }
 
-.stne-pm-trailing-textarea {
+.cnz-pm-trailing-textarea {
     height: 100px;
     font-size: 0.8rem;
     font-family: monospace;
@@ -805,7 +805,7 @@
     resize: vertical;
 }
 
-.stne-pm-vars {
+.cnz-pm-vars {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
@@ -813,11 +813,11 @@
     min-height: 0;
 }
 
-.stne-pm-vars:empty {
+.cnz-pm-vars:empty {
     display: none;
 }
 
-.stne-pm-var {
+.cnz-pm-var {
     font-size: 0.75rem;
     font-family: monospace;
     padding: 1px 6px;
@@ -831,80 +831,80 @@
 /* ─── Settings Panel Additions ───────────────────────────────────────────── */
 
 /* Inline row: label on the left, input/select on the right */
-.stne-settings-inline-row {
+.cnz-settings-inline-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--stne-gap);
+    gap: var(--cnz-gap);
 }
 
-.stne-settings-inline-row label {
+.cnz-settings-inline-row label {
     font-size: 0.8rem;
-    color: var(--stne-text-muted);
+    color: var(--cnz-text-muted);
     flex-shrink: 0;
 }
 
-.stne-settings-inline-row input[type="number"],
-.stne-settings-inline-row input[type="text"] {
-    background: var(--stne-input-bg);
-    color: var(--stne-text);
-    border: 1px solid var(--stne-input-border);
-    border-radius: var(--stne-input-radius);
-    padding: var(--stne-input-pad);
+.cnz-settings-inline-row input[type="number"],
+.cnz-settings-inline-row input[type="text"] {
+    background: var(--cnz-input-bg);
+    color: var(--cnz-text);
+    border: 1px solid var(--cnz-input-border);
+    border-radius: var(--cnz-input-radius);
+    padding: var(--cnz-input-pad);
     font-size: 0.85rem;
     font-family: inherit;
 }
 
-.stne-settings-inline-row input[type="number"] {
+.cnz-settings-inline-row input[type="number"] {
     width: 68px;
     text-align: center;
 }
 
-.stne-settings-inline-row input[type="text"].stne-settings-input-wide {
+.cnz-settings-inline-row input[type="text"].cnz-settings-input-wide {
     width: 180px;
 }
 
-.stne-settings-inline-row input:focus {
+.cnz-settings-inline-row input:focus {
     outline: none;
-    border-color: var(--stne-btn-primary-bg);
+    border-color: var(--cnz-btn-primary-bg);
 }
 
 /* Compact select for inline rows */
-.stne-settings-select-sm {
+.cnz-settings-select-sm {
     width: auto;
     min-width: 140px;
-    background: var(--stne-input-bg);
-    color: var(--stne-text);
-    border: 1px solid var(--stne-input-border);
-    border-radius: var(--stne-input-radius);
-    padding: var(--stne-input-pad);
+    background: var(--cnz-input-bg);
+    color: var(--cnz-text);
+    border: 1px solid var(--cnz-input-border);
+    border-radius: var(--cnz-input-radius);
+    padding: var(--cnz-input-pad);
     font-size: 0.82rem;
 }
 
 /* Row of prompt-edit buttons */
-.stne-settings-prompt-row {
+.cnz-settings-prompt-row {
     flex-direction: row;
     flex-wrap: wrap;
-    gap: var(--stne-gap-sm);
+    gap: var(--cnz-gap-sm);
 }
 
 /* Profile management bar */
-.stne-profile-bar {
+.cnz-profile-bar {
     flex-direction: row;
     align-items: center;
-    gap: var(--stne-gap-sm);
+    gap: var(--cnz-gap-sm);
 }
 
-.stne-profile-select {
+.cnz-profile-select {
     flex: 1 1 0;
     min-width: 0;
 }
 
 /* Info icon (ℹ) shown next to setting labels */
-.stne-info-icon {
+.cnz-info-icon {
     display: inline-block;
     font-size: 0.78rem;
-    color: var(--stne-text-muted);
+    color: var(--cnz-text-muted);
     opacity: 0.65;
     cursor: help;
     margin-left: 3px;
@@ -912,19 +912,19 @@
     line-height: 1;
 }
 
-.stne-info-icon:hover {
+.cnz-info-icon:hover {
     opacity: 1;
 }
 
 /* Hint text beneath inputs */
-.stne-settings-hint {
+.cnz-settings-hint {
     font-size: 0.74rem;
-    color: var(--stne-text-muted);
+    color: var(--cnz-text-muted);
     opacity: 0.8;
     line-height: 1.4;
 }
 
-.stne-settings-hint code {
+.cnz-settings-hint code {
     font-family: monospace;
     background: rgba(255,255,255,0.06);
     padding: 0 3px;
@@ -932,18 +932,18 @@
 }
 
 /* Checkbox label alignment */
-.stne-checkbox-label {
+.cnz-checkbox-label {
     display: flex;
     align-items: center;
     gap: 6px;
     font-size: 0.85rem;
-    color: var(--stne-text);
+    color: var(--cnz-text);
     cursor: pointer;
 }
 
 /* ─── Sync Choice Dialog ─────────────────────────────────────────────────── */
 
-.stne-choice-overlay {
+.cnz-choice-overlay {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.6);
@@ -953,7 +953,7 @@
     justify-content: center;
 }
 
-.stne-choice-dialog {
+.cnz-choice-dialog {
     background: var(--grey-800, #2a2a2a);
     border: 1px solid var(--grey-600, #555);
     border-radius: 8px;
@@ -963,41 +963,41 @@
     color: var(--text-default, #ddd);
 }
 
-.stne-choice-dialog h3 {
+.cnz-choice-dialog h3 {
     margin: 0 0 12px;
     font-size: 1.05em;
 }
 
-.stne-choice-dialog p {
+.cnz-choice-dialog p {
     margin: 0 0 10px;
     font-size: 0.9em;
     line-height: 1.5;
 }
 
-.stne-choice-warn {
+.cnz-choice-warn {
     color: var(--yellow, #f0b429);
 }
 
-.stne-choice-buttons {
+.cnz-choice-buttons {
     display: flex;
     gap: 8px;
     margin-top: 18px;
     flex-wrap: wrap;
 }
 
-.stne-choice-buttons .menu_button {
+.cnz-choice-buttons .menu_button {
     flex: 1;
     min-width: 100px;
 }
 
-.stne-choice-cancel {
+.cnz-choice-cancel {
     flex: 0 0 auto !important;
     opacity: 0.7;
 }
 
 /* ─── Chat Message Chunk Labels ──────────────────────────────────────────── */
 
-.stne-chunk-label {
+.cnz-chunk-label {
     font-size: 0.78rem;
     color: #6bbf6b;
     padding: 2px 10px 4px;
@@ -1007,7 +1007,7 @@
     word-break: break-word;
 }
 
-.stne-chunk-label-prefix {
+.cnz-chunk-label-prefix {
     font-style: normal;
     font-weight: 600;
     opacity: 0.65;
@@ -1018,16 +1018,16 @@
 
 @media (max-width: 600px) {
     :root {
-        --stne-modal-pad: 12px;
-        --stne-modal-width: 100%;
-        --stne-modal-radius: 0px;
+        --cnz-modal-pad: 12px;
+        --cnz-modal-width: 100%;
+        --cnz-modal-radius: 0px;
     }
 
-    .stne-overlay {
+    .cnz-overlay {
         padding: 12px 0 0;
     }
 
-    .stne-turns-row {
+    .cnz-turns-row {
         flex-wrap: wrap;
     }
 
