@@ -1557,6 +1557,41 @@ function onEnterRagWorkshop() {
         const totalNS    = messages.filter(m => !m.is_system).length;
         const lcb        = settings.liveContextBuffer ?? 5;
         const tbb        = Math.max(0, totalNS - lcb);
+
+        // ── DIAGNOSTIC: fallback seeding ─────────────────────────────────────
+        {
+            const rawChatLen    = SillyTavern.getContext().chat?.length ?? 'n/a';
+            const fullPairs     = buildProsePairs(messages);
+            const filteredPairs = fullPairs.filter(p => p.validIdx < tbb);
+            console.log(
+                `[CNZ-DBG] fallback diagnostic:\n` +
+                `  messages.length (raw chat array) = ${messages.length}\n` +
+                `  SillyTavern.getContext().chat?.length = ${rawChatLen}\n` +
+                `  totalNS = ${totalNS}\n` +
+                `  lcb = ${lcb}\n` +
+                `  tbb = Math.max(0, ${totalNS} - ${lcb}) = ${tbb}\n` +
+                `  messages[0]: is_system=${messages[0]?.is_system} is_user=${messages[0]?.is_user} name=${messages[0]?.name}\n` +
+                `  fullPairs.length = ${fullPairs.length}` +
+                (fullPairs.length > 0
+                    ? ` (validIdx ${fullPairs[0].validIdx}–${fullPairs[fullPairs.length - 1].validIdx})`
+                    : '') + `\n` +
+                `  fullPairs validIdx values: [${fullPairs.map(p => p.validIdx).join(', ')}]\n` +
+                `  filteredPairs.length (validIdx < ${tbb}) = ${filteredPairs.length}`
+            );
+            const headNodeDbg = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
+            if (headNodeDbg) {
+                const anchorIdx = fullPairs.findIndex(p => p.validIdx >= headNodeDbg.sequenceNum);
+                console.log(
+                    `[CNZ-DBG] fallback diagnostic (headNode):\n` +
+                    `  headNode.sequenceNum = ${headNodeDbg.sequenceNum}\n` +
+                    `  allPairs.findIndex(p => p.validIdx >= headNode.sequenceNum) = ${anchorIdx}`
+                );
+            } else {
+                console.log('[CNZ-DBG] fallback diagnostic: headNode = none (never committed)');
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         const allPairs   = buildProsePairs(messages).filter(p => p.validIdx < tbb);
         const headNode   = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
         let windowPairs;
