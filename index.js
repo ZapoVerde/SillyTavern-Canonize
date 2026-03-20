@@ -2382,7 +2382,9 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         const allPairs   = buildProsePairs(messagesFromTurn);
         const windowSize = settings.chunkEveryN ?? 20;
         // hookPairs: most recent N turns — what's dramatically active, for hookseeker.
-        const hookPairs = coverAll ? allPairs : allPairs.slice(-windowSize);
+        // On first sync (no ledger head), use allPairs so hookseeker and lorebook see
+        // the same full gap as the RAG summarizer.
+        const hookPairs = (coverAll || !_ledgerManifest?.headNodeId) ? allPairs : allPairs.slice(-windowSize);
 
         if (!hookPairs.length) {
             console.log('[CNZ] No complete pairs in window — skipping sync.');
