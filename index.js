@@ -19,7 +19,7 @@
  *   - Ledger node committed after each successful sync
  */
 
-import { generateRaw, saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup, deleteMessage } from '../../../../script.js';
+import { generateRaw, saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup } from '../../../../script.js';
 import { extension_settings } from '../../../extensions.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
 import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML } from './ui.js';
@@ -2059,28 +2059,25 @@ async function openReviewModal() {
 // ─── STNE Core ────────────────────────────────────────────────────────────────
 
 /**
- * Deletes all chat messages that fall before `windowFirstMsg` in the `messages`
- * snapshot. Messages are deleted highest-index first so array indices stay valid.
- * Resets syncFromTurn to 1 when it would otherwise point into deleted territory.
+ * Soft-prunes canonized turns by advancing syncFromTurn to the first message
+ * in the rolling window. Messages are preserved in the chat log; the LLM
+ * context mask (CHAT_COMPLETION_PROMPT_READY hook) hides them from the AI.
  * @param {object[]} messages      Full chat snapshot from the sync trigger.
  * @param {object}   windowFirstMsg The first message object in the rolling window.
  */
-async function pruneCanonizedTurns(messages, windowFirstMsg) {
-    const pruneUpTo = messages.indexOf(windowFirstMsg);
-    if (pruneUpTo <= 0) {
+function pruneCanonizedTurns(messages, windowFirstMsg) {
+    const targetIdx = messages.indexOf(windowFirstMsg);
+    if (targetIdx <= 0) {
         console.log('[STNE] Rolling trim: window starts at message 0 — nothing to prune.');
         return;
     }
-    console.log(`[STNE] Rolling trim: deleting ${pruneUpTo} message(s) before window start.`);
-    for (let i = pruneUpTo - 1; i >= 0; i--) {
-        await deleteMessage(i);
+    let nsCount = 0;
+    for (let i = 0; i <= targetIdx; i++) {
+        if (!messages[i].is_system) nsCount++;
     }
-    // syncFromTurn is now stale — the messages it pointed at are gone
-    if ((getSettings().syncFromTurn ?? 1) > 1) {
-        getSettings().syncFromTurn = 1;
-        saveSettingsDebounced();
-    }
-    console.log('[STNE] Rolling trim complete.');
+    console.log(`[STNE] Rolling trim: advancing context offset to non-system turn ${nsCount}.`);
+    getSettings().syncFromTurn = nsCount;
+    saveSettingsDebounced();
 }
 
 /**
@@ -2831,6 +2828,21 @@ async function init() {
     injectSettingsPanel();
     eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
     eventSource.on(event_types.CHAT_CHANGED,     onChatChanged);
+    eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, (data) => {
+        const syncFrom = Math.max(1, getSettings().syncFromTurn ?? 1);
+        if (syncFrom <= 1) return;
+        let nsCount = 0;
+        const filtered = data.chat.filter((msg) => {
+            if (msg.role === 'system') return true;
+            nsCount++;
+            return nsCount >= syncFrom;
+        });
+        const hidden = data.chat.length - filtered.length;
+        if (hidden > 0) {
+            data.chat.splice(0, data.chat.length, ...filtered);
+            console.log(`[STNE] Context mask: hid ${hidden} canonized turn(s) from LLM prompt.`);
+        }
+    });
 
     // Deferred startup Healer: catches branches when ST loads directly into a
     // chat without firing CHAT_CHANGED (e.g., on page reload mid-branch).
