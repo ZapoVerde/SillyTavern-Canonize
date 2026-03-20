@@ -267,9 +267,9 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
         </div>
 
         <div class="cnz-settings-inline-row">
-          <label for="cnz-set-sync-from-turn">Begin sync from turn ${tip('The first turn included in all processing. Turns before this number are ignored. Useful for skipping prologues or resetting sync mid-story.')}</label>
-          <input id="cnz-set-sync-from-turn" type="number" min="1" step="1"
-                 value="${escapeHtml(String(s.syncFromTurn ?? 1))}">
+          <label for="cnz-set-live-context-buffer">Live context buffer (turns) ${tip('Number of recent turns kept in full live context, counted back from the latest turn. These turns are excluded from sync.')}</label>
+          <input id="cnz-set-live-context-buffer" type="number" min="0" step="1"
+                 value="${escapeHtml(String(s.liveContextBuffer ?? 5))}">
         </div>
 
         <div class="cnz-settings-inline-row">
@@ -292,8 +292,8 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
 
         <div class="cnz-settings-row">
           <label class="cnz-checkbox-label">
-            <input id="cnz-set-prune-on-sync" type="checkbox" ${(s.pruneOnSync ?? false) ? 'checked' : ''}>
-            <span>Rolling trim ${tip('After each successful sync, delete all turns before the rolling window edge from chat history. Canonized content is already preserved in your lorebook, summary, and RAG — keeping only the active window prevents context bloat over long stories. Irreversible: enable only if you do not need the raw turns after syncing.')}</span>
+            <input id="cnz-set-auto-advance-mask" type="checkbox" ${(s.autoAdvanceMask ?? false) ? 'checked' : ''}>
+            <span>Auto-advance context mask ${tip('When enabled, the context mask follows the ledger head after each commit, hiding canonized turns from the main AI.')}</span>
           </label>
         </div>
 
