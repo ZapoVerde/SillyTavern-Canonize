@@ -1014,6 +1014,176 @@
     margin-right: 4px;
 }
 
+/* ─── Lorebook Workshop Tab ──────────────────────────────────────────────── */
+
+.cnz-lb-workshop-entries {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cnz-gap);
+}
+
+.cnz-lb-workshop-entry {
+    border: 1px solid var(--cnz-modal-border);
+    border-radius: var(--cnz-input-radius);
+    padding: var(--cnz-gap);
+    display: flex;
+    flex-direction: column;
+    gap: var(--cnz-gap-sm);
+}
+
+.cnz-lb-workshop-entry-header {
+    display: flex;
+    align-items: center;
+    gap: var(--cnz-gap-sm);
+}
+
+.cnz-lb-workshop-entry-name {
+    font-weight: 600;
+    flex: 1;
+}
+
+.cnz-lb-workshop-badge {
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.cnz-lb-badge-update {
+    background: rgba(60, 120, 220, 0.3);
+    color: #a0c0ff;
+}
+
+.cnz-lb-badge-new {
+    background: rgba(60, 180, 60, 0.3);
+    color: #a0ffa0;
+}
+
+.cnz-lb-workshop-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--cnz-gap-sm);
+}
+
+.cnz-lb-workshop-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.cnz-lb-workshop-col-content {
+    background: var(--cnz-input-bg);
+    border: 1px solid var(--cnz-input-border);
+    border-radius: var(--cnz-input-radius);
+    padding: var(--cnz-input-pad);
+    font-size: 0.85em;
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-height: 60px;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+/* ─── Ledger Inspector ────────────────────────────────────────────────────── */
+
+.cnz-li-modal {
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.cnz-li-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.cnz-li-empty {
+    color: var(--cnz-text-muted, #888);
+    font-style: italic;
+    padding: 8px 0;
+}
+
+.cnz-li-node-row {
+    border: 1px solid var(--cnz-modal-border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.cnz-li-node-row.cnz-li-orphaned {
+    border-color: var(--cnz-warn, #b8860b);
+    opacity: 0.75;
+}
+
+.cnz-li-node-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    padding: 6px 10px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 0.85em;
+    font-family: monospace;
+    background: var(--cnz-settings-group-bg, transparent);
+}
+
+.cnz-li-node-header:hover {
+    background: var(--cnz-hover-bg, rgba(128,128,128,0.1));
+}
+
+.cnz-li-chevron {
+    flex-shrink: 0;
+    width: 1em;
+    text-align: center;
+}
+
+.cnz-li-node-label {
+    flex: 1;
+}
+
+.cnz-li-orphan-badge {
+    font-size: 0.8em;
+    color: var(--cnz-warn, #b8860b);
+    border: 1px solid currentColor;
+    border-radius: 3px;
+    padding: 0 4px;
+}
+
+.cnz-li-node-body {
+    display: none;
+    padding: 8px 12px;
+    font-size: 0.82em;
+    font-family: monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-top: 1px solid var(--cnz-modal-border);
+    background: var(--cnz-modal-bg);
+}
+
+.cnz-li-node-body.cnz-li-expanded {
+    display: block;
+}
+
+.cnz-li-field {
+    margin-bottom: 4px;
+}
+
+.cnz-li-field-label {
+    font-weight: 600;
+    color: var(--cnz-text-muted, #888);
+}
+
+.cnz-li-hooks-preview {
+    color: var(--cnz-text);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.cnz-li-spinner {
+    color: var(--cnz-text-muted, #888);
+    font-style: italic;
+}
+
 /* ─── Mobile ──────────────────────────────────────────────────────────────── */
 
 @media (max-width: 600px) {

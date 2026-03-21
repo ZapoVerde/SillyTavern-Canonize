@@ -37,13 +37,39 @@ export function buildModalHTML() {
     <div id="cnz-step-1" class="cnz-step cnz-hidden">
       <h3 class="cnz-title">Narrative Hooks</h3>
 
-      <div class="cnz-section-header">
-        <span class="cnz-label">Active Hooks Block</span>
-        <span id="cnz-spin-hooks" class="cnz-section-spin fa-solid fa-spinner fa-spin cnz-hidden"></span>
-        <button id="cnz-regen-hooks" class="cnz-btn cnz-btn-secondary cnz-btn-sm" title="Regenerate hooks from current transcript">&#x21bb;</button>
+      <div class="cnz-tab-bar" id="cnz-hooks-tab-bar">
+        <button class="cnz-tab-btn cnz-tab-active" data-tab="workshop">Workshop</button>
+        <button class="cnz-tab-btn" data-tab="new">New</button>
+        <button class="cnz-tab-btn" data-tab="old">Old</button>
       </div>
-      <textarea id="cnz-situation-text" class="cnz-textarea cnz-textarea-tall" spellcheck="false"
-                placeholder="Hooks block content. Populated from last committed sync. Edit freely or use ↻ to regenerate."></textarea>
+
+      <!-- Workshop tab: live diff (read-only) + editable textarea + revert buttons -->
+      <div id="cnz-hooks-tab-workshop" class="cnz-tab-panel">
+        <span class="cnz-label">Changes since last sync (vs Old)</span>
+        <div id="cnz-hooks-diff" class="cnz-ingester-diff"></div>
+        <textarea id="cnz-situation-text" class="cnz-textarea cnz-textarea-tall" spellcheck="false"
+                  placeholder="Hooks block content. Edit freely."></textarea>
+        <div class="cnz-buttons cnz-buttons-left">
+          <button id="cnz-hooks-revert-old" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Revert to Old</button>
+          <button id="cnz-hooks-revert-new" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Revert to New</button>
+        </div>
+      </div>
+
+      <!-- New tab: read-only display of what the last sync wrote + Regen -->
+      <div id="cnz-hooks-tab-new" class="cnz-tab-panel cnz-hidden">
+        <span class="cnz-label">New (written by last sync)</span>
+        <div id="cnz-hooks-new-display" class="cnz-ingester-diff"></div>
+        <div class="cnz-section-header">
+          <span id="cnz-spin-hooks" class="cnz-section-spin fa-solid fa-spinner fa-spin cnz-hidden"></span>
+          <button id="cnz-regen-hooks" class="cnz-btn cnz-btn-secondary" title="Regenerate hooks from current transcript">&#x21bb; Regen</button>
+        </div>
+      </div>
+
+      <!-- Old tab: read-only display of hooks before the last sync -->
+      <div id="cnz-hooks-tab-old" class="cnz-tab-panel cnz-hidden">
+        <span class="cnz-label">Old (before last sync)</span>
+        <div id="cnz-hooks-old-display" class="cnz-ingester-diff"></div>
+      </div>
 
       <div id="cnz-error-1" class="cnz-error-banner cnz-hidden"></div>
     </div>
@@ -60,16 +86,22 @@ export function buildModalHTML() {
       </div>
 
       <div class="cnz-tab-bar" id="cnz-lb-tab-bar">
-        <button id="cnz-lb-tab-btn-ingester" class="cnz-tab-btn cnz-tab-active" data-tab="ingester">Update</button>
-        <button id="cnz-lb-tab-btn-freeform" class="cnz-tab-btn" data-tab="freeform">Freeform</button>
+        <button class="cnz-tab-btn cnz-tab-active" data-tab="workshop">Workshop</button>
+        <button class="cnz-tab-btn" data-tab="freeform">Freeform</button>
+        <button id="cnz-lb-tab-btn-ingester" class="cnz-tab-btn" data-tab="ingester">Ingester</button>
+      </div>
+
+      <!-- Workshop tab: before/after diff per entry updated this sync -->
+      <div id="cnz-lb-tab-workshop" class="cnz-tab-panel">
+        <div id="cnz-lb-workshop-entries" class="cnz-lb-workshop-entries"></div>
       </div>
 
       <div id="cnz-lb-tab-freeform" class="cnz-tab-panel cnz-hidden">
         <textarea id="cnz-lb-freeform" class="cnz-textarea cnz-textarea-tall" spellcheck="false"
-                  placeholder="AI suggestions appear here. Edit freely before switching to Update."></textarea>
+                  placeholder="AI suggestions appear here. Edit freely before switching to Ingester."></textarea>
       </div>
 
-      <div id="cnz-lb-tab-ingester" class="cnz-tab-panel">
+      <div id="cnz-lb-tab-ingester" class="cnz-tab-panel cnz-hidden">
         <div class="cnz-settings-row">
           <label for="cnz-lb-suggestion-select">Suggestion</label>
           <div class="cnz-select-with-nav">
@@ -403,11 +435,30 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
       <!-- ── Danger zone ── -->
       <div class="cnz-settings-group">
         <div class="cnz-settings-row">
+          <button id="cnz-inspect-ledger" class="cnz-btn cnz-btn-secondary cnz-btn-sm" title="Inspect the CNZ ledger chain for the current character">Inspect Ledger</button>
           <button id="cnz-purge-ledger" class="cnz-btn cnz-btn-danger cnz-btn-sm" title="Clear all CNZ sync history for the current character">Purge Ledger</button>
         </div>
       </div>
 
     </div>
+  </div>
+</div>`;
+}
+
+/**
+ * Returns the HTML for the Ledger Inspector modal (read-only).
+ * The body content is populated dynamically by openLedgerInspector() in index.js.
+ * @returns {string}
+ */
+export function buildLedgerInspectorHTML() {
+    return `
+<div id="cnz-li-overlay" class="cnz-overlay cnz-hidden">
+  <div id="cnz-li-modal" class="cnz-modal cnz-li-modal" role="dialog" aria-modal="true">
+    <div class="cnz-section-header">
+      <h3 id="cnz-li-title" class="cnz-title">Ledger Inspector</h3>
+      <button id="cnz-li-close" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Close</button>
+    </div>
+    <div id="cnz-li-body" class="cnz-li-body"></div>
   </div>
 </div>`;
 }
