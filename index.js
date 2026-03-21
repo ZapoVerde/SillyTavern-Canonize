@@ -11,7 +11,7 @@
  * chat branches and restores the correct lorebook/vector state for the active
  * timeline (Phase 4). 
  * 
- * V 0.9.30
+ * V 0.9.33
  *
  * Phase 1: Skeleton & Ledger Foundation
  * Phase 2: Fact-Finder (background sync) — runCnzSync fully implemented
@@ -864,22 +864,21 @@ async function uploadRagFile(text, fileName) {
 }
 
 /**
- * Registers a Data Bank file as a character attachment.
- * In Phase 2 the `key` is the chat filename (char.chat), not the avatar key,
- * so RAG files are scoped to the specific chat that generated them.
- * @param {string} key      Attachment scope key (chat filename for CNZ syncs).
+ * Registers a Data Bank file as a character attachment so ST's vector engine
+ * picks it up during generation. Mirrors the FileAttachment typedef from chats.js.
+ * @param {string} avatarKey character.avatar of the target card (e.g. "alice.png").
  * @param {string} url      File URL returned by uploadRagFile.
  * @param {string} fileName Human-readable file name.
  * @param {number} byteSize Byte length of the uploaded text.
  */
-function registerCharacterAttachment(_key, url, fileName, byteSize) {
-    if (!extension_settings.chat_attachments) {
-        extension_settings.chat_attachments = {};
+function registerCharacterAttachment(avatarKey, url, fileName, byteSize) {
+    if (!extension_settings.character_attachments) {
+        extension_settings.character_attachments = {};
     }
-    if (!Array.isArray(extension_settings.chat_attachments[_key])) {
-        extension_settings.chat_attachments[_key] = [];
+    if (!Array.isArray(extension_settings.character_attachments[avatarKey])) {
+        extension_settings.character_attachments[avatarKey] = [];
     }
-    extension_settings.chat_attachments[_key].push({
+    extension_settings.character_attachments[avatarKey].push({
         url,
         size:    byteSize,
         name:    fileName,
@@ -2387,7 +2386,7 @@ function populateRagPanel() {
     const context = SillyTavern.getContext();
     const char    = context.characters[context.characterId];
     if (!char || !getSettings().enableRag) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
-    const allAttachments = extension_settings.chat_attachments?.[char.chat] ?? [];
+    const allAttachments = extension_settings.character_attachments?.[char.avatar] ?? [];
     if (!allAttachments.length) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
     const rows = allAttachments.map(a =>
         `<div class="cnz-rag-item cnz-rag-item--existing">&#x2713; ${escapeHtml(a.name.replace(/\.txt$/i, ''))}</div>`,
@@ -2531,7 +2530,7 @@ async function onConfirmClick() {
                 newRagUrl      = await uploadRagFile(ragText, newRagFileName);
                 _lastRagUrl    = newRagUrl;
                 const byteSize = new TextEncoder().encode(ragText).length;
-                registerCharacterAttachment(char.chat, newRagUrl, newRagFileName, byteSize);
+                registerCharacterAttachment(char.avatar, newRagUrl, newRagFileName, byteSize);
                 ragChanged = true;
                 upsertReceiptItem('cnz-receipt-rag', receiptSuccess(`Narrative Memory saved: "${newRagFileName}" (${_ragChunks.length} chunks)`));
             }
@@ -3383,7 +3382,7 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
             _lastRagUrl   = ragUrl;
 
             const byteSize = new TextEncoder().encode(ragText).length;
-            registerCharacterAttachment(char.chat, ragUrl, ragFileName, byteSize);
+            registerCharacterAttachment(char.avatar, ragUrl, ragFileName, byteSize);
             console.log(`[CNZ] RAG uploaded: ${ragFileName} (${_ragChunks.length} chunks, ${byteSize} bytes).`);
         } catch (err) {
             console.error('[CNZ] RAG upload failed:', err);
