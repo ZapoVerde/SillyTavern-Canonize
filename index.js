@@ -9,7 +9,9 @@
  * A lightweight review modal is optional (Phase 3). The Ledger engine tracks
  * narrative milestones via hash chaining and enables the Healer, which detects
  * chat branches and restores the correct lorebook/vector state for the active
- * timeline (Phase 4).
+ * timeline (Phase 4). 
+ * 
+ * V 0.9.30
  *
  * Phase 1: Skeleton & Ledger Foundation
  * Phase 2: Fact-Finder (background sync) — runCnzSync fully implemented
@@ -914,8 +916,9 @@ async function generateWithRagProfile(prompt) {
 }
 
 /**
- * Fires the Lorebook Sync AI call. Requires _lorebookData to be loaded.
- * @param {string} transcript
+ * Fires the Lorebook Sync AI call.
+ * @param {string}      transcript  Prose transcript to analyse.
+ * @param {object|null} lorebook    Lorebook state to use as context. Defaults to `_lorebookData` if null.
  * @returns {Promise<string>}
  */
 async function runLorebookSyncCall(transcript, lorebook = null) {
@@ -1676,6 +1679,10 @@ function getRagModeLabel() {
     return 'Output: AI-classified summary + full text';
 }
 
+/**
+ * Called when the user enters Step 3 (RAG Workshop). Guards against disabled RAG,
+ * then renders existing `_ragChunks` or rebuilds them if the split boundary changed.
+ */
 function onEnterRagWorkshop() {
     if (!getSettings().enableRag) {
         $('#cnz-rag-mode-note').addClass('cnz-hidden');
@@ -1861,6 +1868,10 @@ function buildSyncWindowTranscript(horizonTurns) {
     return buildTranscript(windowMsgs);
 }
 
+/**
+ * Switches the Step 1 Hooks Workshop to the given tab ('workshop' | 'new' | 'old').
+ * @param {string} tabName
+ */
 function onHooksTabSwitch(tabName) {
     $('#cnz-hooks-tab-bar .cnz-tab-btn').each(function () {
         $(this).toggleClass('cnz-tab-active', $(this).data('tab') === tabName);
@@ -1870,11 +1881,16 @@ function onHooksTabSwitch(tabName) {
     $('#cnz-hooks-tab-old').toggleClass('cnz-hidden',      tabName !== 'old');
 }
 
+/** Recomputes the Workshop tab diff display (textarea content vs `_beforeSituation`). */
 function updateHooksDiff() {
     const current = $('#cnz-situation-text').val();
     $('#cnz-hooks-diff').html(wordDiff(_beforeSituation, current));
 }
 
+/**
+ * Fires a fresh hookseeker AI call and updates `_priorSituation`, the textarea,
+ * the New tab display, and the Workshop diff. Switches to Workshop tab on success.
+ */
 function onRegenHooksClick() {
     setHooksLoading(true);
     $('#cnz-error-1').addClass('cnz-hidden').text('');
@@ -1928,6 +1944,11 @@ function showLbError(message) {
     $('#cnz-lb-error').text(message).removeClass('cnz-hidden');
 }
 
+/**
+ * Re-fires the lorebook sync AI call using the pre-sync lorebook (reconstructed
+ * from `_lorebookDelta`). Updates `_lorebookRawText`, `_lorebookSuggestions`,
+ * and refreshes the Workshop and Ingester tabs.
+ */
 function onLbRegenClick() {
     setLbLoading(true);
     $('#cnz-lb-error').addClass('cnz-hidden').text('');
@@ -1994,6 +2015,12 @@ function onLbRegenClick() {
         });
 }
 
+/**
+ * Renders the Lorebook Workshop tab contents from current engine state.
+ * Reads `_lorebookSuggestions` (entries touched this sync), `_lorebookDelta`
+ * (before-state per entry), and `_draftLorebook` (after-state).
+ * Called on modal open and whenever the Workshop tab is activated.
+ */
 function renderLbWorkshop() {
     const $container = $('#cnz-lb-workshop-entries').empty();
     if (!_lorebookSuggestions.length) {
@@ -2051,6 +2078,11 @@ function renderLbWorkshop() {
     }
 }
 
+/**
+ * Activates the named lorebook tab (workshop / freeform / ingester) and
+ * calls `renderLbWorkshop()` when switching to the Workshop tab.
+ * @param {string} tabName  One of 'workshop', 'freeform', 'ingester'.
+ */
 function onLbTabSwitch(tabName) {
     $('#cnz-lb-tab-bar .cnz-tab-btn').each(function () {
         $(this).toggleClass('cnz-tab-active', $(this).data('tab') === tabName);
@@ -2402,6 +2434,13 @@ function isDraftDirty(draft, base) {
     return false;
 }
 
+/**
+ * Handles the modal Confirm button. Conditionally writes back only what changed:
+ * hooks (if textarea diverged from `_priorSituation`), lorebook (if `isDraftDirty`),
+ * RAG (if any chunk header was manually edited or raw mode is detached).
+ * Updates the head ledger node file in place — never creates a new node.
+ * Closes the modal on completion.
+ */
 async function onConfirmClick() {
     const hooksText = $('#cnz-situation-text').val().trim();
 
@@ -2605,6 +2644,10 @@ function showModal() {
     $('#cnz-overlay').removeClass('cnz-hidden');
 }
 
+/**
+ * Hides the modal overlay and resets modal session state.
+ * Must NOT clear engine state (`_ragChunks`, `_lorebookSuggestions`, `_priorSituation`, etc.).
+ */
 function closeModal() {
     $('#cnz-overlay').addClass('cnz-hidden');
     // Kill all in-flight AI callbacks
@@ -2758,6 +2801,12 @@ function openLedgerInspector() {
     $overlay.removeClass('cnz-hidden');
 }
 
+/**
+ * Resets wizard UI to its initial state (tab selection, error panels, loading spinners).
+ * Must NOT touch engine state. Pass `preserveSuggestions = true` from `openReviewModal`
+ * to retain lorebook suggestions and raw text populated by the last sync.
+ * @param {boolean} [preserveSuggestions=false]
+ */
 function initWizardSession(preserveSuggestions = false) {
     // Hooks Workshop reset
     $('#cnz-hooks-tab-bar .cnz-tab-btn').each(function () {
@@ -4065,6 +4114,12 @@ function showSyncChoicePopup(bodyHtml, fullLabel, winLabel) {
     });
 }
 
+/**
+ * Handles the CNZ wand toolbar button. Decision tree:
+ *  - gap ≤ 0: open review modal (nothing to sync)
+ *  - 0 < gap ≤ windowSize: run standard sync then open modal
+ *  - gap > windowSize: show blocking choice popup (window vs all)
+ */
 async function onWandButtonClick() {
     const ctx = SillyTavern.getContext();
     if (!ctx || ctx.groupId || ctx.characterId == null) {
