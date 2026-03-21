@@ -11,7 +11,7 @@
  * chat branches and restores the correct lorebook/vector state for the active
  * timeline (Phase 4). 
  * 
- * V 0.9.33
+ * V 0.9.34
  *
  * Phase 1: Skeleton & Ledger Foundation
  * Phase 2: Fact-Finder (background sync) — runCnzSync fully implemented
@@ -23,6 +23,7 @@
 
 import { generateRaw, saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup, chat_metadata } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
+import { updateWorldInfoList } from '../../../../scripts/world-info.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
 import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML, buildLedgerInspectorHTML, buildOrphanModalHTML } from './ui.js';
 
@@ -106,6 +107,62 @@ TARGET TURNS:
 {{target_turns}}
 `;
 
+const DEFAULT_TARGETED_UPDATE_PROMPT = `
+[SYSTEM: TASK — LOREBOOK ENTRY CURATOR]
+You are reviewing a session transcript and a single existing lorebook entry.
+Your job is to produce a targeted update to this entry based on new information
+in the transcript.
+
+ENTRY NAME: {{entry_name}}
+CURRENT KEYS: {{entry_keys}}
+CURRENT CONTENT:
+{{entry_content}}
+
+SESSION TRANSCRIPT:
+{{transcript}}
+
+INSTRUCTIONS:
+- Output a single UPDATE block for this entry only.
+- Rewrite the entry completely — do not output only the changed part.
+- Keep the entry concise (2–6 sentences). Write in third-person present tense.
+- Preserve existing keys unless the transcript clearly warrants adding or removing one.
+- If the transcript contains no new information relevant to this entry, output exactly:
+  NO CHANGES NEEDED
+
+### OUTPUT FORMAT:
+
+**UPDATE: {{entry_name}}**
+Keys: keyword1, keyword2, keyword3
+[Full replacement content for this entry.]
+*Reason: One sentence explaining what changed and why.*
+`;
+
+const DEFAULT_TARGETED_NEW_PROMPT = `
+[SYSTEM: TASK — LOREBOOK ENTRY CREATOR]
+You are reviewing a session transcript and a keyword provided by the user.
+Your job is to write a new lorebook entry for this concept based on what the
+transcript reveals about it.
+
+KEYWORD: {{entry_name}}
+
+SESSION TRANSCRIPT:
+{{transcript}}
+
+INSTRUCTIONS:
+- Output a single NEW block for this keyword only.
+- Write the entry concisely (2–6 sentences) in third-person present tense.
+- Choose 2–5 natural search keys (lowercase) a reader would use to find this entry.
+- If the transcript contains no meaningful information about this keyword, output exactly:
+  NO INFORMATION FOUND
+
+### OUTPUT FORMAT:
+
+**NEW: {{entry_name}}**
+Keys: keyword1, keyword2
+[Full content for this new entry.]
+*Reason: One sentence explaining why this warrants a new entry.*
+`;
+
 // Profile-level configuration keys — saved per profile, loaded into activeState.
 // Meta-state keys (lastLorebookSyncAt, ledgerPaths, profiles, currentProfileName,
 // activeState) live at the root of extension_settings[EXT_NAME] and are never
@@ -134,6 +191,8 @@ const PROFILE_DEFAULTS = Object.freeze({
     ragChunkSize:             2,
     ragChunkOverlap:          0,
     ragClassifierPrompt:      DEFAULT_RAG_CLASSIFIER_PROMPT,
+    targetedUpdatePrompt:     DEFAULT_TARGETED_UPDATE_PROMPT,
+    targetedNewPrompt:        DEFAULT_TARGETED_NEW_PROMPT,
 });
 
 // ─── Session State ─────────────────────────────────────────────────────────────
@@ -200,6 +259,7 @@ let _lorebookFreeformLastParsed = null;
 let _lorebookRawText         = '';
 let _ragRawDetached          = false;
 let _splitIndexWhenRagBuilt  = null;  // _splitPairIdx at last chunk build; null = not built
+let _targetedGenId           = 0;     // stale-callback guard for targeted generate calls
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
@@ -947,6 +1007,29 @@ async function runHookseekerCall(transcript, prevSummary = '') {
     return generateWithProfile(prompt);
 }
 
+/**
+ * Fires a targeted lorebook AI call for a single entry (update or new).
+ * @param {'update'|'new'} mode
+ * @param {string} entryName     Entry name or freeform keyword.
+ * @param {string} entryKeys     Comma-separated existing keys (empty string for new).
+ * @param {string} entryContent  Existing entry content (empty string for new).
+ * @param {string} transcript    Sync-window transcript.
+ * @returns {Promise<string>}    Raw AI output block.
+ */
+async function runTargetedLbCall(mode, entryName, entryKeys, entryContent, transcript) {
+    const s = getSettings();
+    const template = mode === 'update'
+        ? (s.targetedUpdatePrompt || DEFAULT_TARGETED_UPDATE_PROMPT)
+        : (s.targetedNewPrompt    || DEFAULT_TARGETED_NEW_PROMPT);
+    const prompt = interpolate(template, {
+        entry_name:    entryName,
+        entry_keys:    entryKeys,
+        entry_content: entryContent,
+        transcript,
+    });
+    return generateWithProfile(prompt);
+}
+
 // ─── Lorebook API ─────────────────────────────────────────────────────────────
 
 async function lbListLorebooks() {
@@ -992,6 +1075,7 @@ async function lbEnsureLorebook(name) {
     const exists = list.some(item => item.name === name);
     if (!exists) {
         await lbSaveLorebook(name, { entries: {} });
+        await updateWorldInfoList();
     }
     return lbGetLorebook(name);
 }
@@ -1725,6 +1809,15 @@ function onEnterRagWorkshop() {
         const lcb        = settings.liveContextBuffer ?? 5;
         const tbb        = Math.max(0, totalNS - lcb);
 
+        // Guard: if gap is below sync threshold, nothing should be classified yet.
+        const _fbHeadNode  = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
+        const _fbGap       = tbb - (_fbHeadNode?.sequenceNum ?? 0);
+        if (_fbGap < (settings.chunkEveryN ?? 20)) {
+            console.log(`[CNZ-DBG] onEnterRagWorkshop fallback: gap=${_fbGap} < windowSize=${settings.chunkEveryN ?? 20} — nothing to classify yet`);
+            toastr.info('CNZ: Not enough new turns to classify yet — run a sync first.');
+            return;
+        }
+
         const filteredPairs = buildProsePairs(messages).filter(p => p.validIdx < tbb);
         const headNode      = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
         let windowPairs;
@@ -2018,78 +2111,13 @@ function onLbRegenClick() {
 }
 
 /**
- * Renders the Lorebook Workshop tab contents from current engine state.
- * Reads `_lorebookSuggestions` (entries touched this sync), `_lorebookDelta`
- * (before-state per entry), and `_draftLorebook` (after-state).
- * Called on modal open and whenever the Workshop tab is activated.
- */
-function renderLbWorkshop() {
-    const $container = $('#cnz-lb-workshop-entries').empty();
-    if (!_lorebookSuggestions.length) {
-        $container.append('<div class="cnz-label">(no entries updated this sync — check Freeform tab or regen)</div>');
-        return;
-    }
-    const delta      = _lorebookDelta ?? { createdUids: [], modifiedEntries: {} };
-    const createdSet = new Set(delta.createdUids ?? []);
-
-    for (const s of _lorebookSuggestions) {
-        const uid    = String(s.linkedUid ?? '');
-        const isNew  = createdSet.has(uid);
-        const type   = isNew ? 'new' : 'update';
-        const badge  = isNew ? 'NEW' : 'UPDATE';
-
-        let beforeText;
-        if (isNew) {
-            beforeText = '(new entry — did not exist before this sync)';
-        } else if (delta.modifiedEntries?.[uid]) {
-            beforeText = delta.modifiedEntries[uid].content ?? '';
-        } else {
-            beforeText = '(unchanged)';
-        }
-
-        const afterEntry = _draftLorebook?.entries?.[uid];
-        const afterText  = afterEntry?.content ?? '';
-        const name       = s.name || uid;
-
-        const $entry = $(`<div class="cnz-lb-workshop-entry">
-  <div class="cnz-lb-workshop-entry-header">
-    <span class="cnz-lb-workshop-entry-name"></span>
-    <span class="cnz-lb-workshop-badge cnz-lb-badge-${type}">${badge}</span>
-  </div>
-  <div class="cnz-lb-workshop-cols">
-    <div class="cnz-lb-workshop-col">
-      <span class="cnz-label">Before</span>
-      <div class="cnz-lb-workshop-col-content cnz-workshop-before"></div>
-    </div>
-    <div class="cnz-lb-workshop-col">
-      <span class="cnz-label">After</span>
-      <div class="cnz-lb-workshop-col-content cnz-workshop-after"></div>
-    </div>
-  </div>
-  <span class="cnz-label">Diff</span>
-  <div class="cnz-ingester-diff cnz-workshop-diff"></div>
-  <div class="cnz-buttons cnz-buttons-left">
-    <button class="cnz-btn cnz-btn-secondary cnz-btn-sm cnz-lb-workshop-edit-btn" data-uid="${escapeHtml(uid)}">Edit this entry &#x2192;</button>
-  </div>
-</div>`);
-        $entry.find('.cnz-lb-workshop-entry-name').text(name);
-        $entry.find('.cnz-workshop-before').text(beforeText);
-        $entry.find('.cnz-workshop-after').text(afterText);
-        $entry.find('.cnz-workshop-diff').html(wordDiff(beforeText, afterText));
-        $container.append($entry);
-    }
-}
-
-/**
- * Activates the named lorebook tab (workshop / freeform / ingester) and
- * calls `renderLbWorkshop()` when switching to the Workshop tab.
- * @param {string} tabName  One of 'workshop', 'freeform', 'ingester'.
+ * Activates the named lorebook tab (freeform / ingester).
+ * @param {string} tabName  One of 'freeform', 'ingester'.
  */
 function onLbTabSwitch(tabName) {
     $('#cnz-lb-tab-bar .cnz-tab-btn').each(function () {
         $(this).toggleClass('cnz-tab-active', $(this).data('tab') === tabName);
     });
-    $('#cnz-lb-tab-workshop').toggleClass('cnz-hidden',  tabName !== 'workshop');
     $('#cnz-lb-tab-freeform').toggleClass('cnz-hidden',  tabName !== 'freeform');
     $('#cnz-lb-tab-ingester').toggleClass('cnz-hidden',  tabName !== 'ingester');
 
@@ -2103,11 +2131,30 @@ function onLbTabSwitch(tabName) {
         }
         _lbActiveIngesterIndex = Math.max(0, Math.min(_lbActiveIngesterIndex, _lorebookSuggestions.length - 1));
         populateLbIngesterDropdown();
+        populateTargetedEntrySelect();
         if (_lorebookSuggestions[_lbActiveIngesterIndex]) renderLbIngesterDetail(_lorebookSuggestions[_lbActiveIngesterIndex]);
     }
-    if (tabName === 'workshop') {
-        renderLbWorkshop();
+}
+
+/**
+ * Populates the targeted-generate entry dropdown from current _lorebookData.
+ * Preserves the current selection if the entry still exists.
+ */
+function populateTargetedEntrySelect() {
+    const $sel    = $('#cnz-targeted-entry-select');
+    const prevVal = $sel.val();
+    $sel.empty().append('<option value="">— New entry —</option>');
+
+    const entries = _lorebookData?.entries ?? {};
+    const sorted  = Object.values(entries)
+        .sort((a, b) => (a.comment || '').localeCompare(b.comment || ''));
+
+    for (const entry of sorted) {
+        const name = entry.comment || String(entry.uid);
+        $sel.append($('<option>').val(String(entry.uid)).text(name));
     }
+
+    $sel.val(prevVal);  // jQuery no-ops silently if prevVal no longer exists
 }
 
 function populateLbIngesterDropdown() {
@@ -2307,15 +2354,66 @@ function onLbIngesterApply() {
         $('#cnz-lb-revert-draft').prop('disabled', false);
     }
     s._applied = true; s._rejected = false;
+
+    // Save to disk immediately (commit-first: apply is also immediate)
+    lbSaveLorebook(_lorebookName, _draftLorebook)
+        .then(() => { _lorebookData = structuredClone(_draftLorebook); })
+        .catch(err => toastr.error(`CNZ: Apply save failed \u2014 ${err.message}`));
+
     $('#cnz-lb-suggestion-select option').eq(_lbActiveIngesterIndex).text(escapeHtml(`\u2713 ${s.type}: ${s.name}`));
     updateLbDiff();
 }
 
-function onLbIngesterReject() {
-    const s = _lorebookSuggestions[_lbActiveIngesterIndex];
+/**
+ * Reverts the suggestion at `idx` to its pre-sync state in _draftLorebook
+ * and saves immediately. Updates suggestion flags and UI.
+ * @param {number} idx  Index into _lorebookSuggestions.
+ */
+function revertLbSuggestion(idx) {
+    const s = _lorebookSuggestions[idx];
     if (!s) return;
-    s._rejected = true; s._applied = false;
-    $('#cnz-lb-suggestion-select option').eq(_lbActiveIngesterIndex).text(escapeHtml(`\u2717 ${s.type}: ${s.name}`));
+
+    const uidStr = s.linkedUid !== null ? String(s.linkedUid) : null;
+
+    if (uidStr !== null) {
+        const isNew = _lorebookDelta?.createdUids?.includes(uidStr);
+        const delta = _lorebookDelta?.modifiedEntries?.[uidStr];
+
+        if (isNew) {
+            if (_draftLorebook?.entries) delete _draftLorebook.entries[uidStr];
+        } else if (delta) {
+            const entry = _draftLorebook?.entries?.[uidStr];
+            if (entry) {
+                entry.content = delta.content;
+                entry.key     = [...(delta.key ?? [])];
+            }
+        }
+
+        lbSaveLorebook(_lorebookName, _draftLorebook)
+            .then(() => {
+                _lorebookData = structuredClone(_draftLorebook);
+                toastr.success('CNZ: Entry reverted to pre-sync state.');
+            })
+            .catch(err => toastr.error(`CNZ: Revert save failed \u2014 ${err.message}`));
+    }
+
+    s._rejected = true;
+    s._applied  = false;
+
+    // Update ingester dropdown label
+    $('#cnz-lb-suggestion-select option')
+        .eq(idx)
+        .text(escapeHtml(`\u2717 ${s.type}: ${s.name}`));
+
+    // Refresh both panels if visible
+    if (_lbActiveIngesterIndex === idx) {
+        renderLbIngesterDetail(s);
+        updateLbDiff();
+    }
+}
+
+function onLbIngesterReject() {
+    revertLbSuggestion(_lbActiveIngesterIndex);
 }
 
 async function onLbApplyAllUnresolved() {
@@ -2520,6 +2618,11 @@ async function onConfirmClick() {
         }
     }
 
+    // Reverts are saved immediately but the ledger node still needs updating
+    if (!lorebookChanged && _lorebookSuggestions.some(s => s._rejected)) {
+        lorebookChanged = true;
+    }
+
     // ── Step 3: RAG upload ───────────────────────────────────────────────────
     const hasManualChunks = _ragChunks.some(c => c.status === 'manual');
     if (hasManualChunks || _ragRawDetached) {
@@ -2606,15 +2709,16 @@ function injectModal() {
     $('#cnz-modal').on('click', '#cnz-lb-tab-bar .cnz-tab-btn', function () {
         onLbTabSwitch($(this).data('tab'));
     });
-    $('#cnz-modal').on('click', '.cnz-lb-workshop-edit-btn', function () {
-        const uid = $(this).data('uid');
-        const idx = _lorebookSuggestions.findIndex(s => String(s.linkedUid) === String(uid));
-        if (idx >= 0) {
-            _lbActiveIngesterIndex = idx;
-            onLbTabSwitch('ingester');
-            if (_lorebookSuggestions[idx]) renderLbIngesterDetail(_lorebookSuggestions[idx]);
+    $('#cnz-modal').on('change', '#cnz-targeted-entry-select', function () {
+        const uid   = $(this).val();
+        if (!uid) {
+            $('#cnz-targeted-keyword').val('');
+            return;
         }
+        const entry = _lorebookData?.entries?.[uid];
+        if (entry) $('#cnz-targeted-keyword').val(entry.comment || '');
     });
+    $('#cnz-modal').on('click', '#cnz-targeted-generate', onTargetedGenerateClick);
 
     // Step 3 — Narrative Memory Workshop
     $('#cnz-modal').on('click', '#cnz-rag-tab-bar .cnz-tab-btn', function () {
@@ -2651,12 +2755,80 @@ function showModal() {
  * Hides the modal overlay and resets modal session state.
  * Must NOT clear engine state (`_ragChunks`, `_lorebookSuggestions`, `_priorSituation`, etc.).
  */
+/**
+ * Fires a targeted lorebook AI call and appends the result to the Raw textarea.
+ * Result is immediately parseable by the existing Ingester pipeline.
+ */
+function onTargetedGenerateClick() {
+    const uid     = $('#cnz-targeted-entry-select').val();
+    const keyword = $('#cnz-targeted-keyword').val().trim();
+    if (!keyword) {
+        $('#cnz-targeted-error').text('Enter an entry name or keyword.').removeClass('cnz-hidden');
+        return;
+    }
+    $('#cnz-targeted-error').addClass('cnz-hidden').text('');
+
+    const mode    = uid ? 'update' : 'new';
+    const entry   = uid ? (_lorebookData?.entries?.[uid] ?? null) : null;
+    const keys    = entry ? (Array.isArray(entry.key) ? entry.key.join(', ') : '') : '';
+    const content = entry?.content ?? '';
+
+    const horizon    = getSettings().hookseekerHorizon ?? 70;
+    const transcript = buildSyncWindowTranscript(horizon);
+
+    const targetedId = ++_targetedGenId;
+    $('#cnz-targeted-spinner').removeClass('cnz-hidden');
+    $('#cnz-targeted-generate').prop('disabled', true);
+
+    runTargetedLbCall(mode, keyword, keys, content, transcript)
+        .then(rawText => {
+            if (_targetedGenId !== targetedId) return;
+
+            const trimmed = rawText?.trim() ?? '';
+            if (!trimmed || trimmed === 'NO CHANGES NEEDED' || trimmed === 'NO INFORMATION FOUND') {
+                $('#cnz-targeted-error')
+                    .text(trimmed || 'AI returned no output.')
+                    .removeClass('cnz-hidden');
+                return;
+            }
+
+            const $raw    = $('#cnz-lb-freeform');
+            const current = $raw.val();
+            $raw.val(current ? current + '\n\n' + trimmed : trimmed);
+
+            _lorebookFreeformLastParsed = null;
+
+            if (!$('#cnz-lb-tab-ingester').hasClass('cnz-hidden')) {
+                const freshParsed    = parseLbSuggestions($raw.val());
+                _lorebookSuggestions = enrichLbSuggestions(freshParsed);
+                _lorebookFreeformLastParsed = $raw.val();
+                _lbActiveIngesterIndex = Math.max(0, _lorebookSuggestions.length - 1);
+                populateLbIngesterDropdown();
+                if (_lorebookSuggestions[_lbActiveIngesterIndex]) {
+                    renderLbIngesterDetail(_lorebookSuggestions[_lbActiveIngesterIndex]);
+                }
+            }
+
+            toastr.success(`CNZ: Targeted ${mode} generated — review in Ingester.`);
+        })
+        .catch(err => {
+            if (_targetedGenId !== targetedId) return;
+            $('#cnz-targeted-error').text(`Generate failed: ${err.message}`).removeClass('cnz-hidden');
+        })
+        .finally(() => {
+            if (_targetedGenId !== targetedId) return;
+            $('#cnz-targeted-spinner').addClass('cnz-hidden');
+            $('#cnz-targeted-generate').prop('disabled', false);
+        });
+}
+
 function closeModal() {
     $('#cnz-overlay').addClass('cnz-hidden');
     // Kill all in-flight AI callbacks
     _hooksGenId++;
     _lorebookGenId++;
     _ragGlobalGenId++;
+    _targetedGenId++;
     // Reset modal UI state only (engine state must not be cleared here)
     _hooksLoading               = false;
     _lorebookLoading            = false;
@@ -2916,11 +3088,17 @@ function initWizardSession(preserveSuggestions = false) {
     $('#cnz-hooks-diff').empty();
     // Lorebook tab reset
     $('#cnz-lb-tab-bar .cnz-tab-btn').each(function () {
-        $(this).toggleClass('cnz-tab-active', $(this).data('tab') === 'workshop');
+        $(this).toggleClass('cnz-tab-active', $(this).data('tab') === 'freeform');
     });
-    $('#cnz-lb-tab-workshop').removeClass('cnz-hidden');
-    $('#cnz-lb-tab-freeform, #cnz-lb-tab-ingester').addClass('cnz-hidden');
-    $('#cnz-lb-workshop-entries').empty();
+    $('#cnz-lb-tab-freeform').removeClass('cnz-hidden');
+    $('#cnz-lb-tab-ingester').addClass('cnz-hidden');
+    // Targeted generate strip reset
+    $('#cnz-targeted-entry-select').empty().append('<option value="">— New entry —</option>');
+    $('#cnz-targeted-keyword').val('');
+    $('#cnz-targeted-spinner').addClass('cnz-hidden');
+    $('#cnz-targeted-error').addClass('cnz-hidden').text('');
+    $('#cnz-targeted-generate').prop('disabled', false);
+    populateTargetedEntrySelect();
     // Lorebook and general reset
     $('#cnz-lb-title').text(`Lorebook: ${_lorebookName}`);
     $('#cnz-lb-freeform').val('');
@@ -3035,7 +3213,6 @@ async function openReviewModal() {
     }
     if (_lorebookSuggestions.length) {
         populateLbIngesterDropdown();
-        renderLbWorkshop();
     }
 
     showModal();
@@ -3721,6 +3898,16 @@ function bindSettingsHandlers() {
         openPromptModal('lorebookSyncPrompt', 'Edit Lorebook Sync Prompt', DEFAULT_LOREBOOK_SYNC_PROMPT,
             ['lorebook_entries', 'transcript']));
 
+    $('#cnz-edit-targeted-update-prompt').on('click', () =>
+        openPromptModal('targetedUpdatePrompt', 'Edit Targeted Update Prompt',
+            DEFAULT_TARGETED_UPDATE_PROMPT,
+            ['entry_name', 'entry_keys', 'entry_content', 'transcript']));
+
+    $('#cnz-edit-targeted-new-prompt').on('click', () =>
+        openPromptModal('targetedNewPrompt', 'Edit Targeted New Entry Prompt',
+            DEFAULT_TARGETED_NEW_PROMPT,
+            ['entry_name', 'transcript']));
+
     // ── RAG ───────────────────────────────────────────────────────────────────
     $('#cnz-set-enable-rag').on('change', function () {
         getSettings().enableRag = $(this).prop('checked');
@@ -4312,13 +4499,7 @@ async function onWandButtonClick() {
         );
     }
 
-    // Everything already committed — open modal for review, no sync needed.
-    if (gap <= 0) {
-        openReviewModal();
-        return;
-    }
-
-    // Not enough turns to warrant a sync yet — open modal directly.
+    // Nothing new to sync yet (everything committed, or gap below threshold) — open modal directly.
     if (gap < windowSize) {
         openReviewModal();
         return;

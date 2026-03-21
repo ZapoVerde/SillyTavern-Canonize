@@ -1060,6 +1060,11 @@
     color: #a0ffa0;
 }
 
+.cnz-lb-badge-reverted {
+    background: var(--warning, #8a6a00);
+    color: #fff;
+}
+
 .cnz-lb-workshop-cols {
     display: grid;
     grid-template-columns: 1fr 1fr;

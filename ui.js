@@ -86,22 +86,36 @@ export function buildModalHTML() {
       </div>
 
       <div class="cnz-tab-bar" id="cnz-lb-tab-bar">
-        <button class="cnz-tab-btn cnz-tab-active" data-tab="workshop">Workshop</button>
-        <button class="cnz-tab-btn" data-tab="freeform">Freeform</button>
+        <button class="cnz-tab-btn cnz-tab-active" data-tab="freeform">Freeform</button>
         <button id="cnz-lb-tab-btn-ingester" class="cnz-tab-btn" data-tab="ingester">Ingester</button>
       </div>
 
-      <!-- Workshop tab: before/after diff per entry updated this sync -->
-      <div id="cnz-lb-tab-workshop" class="cnz-tab-panel">
-        <div id="cnz-lb-workshop-entries" class="cnz-lb-workshop-entries"></div>
-      </div>
-
-      <div id="cnz-lb-tab-freeform" class="cnz-tab-panel cnz-hidden">
+      <div id="cnz-lb-tab-freeform" class="cnz-tab-panel">
         <textarea id="cnz-lb-freeform" class="cnz-textarea cnz-textarea-tall" spellcheck="false"
                   placeholder="AI suggestions appear here. Edit freely before switching to Ingester."></textarea>
       </div>
 
       <div id="cnz-lb-tab-ingester" class="cnz-tab-panel cnz-hidden">
+        <div class="cnz-targeted-strip">
+          <div class="cnz-targeted-row">
+            <select id="cnz-targeted-entry-select" class="cnz-input cnz-targeted-entry-select">
+              <option value="">— New entry —</option>
+            </select>
+            <input  id="cnz-targeted-keyword"
+                    class="cnz-input cnz-targeted-keyword"
+                    type="text"
+                    placeholder="Entry name or new keyword…" />
+          </div>
+          <div class="cnz-targeted-row">
+            <button id="cnz-targeted-generate" class="cnz-btn cnz-btn-primary cnz-btn-sm">Generate</button>
+            <span   id="cnz-targeted-spinner"  class="fa-solid fa-spinner fa-spin cnz-hidden"></span>
+            <span   id="cnz-targeted-error"    class="cnz-error cnz-hidden"></span>
+          </div>
+          <div class="cnz-label cnz-targeted-hint">
+            Result appends to Raw tab and appears as a new suggestion below.
+          </div>
+        </div>
+        <hr class="cnz-targeted-divider" />
         <div class="cnz-settings-row">
           <label for="cnz-lb-suggestion-select">Suggestion</label>
           <div class="cnz-select-with-nav">
@@ -342,6 +356,14 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
                   title="Edit the prompt template sent to the AI when generating the narrative hook / scenario summary.">Edit Summary Prompt</button>
           <button id="cnz-edit-lorebook-prompt" class="cnz-btn cnz-btn-secondary"
                   title="Edit the prompt template used when asking the AI to suggest lorebook entry updates and new entries.">Edit Lorebook Sync Prompt</button>
+        </div>
+        <div class="cnz-setting-row">
+          <label class="cnz-label">Targeted Update Prompt</label>
+          <button id="cnz-edit-targeted-update-prompt" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
+        </div>
+        <div class="cnz-setting-row">
+          <label class="cnz-label">Targeted New Entry Prompt</label>
+          <button id="cnz-edit-targeted-new-prompt" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
         </div>
 
         <!-- ── RAG Settings ── -->
