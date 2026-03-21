@@ -6,7 +6,7 @@
     "js": "index.js",
     "css": "style.css",
     "author": "ZapoVerde",
-    "version": "0.9.26",
+    "version": "0.9.27",
     "homePage": "https://github.com/ZapoVerde/SillyTavern-Canonize",
     "auto_update": true,
     "i18n": {

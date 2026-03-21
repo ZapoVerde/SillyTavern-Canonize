@@ -422,7 +422,7 @@ function buildRagDocument(ragChunks) {
         if (contents !== 'full')    parts.push(c.header);   // summary
         if (contents !== 'summary') parts.push(c.content);  // full content
         return parts.filter(Boolean).join('\n\n');
-    }).join('\n\n').trim();
+    }).join('\n\n***\n\n').trim();
     return `[Narrative Memory]\n\n${body}`;
 }
 
@@ -845,16 +845,19 @@ async function uploadRagFile(text, fileName) {
  * @param {number} byteSize Byte length of the uploaded text.
  */
 function registerCharacterAttachment(_key, url, fileName, byteSize) {
-    if (!Array.isArray(chat_metadata.attachments)) {
-        chat_metadata.attachments = [];
+    if (!extension_settings.chat_attachments) {
+        extension_settings.chat_attachments = {};
     }
-    chat_metadata.attachments.push({
+    if (!Array.isArray(extension_settings.chat_attachments[_key])) {
+        extension_settings.chat_attachments[_key] = [];
+    }
+    extension_settings.chat_attachments[_key].push({
         url,
         size:    byteSize,
         name:    fileName,
         created: Date.now(),
     });
-    saveMetadataDebounced();
+    saveSettingsDebounced();
 }
 
 // ─── LLM Calls ────────────────────────────────────────────────────────────────
@@ -2105,7 +2108,7 @@ function populateRagPanel() {
     const context = SillyTavern.getContext();
     const char    = context.characters[context.characterId];
     if (!char || !getSettings().enableRag) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
-    const allAttachments = chat_metadata.attachments ?? [];
+    const allAttachments = extension_settings.chat_attachments?.[char.chat] ?? [];
     if (!allAttachments.length) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
     const rows = allAttachments.map(a =>
         `<div class="cnz-rag-item cnz-rag-item--existing">&#x2713; ${escapeHtml(a.name.replace(/\.txt$/i, ''))}</div>`,
