@@ -3322,7 +3322,8 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         }
 
         // ── 10. Report outcome ────────────────────────────────────────────────
-        if (lbOk && hooksOk && ragUrl) {
+        const ragOk = !settings.enableRag || !!ragUrl;
+        if (lbOk && hooksOk && ragOk) {
             toastr.success(
                 `CNZ: Chunk ${nonSystemCount} synced. <a href="#" class="cnz-review-link">Review</a>`,
                 '',
@@ -3331,7 +3332,7 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
             // Handler registered once in init() via event delegation — no per-sync binding.
         } else {
             // Partial success — individual steps already warned
-            console.log(`[CNZ] Sync partial: lb=${lbOk} hooks=${hooksOk} rag=${!!ragUrl} ledger=${ledgerOk}`);
+            console.log(`[CNZ] Sync partial: lb=${lbOk} hooks=${hooksOk} rag=${ragOk} ledger=${ledgerOk}`);
         }
 
     } finally {
@@ -4218,9 +4219,7 @@ async function onWandButtonClick() {
     }
 
     // Gap fits within standard window — run a standard sync and open modal.
-    if (gap <= windowSize) {
-        toastr.info(`CNZ: Running sync (last ${windowSize} turns)…`);
-        await runCnzSync(char, messages);
+    if (gap < windowSize) {
         openReviewModal();
         return;
     }
