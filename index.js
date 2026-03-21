@@ -422,7 +422,7 @@ function buildRagDocument(ragChunks) {
         if (contents !== 'full')    parts.push(c.header);   // summary
         if (contents !== 'summary') parts.push(c.content);  // full content
         return parts.filter(Boolean).join('\n\n');
-    }).join('\n\n');
+    }).join('\n\n').trim();
 }
 
 /**
@@ -3727,10 +3727,7 @@ async function init() {
                 `[CNZ-DBG] ── CONTEXT MASK ──\n` +
                 `  maskBoundary=${maskBoundary}  hidden=${hiddenMsgs.length} non-system msg(s)  total prompt msgs after=${filtered.length}\n` +
                 `  first kept non-system: "${firstKept?.name ?? '?'}" (role=${firstKept?.role ?? '?'})\n` +
-                `  masked turns (excluded from main AI prompt):\n      ` +
-                hiddenMsgs.filter(m => m.role !== 'system')
-                    .map((m, i) => `[${i + 1}] ${m.name ?? '?'} (role=${m.role ?? '?'})`)
-                    .join('\n      ')
+                `  masked turns (excluded from main AI prompt): ${hiddenMsgs.filter(m => m.role !== 'system').length} turn(s)`
             );
         }
     });
