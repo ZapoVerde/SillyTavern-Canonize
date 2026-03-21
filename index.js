@@ -411,7 +411,7 @@ function buildRagDocument(ragChunks) {
     const ctx         = SillyTavern.getContext();
     const charName    = ctx?.characters?.[ctx?.characterId]?.name ?? '';
 
-    return ragChunks.map(c => {
+    const body = ragChunks.map(c => {
         const sep = interpolate(sepTemplate, {
             chunk_number: String(c.chunkIndex + 1),
             turn_number:  String(c.chunkIndex + 1),   // backward-compat alias
@@ -423,6 +423,7 @@ function buildRagDocument(ragChunks) {
         if (contents !== 'summary') parts.push(c.content);  // full content
         return parts.filter(Boolean).join('\n\n');
     }).join('\n\n').trim();
+    return `[Narrative Memory]\n\n${body}`;
 }
 
 /**
