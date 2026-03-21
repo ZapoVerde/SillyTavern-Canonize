@@ -24,7 +24,7 @@
 import { generateRaw, saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup, chat_metadata } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
-import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML, buildLedgerInspectorHTML } from './ui.js';
+import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML, buildLedgerInspectorHTML, buildOrphanModalHTML } from './ui.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -181,6 +181,9 @@ let _priorSituation  = '';
 let _beforeSituation = '';  // hooks text from before the last sync
                              // read from parent node's state.hooks in openReviewModal
                              // never set by runCnzSync
+
+// Orphan check state — set by checkOrphans(), read by openOrphanModal()
+let _pendingOrphans = [];
 
 // ─── Modal Session State ──────────────────────────────────────────────────────
 // Cleared by closeModal(). Kept separate from engine state so modal open/close
@@ -2572,6 +2575,7 @@ function injectModal() {
     $('body').append(buildModalHTML());
     $('body').append(buildPromptModalHTML());
     $('body').append(buildLedgerInspectorHTML());
+    $('body').append(buildOrphanModalHTML());
 
     // Step 1 — Hooks Workshop
     $('#cnz-modal').on('click', '#cnz-hooks-tab-bar .cnz-tab-btn', function () {
@@ -2671,6 +2675,102 @@ function closeModal() {
 
 function closeLedgerInspector() {
     $('#cnz-li-overlay').addClass('cnz-hidden');
+}
+
+// ─── Orphan Review Modal ───────────────────────────────────────────────────────
+
+function closeOrphanModal() {
+    $('#cnz-orphan-overlay').addClass('cnz-hidden');
+}
+
+/**
+ * Opens the Orphan Review modal for a given list of orphaned file paths.
+ * Each row shows the filename, a [Preview] toggle, and a [Delete] button.
+ * A [Delete All] button at the footer deletes all remaining files at once.
+ * @param {string[]} orphans  Client-relative paths of unreferenced files.
+ */
+function openOrphanModal(orphans) {
+    const $overlay = $('#cnz-orphan-overlay');
+    const $body    = $('#cnz-orphan-body');
+    const $footer  = $overlay.find('.cnz-orphan-footer');
+
+    $body.empty();
+    $footer.show();
+
+    if (!orphans.length) {
+        $body.append('<div class="cnz-li-empty">No orphaned files found.</div>');
+        $footer.hide();
+        $overlay.removeClass('cnz-hidden');
+        return;
+    }
+
+    $('#cnz-orphan-title').text(`Orphaned Files — ${orphans.length} file${orphans.length !== 1 ? 's' : ''}`);
+
+    function checkResolved() {
+        if ($body.find('.cnz-orphan-row').length === 0) {
+            $body.html('<div class="cnz-li-empty">All orphaned files resolved.</div>');
+            $footer.hide();
+        }
+    }
+
+    orphans.forEach(path => {
+        const filename = path.split('/').pop();
+        const $row = $(`
+<div class="cnz-orphan-row" data-path="${escapeHtml(path)}">
+  <div class="cnz-orphan-row-header">
+    <span class="cnz-orphan-filename">${escapeHtml(filename)}</span>
+    <button class="cnz-orphan-preview-btn cnz-btn cnz-btn-secondary cnz-btn-sm">Preview</button>
+    <button class="cnz-orphan-delete-btn cnz-btn cnz-btn-danger cnz-btn-sm">Delete</button>
+  </div>
+  <div class="cnz-orphan-preview-panel cnz-hidden"></div>
+</div>`);
+
+        // Preview toggle
+        $row.find('.cnz-orphan-preview-btn').on('click', async function () {
+            const $panel = $row.find('.cnz-orphan-preview-panel');
+            if (!$panel.hasClass('cnz-hidden')) {
+                $panel.addClass('cnz-hidden');
+                $(this).text('Preview');
+                return;
+            }
+            $(this).text('Loading…').prop('disabled', true);
+            try {
+                const res  = await fetch(path);
+                const text = res.ok ? await res.text() : `(fetch failed: HTTP ${res.status})`;
+                $panel.text(text);
+            } catch (err) {
+                $panel.text(`(fetch error: ${err.message})`);
+            }
+            $panel.removeClass('cnz-hidden');
+            $(this).text('Collapse').prop('disabled', false);
+        });
+
+        // Delete single row
+        $row.find('.cnz-orphan-delete-btn').on('click', async function () {
+            $(this).prop('disabled', true);
+            await cnzDeleteFile(path);
+            $row.remove();
+            checkResolved();
+        });
+
+        $body.append($row);
+    });
+
+    // Delete All
+    $('#cnz-orphan-delete-all').off('click.orphan').on('click.orphan', async function () {
+        $(this).prop('disabled', true);
+        const paths = $body.find('.cnz-orphan-row').map((_, el) => $(el).data('path')).get();
+        for (const p of paths) { await cnzDeleteFile(p); }
+        $body.find('.cnz-orphan-row').remove();
+        checkResolved();
+    });
+
+    // Close handlers
+    $('#cnz-orphan-close').off('click.orphan').on('click.orphan', closeOrphanModal);
+    $overlay.off('click.orphan').on('click.orphan', closeOrphanModal);
+    $('#cnz-orphan-modal').off('click.orphan').on('click.orphan', e => e.stopPropagation());
+
+    $overlay.removeClass('cnz-hidden');
 }
 
 /**
@@ -4036,9 +4136,10 @@ function checkOrphans() {
     const orphans = knownFiles.filter(p => !expectedPaths.has(p));
     if (!orphans.length) return;
 
+    _pendingOrphans = orphans;
     console.warn('[CNZ] Orphan check: found', orphans.length, 'unreferenced file(s):', orphans);
     toastr.warning(
-        `CNZ: ${orphans.length} unreferenced file${orphans.length !== 1 ? 's' : ''} detected in Data Bank. <a href="#" class="cnz-orphan-dismiss">Dismiss</a>`,
+        `CNZ: ${orphans.length} unreferenced file${orphans.length !== 1 ? 's' : ''} detected in Data Bank. <a href="#" class="cnz-orphan-review">Review</a> <a href="#" class="cnz-orphan-dismiss">Dismiss</a>`,
         '',
         { timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false },
     );
@@ -4218,7 +4319,7 @@ async function onWandButtonClick() {
         return;
     }
 
-    // Gap fits within standard window — run a standard sync and open modal.
+    // Not enough turns to warrant a sync yet — open modal directly.
     if (gap < windowSize) {
         openReviewModal();
         return;
@@ -4271,7 +4372,12 @@ async function init() {
         e.preventDefault();
         openReviewModal();
     });
-    // Delegated click handler for the orphan-check dismiss toast link
+    // Delegated click handlers for the orphan-check toast links
+    $(document).on('click', '.cnz-orphan-review', (e) => {
+        e.preventDefault();
+        toastr.clear();
+        openOrphanModal(_pendingOrphans);
+    });
     $(document).on('click', '.cnz-orphan-dismiss', (e) => {
         e.preventDefault();
         toastr.clear();

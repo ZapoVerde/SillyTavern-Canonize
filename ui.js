@@ -446,6 +446,27 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
 }
 
 /**
+ * Returns the HTML for the Orphan Review modal.
+ * The body content is populated dynamically by openOrphanModal() in index.js.
+ * @returns {string}
+ */
+export function buildOrphanModalHTML() {
+    return `
+<div id="cnz-orphan-overlay" class="cnz-overlay cnz-hidden">
+  <div id="cnz-orphan-modal" class="cnz-modal cnz-li-modal" role="dialog" aria-modal="true">
+    <div class="cnz-section-header">
+      <h3 id="cnz-orphan-title" class="cnz-title">Orphaned Files</h3>
+      <button id="cnz-orphan-close" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Close</button>
+    </div>
+    <div id="cnz-orphan-body" class="cnz-li-body"></div>
+    <div class="cnz-orphan-footer">
+      <button id="cnz-orphan-delete-all" class="cnz-btn cnz-btn-danger">Delete All</button>
+    </div>
+  </div>
+</div>`;
+}
+
+/**
  * Returns the HTML for the Ledger Inspector modal (read-only).
  * The body content is populated dynamically by openLedgerInspector() in index.js.
  * @returns {string}
