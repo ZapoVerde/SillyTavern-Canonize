@@ -27,7 +27,7 @@ import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML } from './ui.js
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const EXT_NAME            = 'cnz';
-const DEFAULT_CONCURRENCY = 5;
+const DEFAULT_CONCURRENCY = 3;
 const HOOKS_START         = '<!-- Current Scenario State -->';
 const HOOKS_END           = '<!--  -->';
 
@@ -655,7 +655,7 @@ function renderRagCard(chunkIndex) {
  * Respects per-chunk genId and global ragGlobalGenId for staleness detection.
  * @param {number} chunkIndex
  */
-async function ragFireChunk(chunkIndex) {
+async function ragFireChunk(chunkIndex, delayMs = 0) {
     const chunk = _ragChunks[chunkIndex];
     if (!chunk) return;
     const localGenId       = ++chunk.genId;
@@ -668,6 +668,11 @@ async function ragFireChunk(chunkIndex) {
     renderRagCard(chunkIndex);
 
     try {
+        if (delayMs > 0) {
+            await new Promise(r => setTimeout(r, delayMs));
+            if (_ragGlobalGenId !== globalGenId || chunk.genId !== localGenId) return;
+        }
+
         const pairStart    = chunk.pairStart ?? chunkIndex;
         const pairEnd      = chunk.pairEnd   ?? (pairStart + 1);
         const targetPairs  = _stagedProsePairs.slice(pairStart, Math.min(pairEnd, _splitPairIdx));
@@ -686,7 +691,23 @@ async function ragFireChunk(chunkIndex) {
             ));
         }
 
-        const header       = await runRagClassifierCall(summaryAtCall, targetPairs);
+        const maxRetries = getSettings().ragMaxRetries ?? 1;
+        let header;
+        let lastErr;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            if (_ragGlobalGenId !== globalGenId || chunk.genId !== localGenId) return;
+            try {
+                header = await runRagClassifierCall(summaryAtCall, targetPairs);
+                lastErr = null;
+                break;
+            } catch (err) {
+                lastErr = err;
+                if (attempt < maxRetries) {
+                    console.warn(`[CNZ-DBG] ragFireChunk chunk=${chunkIndex} attempt ${attempt + 1} failed, retrying...`, err);
+                }
+            }
+        }
+        if (lastErr) throw lastErr;
 
         const globalStale = _ragGlobalGenId !== globalGenId;
         const localStale  = chunk.genId !== localGenId;
@@ -730,9 +751,11 @@ async function ragFireChunk(chunkIndex) {
 function ragDrainQueue() {
     const max = getSettings().maxConcurrentCalls ?? DEFAULT_CONCURRENCY;
     console.log(`[CNZ-DBG] ragDrainQueue inFlight=${_ragInFlightCount} max=${max} queue=${JSON.stringify(_ragCallQueue)}`);
+    let staggerIdx = 0;
     while (_ragInFlightCount < max && _ragCallQueue.length > 0) {
         const idx = _ragCallQueue.shift();
-        ragFireChunk(idx);
+        ragFireChunk(idx, (staggerIdx + 1) * 500);
+        staggerIdx++;
     }
     if (_ragInFlightCount >= max && _ragCallQueue.length > 0) {
         console.warn(`[CNZ-DBG] ragDrainQueue BLOCKED — inFlight=${_ragInFlightCount} >= max=${max}, ${_ragCallQueue.length} chunks still queued`);
@@ -3039,6 +3062,8 @@ function refreshSettingsUI() {
     $('#cnz-set-rag-max-tokens').val(s.ragMaxTokens ?? 100);
     $('#cnz-set-rag-chunk-size').val(s.ragChunkSize ?? 2);
     $('#cnz-set-rag-chunk-overlap').val(s.ragChunkOverlap ?? 0);
+    $('#cnz-set-rag-max-concurrent').val(s.maxConcurrentCalls ?? DEFAULT_CONCURRENCY);
+    $('#cnz-set-rag-retries').val(s.ragMaxRetries ?? 1);
     updateRagAiControlsVisibility();
 
     // Re-initialize connection profile dropdowns with the newly loaded values.
@@ -3193,6 +3218,18 @@ function bindSettingsHandlers() {
 
     $('#cnz-set-rag-chunk-overlap').on('change', function () {
         getSettings().ragChunkOverlap = parseInt($(this).val()) || 0;
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-rag-max-concurrent').on('input', function () {
+        const val = Math.max(1, parseInt($(this).val()) || DEFAULT_CONCURRENCY);
+        getSettings().maxConcurrentCalls = val;
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-rag-retries').on('input', function () {
+        const val = Math.max(0, parseInt($(this).val()) || 0);
+        getSettings().ragMaxRetries = val;
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 

@@ -377,6 +377,18 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
               </select>
             </div>
 
+            <div class="cnz-settings-inline-row">
+              <label for="cnz-set-rag-max-concurrent">Simultaneous Calls ${tip('How many chunk classification calls run in parallel. Higher values finish faster but may overwhelm slow backends. Default: 3.')}</label>
+              <input id="cnz-set-rag-max-concurrent" type="number" min="1" max="10" step="1"
+                     value="${escapeHtml(String(s.maxConcurrentCalls ?? 3))}">
+            </div>
+
+            <div class="cnz-settings-inline-row">
+              <label for="cnz-set-rag-retries">Retries on Failure ${tip('How many times a failed chunk classification is retried before being left as pending. 0 = no retries. Default: 1.')}</label>
+              <input id="cnz-set-rag-retries" type="number" min="0" max="5" step="1"
+                     value="${escapeHtml(String(s.ragMaxRetries ?? 1))}">
+            </div>
+
             <div class="cnz-settings-row cnz-settings-prompt-row">
               <button id="cnz-edit-classifier-prompt" class="cnz-btn cnz-btn-secondary"
                       title="Edit the prompt used to generate a semantic header for each memory chunk.">Edit Classifier Prompt</button>
