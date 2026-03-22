@@ -84,6 +84,10 @@ export function buildModalHTML() {
       <div class="cnz-tab-bar" id="cnz-lb-tab-bar">
         <button class="cnz-tab-btn cnz-tab-active" data-tab="ingester">Ingester</button>
         <button class="cnz-tab-btn" data-tab="freeform">Freeform</button>
+        <label class="cnz-checkbox-label cnz-label-sm cnz-tab-bar-right"
+               title="When checked, all workshop AI calls build their transcript from the full chat up to the current turn instead of the default sync window">
+          <input id="cnz-lb-up-to-latest" type="checkbox"> Up to latest turn
+        </label>
       </div>
 
       <!-- ── Ingester tab (default) ── -->
@@ -148,10 +152,10 @@ export function buildModalHTML() {
 
         <div class="cnz-buttons cnz-buttons-split">
           <div class="cnz-btn-group">
-            <button id="cnz-lb-btn-latest" class="cnz-btn cnz-btn-secondary cnz-btn-sm"
-                    title="Load the most recent AI-generated version into the editor">&#x2190; Latest</button>
             <button id="cnz-lb-btn-prev"   class="cnz-btn cnz-btn-secondary cnz-btn-sm"
                     title="Load the pre-sync version into the editor">&#x2190; Prev</button>
+            <button id="cnz-lb-btn-latest" class="cnz-btn cnz-btn-secondary cnz-btn-sm"
+                    title="Load the most recent AI-generated version into the editor">Latest &#x2192;</button>
             <button id="cnz-lb-btn-regen"  class="cnz-btn cnz-btn-secondary cnz-btn-sm"
                     title="Fire a fresh targeted AI call for the current entry">&#x21bb; Regen</button>
           </div>
@@ -171,9 +175,6 @@ export function buildModalHTML() {
       <div id="cnz-lb-tab-freeform" class="cnz-tab-panel cnz-hidden">
         <div class="cnz-buttons cnz-buttons-left">
           <button id="cnz-lb-freeform-regen" class="cnz-btn cnz-btn-secondary cnz-btn-sm">&#x21bb; Regen</button>
-          <label class="cnz-checkbox-label cnz-label-sm" title="When checked, regen uses the full chat up to the latest turn instead of the sync window">
-            <input id="cnz-lb-up-to-latest" type="checkbox"> Up to latest turn
-          </label>
         </div>
         <textarea id="cnz-lb-freeform" class="cnz-textarea cnz-textarea-tall" readonly spellcheck="false"
                   placeholder="Overview of all committed changes for this session. Updates automatically as you work through the Ingester."></textarea>

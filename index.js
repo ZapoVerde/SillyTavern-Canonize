@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
- * @version 0.9.37
+ * @version 0.9.38
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -2660,7 +2660,8 @@ function onLbIngesterRegenerate() {
     const content = entry?.content ?? s.content;
 
     const horizon    = getSettings().hookseekerHorizon ?? 70;
-    const transcript = buildSyncWindowTranscript(horizon);
+    const upToLatest = $('#cnz-lb-up-to-latest').is(':checked');
+    const transcript = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon);
 
     const targetedId = ++_targetedGenId;
     $('#cnz-lb-btn-regen').prop('disabled', true);
@@ -3196,7 +3197,8 @@ function onTargetedGenerateClick() {
     $('#cnz-targeted-error').addClass('cnz-hidden').text('');
 
     const horizon    = getSettings().hookseekerHorizon ?? 70;
-    const transcript = buildSyncWindowTranscript(horizon);
+    const upToLatest = $('#cnz-lb-up-to-latest').is(':checked');
+    const transcript = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon);
 
     const targetedId = ++_targetedGenId;
     $('#cnz-targeted-spinner').removeClass('cnz-hidden');
