@@ -78,54 +78,57 @@ export function buildModalHTML() {
     <div id="cnz-step-2" class="cnz-step cnz-hidden">
       <div class="cnz-section-header">
         <h3 id="cnz-lb-title" class="cnz-title">Lorebook</h3>
-        <label class="cnz-checkbox-label cnz-label-sm" title="When checked, regen uses the full chat up to the latest turn instead of the sync window">
-          <input id="cnz-lb-up-to-latest" type="checkbox"> Up to latest turn
-        </label>
         <span id="cnz-lb-spinner" class="cnz-section-spin fa-solid fa-spinner fa-spin cnz-hidden"></span>
-        <button id="cnz-lb-regen" class="cnz-btn cnz-btn-secondary cnz-btn-sm">&#x21bb;</button>
       </div>
 
       <div class="cnz-tab-bar" id="cnz-lb-tab-bar">
-        <button class="cnz-tab-btn cnz-tab-active" data-tab="freeform">Freeform</button>
-        <button id="cnz-lb-tab-btn-ingester" class="cnz-tab-btn" data-tab="ingester">Ingester</button>
+        <button class="cnz-tab-btn cnz-tab-active" data-tab="ingester">Ingester</button>
+        <button class="cnz-tab-btn" data-tab="freeform">Freeform</button>
       </div>
 
-      <div id="cnz-lb-tab-freeform" class="cnz-tab-panel">
-        <textarea id="cnz-lb-freeform" class="cnz-textarea cnz-textarea-tall" spellcheck="false"
-                  placeholder="AI suggestions appear here. Edit freely before switching to Ingester."></textarea>
-      </div>
+      <!-- ── Ingester tab (default) ── -->
+      <div id="cnz-lb-tab-ingester" class="cnz-tab-panel">
 
-      <div id="cnz-lb-tab-ingester" class="cnz-tab-panel cnz-hidden">
-        <div class="cnz-targeted-strip">
-          <div class="cnz-targeted-row">
-            <select id="cnz-targeted-entry-select" class="cnz-input cnz-targeted-entry-select">
-              <option value="">— New entry —</option>
-            </select>
-            <input  id="cnz-targeted-keyword"
-                    class="cnz-input cnz-targeted-keyword"
-                    type="text"
-                    placeholder="Entry name or new keyword…" />
-          </div>
-          <div class="cnz-targeted-row">
-            <button id="cnz-targeted-generate" class="cnz-btn cnz-btn-primary cnz-btn-sm">Generate</button>
-            <span   id="cnz-targeted-spinner"  class="fa-solid fa-spinner fa-spin cnz-hidden"></span>
-            <span   id="cnz-targeted-error"    class="cnz-error cnz-hidden"></span>
-          </div>
-          <div class="cnz-label cnz-targeted-hint">
-            Result appends to Raw tab and appears as a new suggestion below.
-          </div>
-        </div>
-        <hr class="cnz-targeted-divider" />
+        <!-- Lane 1: Committed sync changes -->
         <div class="cnz-settings-row">
-          <label for="cnz-lb-suggestion-select">Suggestion</label>
+          <label for="cnz-lb-suggestion-select">Committed changes</label>
           <div class="cnz-select-with-nav">
             <select id="cnz-lb-suggestion-select" class="cnz-select"></select>
             <button id="cnz-lb-ingester-next" class="cnz-btn cnz-btn-secondary cnz-btn-sm"
-                    title="Jump to next unresolved suggestion">&#x27A1;</button>
+                    title="Jump to next unresolved suggestion">&#x27A1; Next</button>
           </div>
         </div>
 
-        <span class="cnz-label">Diff (draft &#x2192; edit)</span>
+        <hr class="cnz-lane-divider" />
+
+        <!-- Lane 2: Generate new entry (bordered card) -->
+        <div class="cnz-lane-card">
+          <span class="cnz-label">Generate new entry</span>
+          <div class="cnz-targeted-row">
+            <input  id="cnz-targeted-keyword"
+                    class="cnz-input cnz-targeted-keyword"
+                    type="text"
+                    placeholder="New concept name…" />
+            <button id="cnz-targeted-generate" class="cnz-btn cnz-btn-primary cnz-btn-sm">Generate</button>
+            <span   id="cnz-targeted-spinner"  class="fa-solid fa-spinner fa-spin cnz-hidden"></span>
+          </div>
+          <span id="cnz-targeted-error" class="cnz-error cnz-hidden"></span>
+        </div>
+
+        <hr class="cnz-lane-divider" />
+
+        <!-- Lane 3: Full lorebook entry picker -->
+        <div class="cnz-settings-row">
+          <label for="cnz-targeted-entry-select">Load existing entry</label>
+          <select id="cnz-targeted-entry-select" class="cnz-input cnz-targeted-entry-select">
+            <option value="">— Select entry —</option>
+          </select>
+        </div>
+
+        <hr class="cnz-lane-divider" />
+
+        <!-- Shared editor -->
+        <span class="cnz-label">Diff (pre-sync &#x2192; current)</span>
         <div id="cnz-lb-ingester-diff" class="cnz-ingester-diff"></div>
 
         <div class="cnz-settings-row">
@@ -145,17 +148,35 @@ export function buildModalHTML() {
 
         <div class="cnz-buttons cnz-buttons-split">
           <div class="cnz-btn-group">
-            <button id="cnz-lb-revert-ai"    class="cnz-btn cnz-btn-secondary">Revert to AI</button>
-            <button id="cnz-lb-revert-draft" class="cnz-btn cnz-btn-secondary">Revert to Draft</button>
+            <button id="cnz-lb-btn-latest" class="cnz-btn cnz-btn-secondary cnz-btn-sm"
+                    title="Load the most recent AI-generated version into the editor">&#x2190; Latest</button>
+            <button id="cnz-lb-btn-prev"   class="cnz-btn cnz-btn-secondary cnz-btn-sm"
+                    title="Load the pre-sync version into the editor">&#x2190; Prev</button>
+            <button id="cnz-lb-btn-regen"  class="cnz-btn cnz-btn-secondary cnz-btn-sm"
+                    title="Fire a fresh targeted AI call for the current entry">&#x21bb; Regen</button>
           </div>
           <div class="cnz-btn-group">
-            <button id="cnz-lb-reject-one" class="cnz-btn cnz-btn-danger">Reject</button>
-            <button id="cnz-lb-apply-one"  class="cnz-btn cnz-btn-success">Apply</button>
+            <button id="cnz-lb-reject-one" class="cnz-btn cnz-btn-danger"
+                    title="Load pre-sync content and mark resolved">Reject</button>
+            <button id="cnz-lb-apply-one"  class="cnz-btn cnz-btn-success"
+                    title="Mark as resolved (editor content unchanged)">Apply</button>
           </div>
         </div>
         <div class="cnz-buttons">
           <button id="cnz-lb-apply-all-unresolved" class="cnz-btn cnz-btn-secondary">Apply All Unresolved</button>
         </div>
+      </div>
+
+      <!-- ── Freeform tab (read-only overview) ── -->
+      <div id="cnz-lb-tab-freeform" class="cnz-tab-panel cnz-hidden">
+        <div class="cnz-buttons cnz-buttons-left">
+          <button id="cnz-lb-freeform-regen" class="cnz-btn cnz-btn-secondary cnz-btn-sm">&#x21bb; Regen</button>
+          <label class="cnz-checkbox-label cnz-label-sm" title="When checked, regen uses the full chat up to the latest turn instead of the sync window">
+            <input id="cnz-lb-up-to-latest" type="checkbox"> Up to latest turn
+          </label>
+        </div>
+        <textarea id="cnz-lb-freeform" class="cnz-textarea cnz-textarea-tall" readonly spellcheck="false"
+                  placeholder="Overview of all committed changes for this session. Updates automatically as you work through the Ingester."></textarea>
       </div>
 
       <div id="cnz-lb-error" class="cnz-error-banner cnz-hidden"></div>
