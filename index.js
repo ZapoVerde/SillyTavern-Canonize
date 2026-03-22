@@ -11,7 +11,7 @@
  * chat branches and restores the correct lorebook/vector state for the active
  * timeline (Phase 4). 
  * 
- * V 0.9.34
+ * V 0.9.35
  *
  * Phase 1: Skeleton & Ledger Foundation
  * Phase 2: Fact-Finder (background sync) — runCnzSync fully implemented
@@ -108,59 +108,72 @@ TARGET TURNS:
 `;
 
 const DEFAULT_TARGETED_UPDATE_PROMPT = `
-[SYSTEM: TASK — LOREBOOK ENTRY CURATOR]
-You are reviewing a session transcript and a single existing lorebook entry.
-Your job is to produce a targeted update to this entry based on new information
-in the transcript.
+[SYSTEM: TASK — NARRATIVE FACT UPDATER]
+You are maintaining a persistent world knowledge base for an ongoing roleplay narrative.
+A knowledge record for the concept below already exists. Your job is to revise it to
+reflect new information revealed in the transcript, producing a single complete,
+up-to-date record.
 
-ENTRY NAME: {{entry_name}}
+A knowledge record captures durable, referenceable facts about a person, place, object,
+faction, or recurring concept — the current state of the story world as understood at
+this point in the narrative. Write in third-person present tense. Be concise and
+specific: 2–6 sentences.
+
+CONCEPT: {{entry_name}}
 CURRENT KEYS: {{entry_keys}}
-CURRENT CONTENT:
+
+CURRENT RECORD:
 {{entry_content}}
 
 SESSION TRANSCRIPT:
 {{transcript}}
 
 INSTRUCTIONS:
-- Output a single UPDATE block for this entry only.
-- Rewrite the entry completely — do not output only the changed part.
-- Keep the entry concise (2–6 sentences). Write in third-person present tense.
-- Preserve existing keys unless the transcript clearly warrants adding or removing one.
-- If the transcript contains no new information relevant to this entry, output exactly:
+- Write the record as a single complete replacement — not a patch or addendum.
+- Integrate old and new information into one coherent, present-tense account.
+- Where the transcript contradicts the existing record, trust the transcript.
+- Where the transcript adds new detail, incorporate it naturally.
+- Where the existing record covers things the transcript does not touch, preserve them.
+- Keep search keys unless the transcript clearly warrants adding or removing one.
+- If the transcript contains no new information relevant to this concept, output exactly:
   NO CHANGES NEEDED
 
 ### OUTPUT FORMAT:
 
 **UPDATE: {{entry_name}}**
 Keys: keyword1, keyword2, keyword3
-[Full replacement content for this entry.]
-*Reason: One sentence explaining what changed and why.*
+[Full replacement content for this record.]
 `;
 
 const DEFAULT_TARGETED_NEW_PROMPT = `
-[SYSTEM: TASK — LOREBOOK ENTRY CREATOR]
-You are reviewing a session transcript and a keyword provided by the user.
-Your job is to write a new lorebook entry for this concept based on what the
-transcript reveals about it.
+[SYSTEM: TASK — NARRATIVE FACT EXTRACTOR]
+You are maintaining a persistent world knowledge base for an ongoing roleplay narrative.
+Your job is to write a single, focused knowledge record for the concept identified below,
+drawn entirely from what the transcript reveals.
 
-KEYWORD: {{entry_name}}
+A knowledge record captures durable, referenceable facts about a person, place, object,
+faction, or recurring concept — things a reader would need to know to understand the
+current state of the story world. Write in third-person present tense. Be concise and
+specific: 2–6 sentences. Do not speculate beyond what the transcript supports.
+
+CONCEPT: {{entry_name}}
 
 SESSION TRANSCRIPT:
 {{transcript}}
 
-INSTRUCTIONS:
-- Output a single NEW block for this keyword only.
-- Write the entry concisely (2–6 sentences) in third-person present tense.
-- Choose 2–5 natural search keys (lowercase) a reader would use to find this entry.
-- If the transcript contains no meaningful information about this keyword, output exactly:
-  NO INFORMATION FOUND
+SEARCH KEYS: Choose 2–5 lowercase words or short phrases that a reader would naturally
+think of when looking for this concept. Prefer the most recognisable name or label for
+the thing, plus meaningful aliases or related terms. Avoid generic words that would match
+many entries (e.g. "character", "place", "important").
+
+If the transcript contains no meaningful information about this concept, output exactly:
+NO INFORMATION FOUND
 
 ### OUTPUT FORMAT:
 
 **NEW: {{entry_name}}**
 Keys: keyword1, keyword2
-[Full content for this new entry.]
-*Reason: One sentence explaining why this warrants a new entry.*
+[Full content for this record.]
 `;
 
 // Profile-level configuration keys — saved per profile, loaded into activeState.
@@ -1284,6 +1297,68 @@ function enrichLbSuggestions(freshParsed) {
     return enriched;
 }
 
+/**
+ * Derives a suggestion list by diffing two lorebook states.
+ * Used by openReviewModal to reconstruct what changed in the last sync
+ * entirely from ledger node data — no ephemeral sync-cycle variables needed.
+ *
+ * Entries present in `after` but not in `before` → type NEW, _applied true.
+ * Entries present in both but with changed content/keys → type UPDATE, _applied true.
+ * Entries present in `before` but removed from `after` → skipped (deletions not surfaced).
+ *
+ * All returned suggestions are marked _applied = true (already committed to disk).
+ * The user can revert individual entries via the ingester's Revert Draft button.
+ *
+ * @param {object|null} before  Pre-sync lorebook (parent node state.lorebook), or null.
+ * @param {object|null} after   Post-sync lorebook (head node state.lorebook).
+ * @returns {object[]}          Suggestion objects compatible with the ingester pipeline.
+ */
+function deriveSuggestionsFromLedgerDiff(before, after) {
+    const beforeEntries = before?.entries ?? {};
+    const afterEntries  = after?.entries  ?? {};
+    const suggestions   = [];
+
+    for (const [uid, afterEntry] of Object.entries(afterEntries)) {
+        const beforeEntry = beforeEntries[uid];
+        const name    = afterEntry.comment || String(afterEntry.uid ?? uid);
+        const keys    = Array.isArray(afterEntry.key) ? [...afterEntry.key] : [];
+        const content = afterEntry.content ?? '';
+
+        if (!beforeEntry) {
+            // New entry
+            suggestions.push({
+                type:        'NEW',
+                name,
+                keys,
+                content,
+                linkedUid:   parseInt(uid, 10),
+                _applied:    true,
+                _rejected:   false,
+                _aiSnapshot: { name, keys: [...keys], content },
+            });
+        } else {
+            // Check for changes
+            const contentChanged = beforeEntry.content !== afterEntry.content;
+            const keysChanged    = JSON.stringify([...(beforeEntry.key ?? [])].sort())
+                                !== JSON.stringify([...keys].sort());
+            if (contentChanged || keysChanged) {
+                suggestions.push({
+                    type:        'UPDATE',
+                    name,
+                    keys,
+                    content,
+                    linkedUid:   parseInt(uid, 10),
+                    _applied:    true,
+                    _rejected:   false,
+                    _aiSnapshot: { name, keys: [...keys], content },
+                });
+            }
+        }
+    }
+
+    return suggestions;
+}
+
 // ─── Character Persistence ────────────────────────────────────────────────────
 
 /**
@@ -1652,6 +1727,7 @@ async function restoreHooksToNode(char, node) {
     if (!freshChar) throw new Error('Character not found in context for hooks restoration.');
     const newScenario = writeHookseekerBlock(freshChar.scenario ?? '', hooksText);
     await patchCharacterScenario(freshChar, newScenario);
+    await SillyTavern.getContext().getOneCharacter(freshChar.avatar);
 }
 
 // ─── Modal: RAG Workshop Helpers ──────────────────────────────────────────────
@@ -2044,25 +2120,34 @@ function showLbError(message) {
  * from `_lorebookDelta`). Updates `_lorebookRawText`, `_lorebookSuggestions`,
  * and refreshes the Workshop and Ingester tabs.
  */
-function onLbRegenClick() {
+async function onLbRegenClick() {
     setLbLoading(true);
     $('#cnz-lb-error').addClass('cnz-hidden').text('');
+
+    // preSyncLorebook = parent node's lorebook (the baseline the AI ran against).
+    // Fetch from ledger — stable across modal opens, no ephemeral delta needed.
+    let preSyncLorebook = null;
+    try {
+        const ctx              = SillyTavern.getContext();
+        const char             = ctx?.characters?.[ctx?.characterId];
+        const headChainEntry   = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
+        if (headChainEntry && char) {
+            const headNodeFile = await fetchLedgerNodeFile(char.avatar, headChainEntry.nodeId);
+            const parentId     = headNodeFile?.parentId ?? null;
+            if (parentId) {
+                const parentNodeFile = await fetchLedgerNodeFile(char.avatar, parentId);
+                preSyncLorebook      = parentNodeFile?.state?.lorebook ?? null;
+            }
+        }
+    } catch (err) {
+        console.warn('[CNZ] onLbRegenClick: could not fetch parent node for baseline:', err);
+    }
+    preSyncLorebook ??= structuredClone(_lorebookData ?? { entries: {} });
+
     const lbId          = ++_lorebookGenId;
     const horizon       = getSettings().chunkEveryN ?? 20;
     const upToLatest    = $('#cnz-lb-up-to-latest').is(':checked');
     const transcript = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon);
-    // Compute pre-sync baseline from _lorebookDelta (ephemeral state, not persisted)
-    let preSyncLorebook;
-    if (_lorebookDelta && _lorebookData) {
-        const entries = { ..._lorebookData.entries };
-        for (const uid of (_lorebookDelta.createdUids ?? [])) delete entries[String(uid)];
-        for (const [uid, prev] of Object.entries(_lorebookDelta.modifiedEntries ?? {})) {
-            if (entries[String(uid)]) entries[String(uid)] = { ...entries[String(uid)], content: prev.content, key: [...(prev.key ?? [])] };
-        }
-        preSyncLorebook = { ..._lorebookData, entries };
-    } else {
-        preSyncLorebook = structuredClone(_lorebookData ?? { entries: {} });
-    }
     runLorebookSyncCall(transcript, preSyncLorebook)
         .then(text => {
             if (_lorebookGenId !== lbId) return;
@@ -2572,6 +2657,7 @@ async function onConfirmClick() {
             if (freshChar) {
                 const newScenario = writeHookseekerBlock(freshChar.scenario ?? '', hooksText);
                 await patchCharacterScenario(freshChar, newScenario);
+                await SillyTavern.getContext().getOneCharacter(freshChar.avatar);
                 _priorSituation = hooksText;
                 hooksChanged = true;
                 upsertReceiptItem('cnz-receipt-hooks', receiptSuccess('Narrative Hooks updated in character scenario'));
@@ -2592,15 +2678,17 @@ async function onConfirmClick() {
                 await lbSaveLorebook(_lorebookName, _draftLorebook);
                 _lorebookData = structuredClone(_draftLorebook);
 
+                // Derive delta inline — _lorebookDelta is no longer relied upon as ephemeral state
                 const createdUids = [], modifiedEntries = {};
-                for (const [uid, entry] of Object.entries(_draftLorebook.entries)) {
-                    const orig = preLorebook.entries[uid];
+                for (const [uid, entry] of Object.entries(_draftLorebook.entries ?? {})) {
+                    const orig = preLorebook.entries?.[uid];
                     if (!orig) {
                         createdUids.push(uid);
                     } else if (orig.content !== entry.content || JSON.stringify(orig.key) !== JSON.stringify(entry.key)) {
                         modifiedEntries[uid] = { content: orig.content, key: [...(orig.key ?? [])] };
                     }
                 }
+                // _lorebookDelta kept in sync for any remaining references (revert buttons etc.)
                 _lorebookDelta = { createdUids, modifiedEntries };
                 lorebookChanged = true;
 
@@ -3184,21 +3272,43 @@ async function openReviewModal() {
     const freshChar = SillyTavern.getContext().characters.find(c => c.avatar === char.avatar);
     _priorSituation = extractHookseekerBlock((freshChar ?? char).scenario ?? '') ?? '';
 
-    // _beforeSituation = parent node's state.hooks (what existed before this sync)
+    // Derive before/after states from ledger nodes — stable across any number of modal opens.
+    // head node  = post-sync state (what's on disk now)
+    // parent node = pre-sync state (manual-edit-inclusive baseline the AI ran against)
     const headChainEntry = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
     _beforeSituation = '';
+    let preSyncLorebookForDiff = null;   // parent node's lorebook — diff baseline
+
     if (headChainEntry) {
         try {
             const headNodeFile = await fetchLedgerNodeFile(char.avatar, headChainEntry.nodeId);
             const parentId     = headNodeFile?.parentId ?? null;
+
+            // hooks: parent node's state.hooks is what existed before this sync
             if (parentId) {
-                const parentNodeFile = await fetchLedgerNodeFile(char.avatar, parentId);
-                _beforeSituation = parentNodeFile?.state?.hooks ?? '';
+                const parentNodeFile   = await fetchLedgerNodeFile(char.avatar, parentId);
+                _beforeSituation       = parentNodeFile?.state?.hooks    ?? '';
+                preSyncLorebookForDiff = parentNodeFile?.state?.lorebook ?? null;
+            }
+
+            // head node lorebook = current committed state; use as _draftLorebook baseline
+            if (headNodeFile?.state?.lorebook) {
+                _lorebookData  = structuredClone(headNodeFile.state.lorebook);
+                _draftLorebook = structuredClone(headNodeFile.state.lorebook);
+                _lorebookName  = headNodeFile.state.lorebook.name || _lorebookName;
             }
         } catch (err) {
-            console.warn('[CNZ] openReviewModal: could not fetch parent node for _beforeSituation:', err);
+            console.warn('[CNZ] openReviewModal: could not fetch ledger nodes:', err);
         }
     }
+
+    // Derive _lorebookSuggestions from the node diff — no ephemeral sync-cycle data needed.
+    // This is stable: head lorebook vs parent lorebook, derived fresh on every modal open.
+    _lorebookSuggestions = deriveSuggestionsFromLedgerDiff(
+        preSyncLorebookForDiff,
+        _draftLorebook,
+    );
+    _lorebookRawText = '';   // raw AI text not available from ledger — ingester is the UI
 
     initWizardSession(true);
 
@@ -3370,12 +3480,26 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
             );
         }
 
-        // ── 2. Ensure lorebook is loaded ──────────────────────────────────────
+        // ── 2. Load (or create) lorebook — always fetch fresh to capture manual edits ──
         const lbName = settings.lorebookName || char.name;
-        if (_lorebookName !== lbName || !_lorebookData) {
-            _lorebookName  = lbName;
-            _lorebookData  = await lbEnsureLorebook(_lorebookName);
-            _draftLorebook = structuredClone(_lorebookData);
+        _lorebookName  = lbName;
+        _lorebookData  = await lbEnsureLorebook(_lorebookName);
+        _draftLorebook = structuredClone(_lorebookData);
+
+        // Auto-attach lorebook to character card if not already linked
+        try {
+            const freshCtxForLb = SillyTavern.getContext();
+            const charForLb     = freshCtxForLb.characters.find(c => c.avatar === char.avatar);
+            if (charForLb && charForLb.data?.extensions?.world !== _lorebookName) {
+                if (!charForLb.data)            charForLb.data            = {};
+                if (!charForLb.data.extensions) charForLb.data.extensions = {};
+                charForLb.data.extensions.world = _lorebookName;
+                await patchCharacterScenario(charForLb, charForLb.scenario ?? '');
+                await SillyTavern.getContext().getOneCharacter(charForLb.avatar);
+                console.log(`[CNZ] Lorebook "${_lorebookName}" auto-attached to character "${charForLb.name}".`);
+            }
+        } catch (err) {
+            console.warn('[CNZ] Could not auto-attach lorebook to character card:', err);
         }
 
         // ── 3. Bootstrap ledger if needed ─────────────────────────────────────
@@ -3518,6 +3642,7 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
             if (!freshChar) throw new Error('Character not found in context after AI calls.');
             const newScenario = writeHookseekerBlock(freshChar.scenario ?? '', hookseekerText.trim());
             await patchCharacterScenario(freshChar, newScenario);
+            await SillyTavern.getContext().getOneCharacter(freshChar.avatar);
             hooksOk = true;
             console.log('[CNZ] Scenario hooks block updated.');
         } catch (err) {
@@ -4308,8 +4433,13 @@ function checkOrphans() {
     const expectedPaths = new Set(Object.values(ledgerPaths));
 
     // Add node file paths derivable from the currently-loaded manifest
-    if (_ledgerManifest?.nodes && _ledgerManifest.avatarKey) {
-        const manifestPath = ledgerPaths[_ledgerManifest.avatarKey];
+    if (_ledgerManifest?.nodes) {
+        const manifestPath = ledgerPaths[_ledgerManifest.avatarKey]
+            ?? Object.entries(ledgerPaths).find(
+                   ([k]) => cnzAvatarKey(k) === _ledgerManifest.avatarKey
+               )?.[1]
+            ?? null;
+
         if (manifestPath) {
             const lastSlash = manifestPath.lastIndexOf('/');
             const baseDir   = lastSlash >= 0 ? manifestPath.slice(0, lastSlash + 1) : '';
