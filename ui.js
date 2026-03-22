@@ -162,6 +162,8 @@ export function buildModalHTML() {
           <div class="cnz-btn-group">
             <button id="cnz-lb-reject-one" class="cnz-btn cnz-btn-danger"
                     title="Load pre-sync content and mark resolved">Reject</button>
+            <button id="cnz-lb-delete-one" class="cnz-btn cnz-btn-danger cnz-btn-sm"
+                    title="Remove this entry from the lorebook entirely">Delete</button>
             <button id="cnz-lb-apply-one"  class="cnz-btn cnz-btn-success"
                     title="Mark as resolved (editor content unchanged)">Apply</button>
           </div>

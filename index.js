@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
- * @version 0.9.44
+ * @version 0.9.45
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -28,6 +28,10 @@
  *    re-commit the sync.
  * 2. MODAL STAGES ONLY: All edits in the modal mutate _draftLorebook in memory.
  *    Nothing writes to disk until the user clicks Finalize.
+ *    Suggestion objects carry three mutually exclusive verdict flags (_applied,
+ *    _rejected, _deleted); all three start false so every suggestion opens
+ *    unresolved for user review. Deleted entries are absent from
+ *    _draftLorebook.entries and are therefore not written by Finalize.
  * 3. LEDGER IS SOURCE OF TRUTH: Before-states for all modal diffs come from
  *    ledger node files, never from ephemeral sync-cycle variables.
  * 4. HEAD NODE UPDATED IN PLACE: Finalize patches the existing head node file.
@@ -38,7 +42,7 @@
  * 6. CONTEXT MASK: The main AI prompt sees only turns above the ledger head.
  *    Older turns are replaced by the hookseeker summary and RAG chunks.
  * 
- * * @docs
+ * @docs
  *   Architecture overview:  docs/cnz_overview.md
  *   Context window spec:    docs/cnz_window_spec.md
  *   Modal spec:             docs/cnz_modal_spec.md
@@ -52,7 +56,8 @@
  * Ledger: fetchOrBootstrapLedger(), commitLedgerManifest(), fetchLedgerNodeFile().
  * AI calls: runLorebookSyncCall(), runHookseekerCall(), runRagClassifierCall().
  * RAG: buildRagChunks(), buildRagDocument(), ragFireChunk(), ragDrainQueue().
- * Lorebook: parseLbSuggestions(), serialiseSuggestionsToFreeform(), enrichLbSuggestions(), updateLbDiff().
+ * Lorebook: parseLbSuggestions(), serialiseSuggestionsToFreeform(), enrichLbSuggestions(), updateLbDiff(),
+ *           deleteLbEntry(), revertLbSuggestion().
  *
  * @contract
  *   assertions:
@@ -1309,19 +1314,22 @@ function parseLbSuggestions(rawText) {
 /**
  * Inverse of parseLbSuggestions. Serialises the suggestion list into the
  * standard **UPDATE:** / **NEW:** block format used by the Freeform overview.
- * Rejected suggestions are excluded.
+ * Deleted entries emit a single `**DELETE: name**` tombstone line.
+ * Rejected suggestions are excluded entirely.
  * @param {object[]} suggestions
  * @returns {string}
  */
 function serialiseSuggestionsToFreeform(suggestions) {
     return suggestions
-        .filter(s => !s._rejected)
         .map(s => {
+            if (s._deleted)  return `**DELETE: ${s.name}**`;
+            if (s._rejected) return null;
             const lines = [`**${s.type}: ${s.name}**`];
             if (s.keys?.length) lines.push(`Keys: ${s.keys.join(', ')}`);
             lines.push(s.content ?? '');
             return lines.join('\n');
         })
+        .filter(Boolean)
         .join('\n\n');
 }
 
@@ -1414,7 +1422,9 @@ function toVirtualDoc(name, keys, content) {
 
 /**
  * Reconciles a freshly-parsed suggestion list against the existing
- * _lorebookSuggestions array, preserving UID anchors and applied/rejected flags.
+ * _lorebookSuggestions array, preserving UID anchors and verdict flags.
+ * All returned objects initialise _applied, _rejected, and _deleted to false
+ * except when carrying forward a previously applied state from an existing entry.
  */
 function enrichLbSuggestions(freshParsed) {
     const enriched = freshParsed.map(fresh => {
@@ -1432,6 +1442,7 @@ function enrichLbSuggestions(freshParsed) {
                     linkedUid:   existing.linkedUid,
                     _applied:    true,
                     _rejected:   false,
+                    _deleted:    false,
                     _aiSnapshot: {
                         name:    existing._aiSnapshot.name,
                         keys:    [...existing._aiSnapshot.keys],
@@ -1447,6 +1458,7 @@ function enrichLbSuggestions(freshParsed) {
                     linkedUid:   existing.linkedUid,
                     _applied:    false,
                     _rejected:   existing._rejected,
+                    _deleted:    false,
                     _aiSnapshot: {
                         name:    fresh.name,
                         keys:    [...fresh.keys],
@@ -1465,6 +1477,7 @@ function enrichLbSuggestions(freshParsed) {
                 linkedUid,
                 _applied:    false,
                 _rejected:   false,
+                _deleted:    false,
                 _aiSnapshot: {
                     name:    fresh.name,
                     keys:    [...fresh.keys],
@@ -1497,8 +1510,9 @@ function enrichLbSuggestions(freshParsed) {
  * Entries present in both but with changed content/keys → type UPDATE, _applied true.
  * Entries present in `before` but removed from `after` → skipped (deletions not surfaced).
  *
- * All returned suggestions are marked _applied = true (already committed to disk).
- * The user can revert individual entries via the ingester's Revert Draft button.
+ * All returned suggestions are marked _applied = true and _deleted = false
+ * (they represent state already committed to disk). The user can revert
+ * individual entries via the Reject button or remove them via Delete.
  *
  * @param {object|null} before  Pre-sync lorebook (parent node state.lorebook), or null.
  * @param {object|null} after   Post-sync lorebook (head node state.lorebook).
@@ -1525,6 +1539,7 @@ function deriveSuggestionsFromLedgerDiff(before, after) {
                 linkedUid:   parseInt(uid, 10),
                 _applied:    true,
                 _rejected:   false,
+                _deleted:    false,
                 _aiSnapshot: { name, keys: [...keys], content },
             });
         } else {
@@ -1541,6 +1556,7 @@ function deriveSuggestionsFromLedgerDiff(before, after) {
                     linkedUid:   parseInt(uid, 10),
                     _applied:    true,
                     _rejected:   false,
+                    _deleted:    false,
                     _aiSnapshot: { name, keys: [...keys], content },
                 });
             }
@@ -2497,7 +2513,7 @@ async function onLbRegenClick() {
                     _draftLorebook.entries[String(uid)] = makeLbDraftEntry(uid, s.name, s.keys, s.content);
                     s.linkedUid = uid;
                 }
-                s._applied = true;
+                s._applied = false;
             }
 
             setLbLoading(false);
@@ -2556,19 +2572,31 @@ function populateLbIngesterDropdown() {
     const $sel = $('#cnz-lb-suggestion-select').empty();
     if (!_lorebookSuggestions.length) {
         $sel.append('<option disabled selected>(no sync changes — use Lane 2 or 3 to add entries)</option>');
-        $('#cnz-lb-apply-one, #cnz-lb-apply-all-unresolved').prop('disabled', true);
+        $('#cnz-lb-apply-one, #cnz-lb-reject-one, #cnz-lb-delete-one, #cnz-lb-apply-all-unresolved').prop('disabled', true);
         $('#cnz-lb-editor-name, #cnz-lb-editor-keys, #cnz-lb-editor-content').val('');
         $('#cnz-lb-ingester-diff').empty();
         return;
     }
     _lorebookSuggestions.forEach((s, i) => {
-        const prefix = s._applied ? '\u2713 ' : (s._rejected ? '\u2717 ' : '');
-        $sel.append(`<option value="${i}">${escapeHtml(`${prefix}${s.type}: ${s.name}`)}</option>`);
+        const prefix = s._deleted  ? '\u2716 '
+                     : s._applied  ? '\u2713 '
+                     : s._rejected ? '\u2717 '
+                     : '';
+        const label  = s._deleted
+            ? `${prefix}DELETE: ${s.name}`
+            : `${prefix}${s.type}: ${s.name}`;
+        $sel.append(`<option value="${i}">${escapeHtml(label)}</option>`);
     });
     $sel.val(_lbActiveIngesterIndex);
     $('#cnz-lb-apply-one, #cnz-lb-apply-all-unresolved').prop('disabled', false);
 }
 
+/**
+ * Populates the shared editor fields and manages all ingester button states for
+ * the given suggestion. This is the single authoritative place for verdict button
+ * enable/disable logic — do not add button state changes elsewhere.
+ * @param {object} suggestion  A _lorebookSuggestions entry.
+ */
 function renderLbIngesterDetail(suggestion) {
     if (!suggestion) return;
     $('#cnz-lb-editor-name').val(suggestion.name);
@@ -2578,10 +2606,17 @@ function renderLbIngesterDetail(suggestion) {
     // ← Latest: disabled if the AI never generated anything for this entry
     const hasAiSnapshot = !!(suggestion._aiSnapshot?.content);
     $('#cnz-lb-btn-latest').prop('disabled', !hasAiSnapshot);
-    // ← Prev: disabled for brand-new entries that have no parent-node baseline
+    // ← Prev: disabled for brand-new entries; enabled on deleted entries with a prior version
     const hasPrev = suggestion.linkedUid !== null &&
         !!(_parentNodeLorebook?.entries?.[String(suggestion.linkedUid)]);
     $('#cnz-lb-btn-prev').prop('disabled', !hasPrev);
+    // Verdict buttons: whichever verdict is active is disabled; the others are enabled
+    const isDeleted  = !!suggestion._deleted;
+    const isApplied  = !!suggestion._applied  && !isDeleted;
+    const isRejected = !!suggestion._rejected && !isDeleted;
+    $('#cnz-lb-apply-one').prop('disabled',  isApplied);
+    $('#cnz-lb-reject-one').prop('disabled', isRejected);
+    $('#cnz-lb-delete-one').prop('disabled', isDeleted);
     updateLbDiff();
 }
 
@@ -2696,17 +2731,33 @@ function onLbIngesterLoadPrev() {
     const parentEntry = _parentNodeLorebook?.entries?.[uidStr];
     if (!parentEntry) return;  // new entry — no parent-node baseline
 
-    const entry = _draftLorebook?.entries?.[uidStr];
-    if (!entry) return;
+    let entry = _draftLorebook?.entries?.[uidStr];
+    if (!entry) {
+        // Entry was deleted — re-add from parent state before restoring
+        if (!_draftLorebook?.entries) return;
+        _draftLorebook.entries[uidStr] = makeLbDraftEntry(
+            parseInt(uidStr, 10),
+            parentEntry.comment || '',
+            Array.isArray(parentEntry.key) ? [...parentEntry.key] : [],
+            parentEntry.content || '',
+        );
+        entry = _draftLorebook.entries[uidStr];
+    }
     entry.comment = parentEntry.comment || '';
     entry.key     = Array.isArray(parentEntry.key) ? [...parentEntry.key] : [];
     entry.content = parentEntry.content || '';
     s.name    = entry.comment;
     s.keys    = [...entry.key];
     s.content = entry.content;
+    s._deleted  = false;
+    s._applied  = false;
+    s._rejected = false;
 
     renderLbIngesterDetail(s);
-    const prefix = s._applied ? '\u2713 ' : (s._rejected ? '\u2717 ' : '');
+    const prefix = s._deleted  ? '\u2716 '
+                 : s._applied  ? '\u2713 '
+                 : s._rejected ? '\u2717 '
+                 : '';
     $('#cnz-lb-suggestion-select option').eq(_lbActiveIngesterIndex)
         .text(escapeHtml(`${prefix}${s.type}: ${s.name}`));
     updateLbDiff();
@@ -2812,8 +2863,10 @@ function onLbIngesterApply() {
 
 /**
  * Reverts the suggestion at `idx` to its parent-node state in _draftLorebook.
- * Restores entry content/keys if it existed before the sync; deletes it if it didn't.
- * Memory-only — no disk write.
+ * Restores entry content/keys in the draft if the entry existed before the sync;
+ * removes it from the draft if it didn't. Also syncs s.name/s.keys/s.content on
+ * the suggestion object so the editor and freeform reflect the reverted state
+ * before rendering. Memory-only — no disk write.
  * @param {number} idx  Index into _lorebookSuggestions.
  */
 function revertLbSuggestion(idx) {
@@ -2838,6 +2891,19 @@ function revertLbSuggestion(idx) {
         }
     }
 
+    if (uidStr !== null) {
+        const parentEntry = _parentNodeLorebook?.entries?.[uidStr];
+        if (parentEntry) {
+            s.name    = parentEntry.comment || '';
+            s.keys    = Array.isArray(parentEntry.key) ? [...parentEntry.key] : [];
+            s.content = parentEntry.content || '';
+        } else {
+            // New entry — no prior version, clear content
+            s.keys    = [];
+            s.content = '';
+        }
+    }
+
     s._rejected = true;
     s._applied  = false;
 
@@ -2855,6 +2921,45 @@ function revertLbSuggestion(idx) {
 
 function onLbIngesterReject() {
     revertLbSuggestion(_lbActiveIngesterIndex);
+    syncFreeformFromSuggestions();
+}
+
+/**
+ * Marks the suggestion at `idx` as deleted: removes the entry from
+ * _draftLorebook.entries so Finalize will not write it, clears keys and content
+ * on the suggestion object, and sets _deleted = true. s.name is preserved as a
+ * display label. Memory-only — no disk write.
+ * @param {number} idx  Index into _lorebookSuggestions.
+ */
+function deleteLbEntry(idx) {
+    const s = _lorebookSuggestions[idx];
+    if (!s) return;
+
+    // Remove from draft lorebook
+    if (s.linkedUid !== null) {
+        if (_draftLorebook?.entries) {
+            delete _draftLorebook.entries[String(s.linkedUid)];
+        }
+    }
+
+    // Update suggestion state
+    s._deleted  = true;
+    s._applied  = false;
+    s._rejected = false;
+    s.keys      = [];
+    s.content   = '';
+    // s.name preserved as label
+
+    // Update dropdown
+    $('#cnz-lb-suggestion-select option')
+        .eq(idx)
+        .text(escapeHtml(`\u2716 DELETE: ${s.name}`));
+
+    if (_lbActiveIngesterIndex === idx) {
+        renderLbIngesterDetail(s);
+        updateLbDiff();
+    }
+
     syncFreeformFromSuggestions();
 }
 
@@ -3171,6 +3276,7 @@ function injectModal() {
     $('#cnz-lb-btn-regen').on('click',            onLbIngesterRegenerate);
     $('#cnz-lb-reject-one').on('click',           onLbIngesterReject);
     $('#cnz-lb-apply-one').on('click',            onLbIngesterApply);
+    $('#cnz-lb-delete-one').on('click',           () => deleteLbEntry(_lbActiveIngesterIndex));
     $('#cnz-lb-apply-all-unresolved').on('click', onLbApplyAllUnresolved);
     $('#cnz-modal').on('click', '#cnz-lb-tab-bar .cnz-tab-btn', function () {
         onLbTabSwitch($(this).data('tab'));
@@ -3205,6 +3311,7 @@ function injectModal() {
                 linkedUid:   uidNum,
                 _applied:    true,
                 _rejected:   false,
+                _deleted:    false,
                 _aiSnapshot: { name, keys: [...keys], content },
             };
             _lorebookSuggestions.push(newSuggestion);
@@ -3298,6 +3405,7 @@ function onTargetedGenerateClick() {
                 linkedUid:   null,
                 _applied:    false,
                 _rejected:   false,
+                _deleted:    false,
                 _aiSnapshot: { name: fresh.name || keyword, keys: [...fresh.keys], content: fresh.content },
             };
 
@@ -4017,7 +4125,7 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
                     _draftLorebook.entries[String(uid)] = makeLbDraftEntry(uid, s.name, s.keys, s.content);
                     s.linkedUid = uid;
                 }
-                s._applied = true;
+                s._applied = false;
             }
 
             await lbSaveLorebook(_lorebookName, _draftLorebook);
