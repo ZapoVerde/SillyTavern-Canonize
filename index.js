@@ -1,24 +1,80 @@
 /**
- * @file data/default-user/extensions/cnz/index.js
- * @stamp {"utc":"2026-03-19T00:00:00.000Z"}
+ * @file data/default-user/extensions/canonize/index.js
+ * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
- * silently fires AI calls every N turns to update the narrative lorebook and
- * build RAG chunks, then commits results without user intervention.
- * A lightweight review modal is optional (Phase 3). The Ledger engine tracks
- * narrative milestones via hash chaining and enables the Healer, which detects
- * chat branches and restores the correct lorebook/vector state for the active
- * timeline (Phase 4). 
- * 
- * V 0.9.35
+ * silently canonizes roleplay turns every N turns into three persistent
+ * stores: a lorebook (structured world facts), a scenario anchor block
+ * (hookseeker prose summary of active threads), and a RAG document
+ * (searchable narrative memory archive uploaded as a character attachment).
  *
- * Phase 1: Skeleton & Ledger Foundation
- * Phase 2: Fact-Finder (background sync) — runCnzSync fully implemented
- *   - Fact-Finder: lorebook updates from last N turns
- *   - Hookseeker: narrative thread summary written to scenario anchor block
- *   - RAG chunks built, classified, uploaded as chat attachment
- *   - Ledger node committed after each successful sync
+ * A four-step review modal lets the user inspect and correct each sync
+ * cycle's output before finalizing corrections to disk. The Ledger engine
+ * tracks narrative milestones via hash-chained node files, enabling the
+ * Healer to detect chat branches and restore the correct world state for
+ * the active timeline.
+ *
+ * Modal steps:
+ * (1) Hooks Workshop — edit/regen the hookseeker summary, diff vs previous sync
+ * (2) Lorebook Workshop — review AI suggestions, targeted generate, stage corrections
+ * (3) RAG Workshop — review chunk cards, edit headers, regen individual chunks
+ * (4) Finalize — confirm corrections, write only what changed, update head node
+ *
+ * @core-principles
+ * 1. SYNC OWNS ITS COMMIT: runCnzSync writes lorebook, hooks, RAG, and ledger
+ *    node to disk as its own atomic operation. The modal corrects, it does not
+ *    re-commit the sync.
+ * 2. MODAL STAGES ONLY: All edits in the modal mutate _draftLorebook in memory.
+ *    Nothing writes to disk until the user clicks Finalize.
+ * 3. LEDGER IS SOURCE OF TRUTH: Before-states for all modal diffs come from
+ *    ledger node files, never from ephemeral sync-cycle variables.
+ * 4. HEAD NODE UPDATED IN PLACE: Finalize patches the existing head node file.
+ *    No new ledger node is created for modal corrections.
+ * 5. ENGINE STATE SURVIVES MODAL: closeModal resets UI state only. All engine
+ *    state (_ragChunks, _draftLorebook, _lorebookSuggestions, etc.) persists
+ *    until character switch.
+ * 6. CONTEXT MASK: The main AI prompt sees only turns above the ledger head.
+ *    Older turns are replaced by the hookseeker summary and RAG chunks.
+ * 
+ * * @docs
+ *   Architecture overview:  docs/cnz_overview.md
+ *   Context window spec:    docs/cnz_window_spec.md
+ *   Modal spec:             docs/cnz_modal_spec.md
+ *   Lorebook workshop spec: docs/cnz_lorebook_spec.md
+ *   System spec:            docs/cnz_system_spec.md
+ *
+ * @api-declaration
+ * Entry points: onWandButtonClick() (manual), onMessageReceived() (auto-sync).
+ * Sync pipeline: runCnzSync(), runHealer().
+ * Modal: openReviewModal(), onConfirmClick(), closeModal().
+ * Ledger: fetchOrBootstrapLedger(), commitLedgerManifest(), fetchLedgerNodeFile().
+ * AI calls: runLorebookSyncCall(), runHookseekerCall(), runRagClassifierCall().
+ * RAG: buildRagChunks(), buildRagDocument(), ragFireChunk(), ragDrainQueue().
+ * Lorebook: parseLbSuggestions(), enrichLbSuggestions(), updateLbDiff().
+ *
+ * @contract
+ *   assertions:
+ *     purity: mutates
+ *     state_ownership: [
+ *       _lorebookData, _draftLorebook, _parentNodeLorebook,
+ *       _ledgerManifest, _sessionStartId,
+ *       _priorSituation, _beforeSituation,
+ *       _lorebookName, _lorebookSuggestions, _lorebookRawText, _lorebookDelta,
+ *       _stagedProsePairs, _stagedPairOffset, _splitPairIdx,
+ *       _ragChunks, _splitIndexWhenRagBuilt, _lastSummaryUsedForRag,
+ *       _lastRagUrl, _ragGlobalGenId, _ragInFlightCount, _ragCallQueue,
+ *       _syncInProgress, _cnzGenerating, _snoozeUntilCount, _lastKnownAvatar,
+ *       _currentStep, _hooksGenId, _lorebookGenId, _targetedGenId,
+ *       _hooksLoading, _lorebookLoading, _lbActiveIngesterIndex,
+ *       _lbDebounceTimer, _lorebookFreeformLastParsed,
+ *       _ragRawDetached, _pendingOrphans,
+ *       extension_settings.cnz]
+ *     external_io: [
+ *       generateRaw, ConnectionManagerRequestService,
+ *       /api/worldinfo/*, /api/characters/edit,
+ *       /api/files/upload, /api/files/delete,
+ *       /api/chats/saveChat] 
  */
 
 import { generateRaw, saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup, chat_metadata } from '../../../../script.js';
@@ -253,6 +309,8 @@ let _priorSituation  = '';
 let _beforeSituation = '';  // hooks text from before the last sync
                              // read from parent node's state.hooks in openReviewModal
                              // never set by runCnzSync
+let _parentNodeLorebook = null;  // lorebook snapshot from parent node — diff baseline
+                                  // set in runCnzSync and openReviewModal, read by updateLbDiff
 
 // Orphan check state — set by checkOrphans(), read by openOrphanModal()
 let _pendingOrphans = [];
@@ -470,6 +528,27 @@ function buildProsePairs(messages) {
     return pairs;
 }
 
+/**
+ * @section RAG Engine
+ * @architectural-role Chunk Lifecycle Manager
+ * @description
+ * Owns chunk building, AI classification, queue management, and document
+ * assembly. `buildRagChunks` is a pure function that partitions the prose
+ * pair list into fixed-size windows. The queue/drain/fire machinery manages
+ * concurrency and staleness so that in-flight classifier calls for superseded
+ * chunks are discarded. The document builder assembles the final upload from
+ * settled chunk state and hands it to the persistence layer.
+ * @core-principles
+ *   1. buildRagChunks is pure — no state mutation, no IO.
+ *   2. Generation IDs gate every async callback; stale results are silently dropped.
+ * @api-declaration
+ *   buildRagChunks, buildRagDocument, ragFireChunk, ragDrainQueue,
+ *   waitForRagChunks, renderChunkChatLabel, renderAllChunkChatLabels,
+ *   hydrateChunkHeadersFromChat, writeChunkHeaderToChat
+ * @contract
+ *   assertions:
+ *     external_io: [generateRaw, /api/chats/saveChat]
+ */
 // ─── Narrative Memory (RAG) ───────────────────────────────────────────────────
 
 /**
@@ -900,6 +979,24 @@ async function runRagClassifierCall(summaryText, targetPairs) {
     return ragResponse;
 }
 
+/**
+ * @section AI Call Layer
+ * @architectural-role Prompt Assembly and Generation
+ * @description
+ * Owns the three sync AI calls and the profile routing that backs them.
+ * No parsing, no state mutation — just prompt assembly and raw text
+ * generation. Each call receives pre-assembled context from the engine
+ * layer and returns raw model output to the caller for downstream parsing.
+ * @core-principles
+ *   1. No state mutation inside this section — callers own all state.
+ *   2. Profile routing is the only branching logic; prompt templates come from settings.
+ * @api-declaration
+ *   generateWithProfile, generateWithRagProfile, runLorebookSyncCall,
+ *   runHookseekerCall, runRagClassifierCall, runTargetedLbCall
+ * @contract
+ *   assertions:
+ *     external_io: [generateRaw, ConnectionManagerRequestService]
+ */
 // ─── Lorebook Sync Call ────────────────────────────────────────────────────────
 
 /**
@@ -1043,6 +1140,25 @@ async function runTargetedLbCall(mode, entryName, entryKeys, entryContent, trans
     return generateWithProfile(prompt);
 }
 
+/**
+ * @section Persistence Layer
+ * @architectural-role IO Executor
+ * @description
+ * Owns all direct fetch calls to ST server endpoints. Covers lorebook CRUD,
+ * character scenario patch, and file upload and delete. Nothing in this
+ * section makes decisions — it executes what the engine layer tells it to,
+ * returning raw server responses or throwing on failure.
+ * @core-principles
+ *   1. No business logic — this section is a thin HTTP wrapper only.
+ *   2. Each function corresponds to exactly one server endpoint or operation.
+ * @api-declaration
+ *   lbListLorebooks, lbGetLorebook, lbSaveLorebook, lbEnsureLorebook,
+ *   patchCharacterScenario, uploadRagFile, registerCharacterAttachment,
+ *   cnzUploadFile, cnzDeleteFile
+ * @contract
+ *   assertions:
+ *     external_io: [/api/worldinfo/*, /api/characters/edit, /api/files/upload, /api/files/delete]
+ */
 // ─── Lorebook API ─────────────────────────────────────────────────────────────
 
 async function lbListLorebooks() {
@@ -1093,6 +1209,25 @@ async function lbEnsureLorebook(name) {
     return lbGetLorebook(name);
 }
 
+/**
+ * @section Lorebook Utilities
+ * @architectural-role Pure Data Manipulation
+ * @description
+ * Pure functions for lorebook data manipulation. No IO, no state mutation
+ * beyond the draft. Covers parsing AI suggestion text into structured objects,
+ * enriching suggestions with ledger-diff context, diffing entry content,
+ * and constructing new draft entries from canonical defaults.
+ * @core-principles
+ *   1. All functions here are pure or operate only on the passed-in draft object.
+ *   2. No fetch calls, no engine state reads — callers supply all inputs.
+ * @api-declaration
+ *   parseLbSuggestions, enrichLbSuggestions, deriveSuggestionsFromLedgerDiff,
+ *   formatLorebookEntries, matchEntryByComment, nextLorebookUid,
+ *   makeLbDraftEntry, toVirtualDoc, updateLbDiff, isDraftDirty
+ * @contract
+ *   assertions:
+ *     external_io: [none]
+ */
 // ─── Lorebook Utilities ───────────────────────────────────────────────────────
 
 function formatLorebookEntries(data) {
@@ -1496,6 +1631,25 @@ function cnzNodeFilePath(manifestPath, avatarKey, nodeId) {
     return baseDir + cnzFileName(cnzAvatarKey(avatarKey), 'node', nodeId);
 }
 
+/**
+ * @section Narrative Ledger Engine
+ * @architectural-role Manifest and Node Lifecycle
+ * @description
+ * Owns the manifest and node file lifecycle. Fetches and bootstraps the
+ * chain index on first use, commits updated manifests after each sync,
+ * and fetches individual node files by hash for modal diff and Healer
+ * restoration. The manifest is a small chain index with no state data;
+ * node files are full world-state snapshots written once per sync.
+ * @core-principles
+ *   1. Node files are write-once — never mutated after the sync that created them.
+ *   2. The manifest is the only mutable ledger artifact; it is patched in place by Finalize.
+ * @api-declaration
+ *   fetchOrBootstrapLedger, verifyFreshnessLock, buildLedgerNode,
+ *   commitLedgerManifest, fetchLedgerNodeFile
+ * @contract
+ *   assertions:
+ *     external_io: [/api/files/upload, /api/files/delete]
+ */
 // ─── Narrative Ledger Engine ──────────────────────────────────────────────────
 
 /**
@@ -1674,6 +1828,24 @@ async function fetchLedgerNodeFile(avatarKey, nodeId) {
     }
 }
 
+/**
+ * @section Healer
+ * @architectural-role Branch Detection and State Restoration
+ * @description
+ * Owns branch detection and state restoration. Walks the ledger hash chain
+ * against the current chat to find the divergence point, then restores
+ * lorebook and hooks from the last valid node and rolls the ledger head
+ * back to that node. Runs automatically during onChatChanged when a
+ * mismatch is detected.
+ * @core-principles
+ *   1. Healer never writes a new ledger node — it only rolls the head back.
+ *   2. Restoration targets are always fetched from ledger node files, never from memory.
+ * @api-declaration
+ *   runHealer, buildNodeChain, restoreLorebookToNode, restoreHooksToNode
+ * @contract
+ *   assertions:
+ *     external_io: [/api/worldinfo/*, /api/characters/edit, /api/files/upload, /api/files/delete]
+ */
 // ─── Healer Utilities ─────────────────────────────────────────────────────────
 
 /**
@@ -1730,6 +1902,24 @@ async function restoreHooksToNode(char, node) {
     await SillyTavern.getContext().getOneCharacter(freshChar.avatar);
 }
 
+/**
+ * @section RAG Workshop
+ * @architectural-role Modal Step 3 — Chunk Review UI
+ * @description
+ * Owns Step 3 of the review modal. Handles chunk card rendering, tab
+ * switching, raw mode toggling, and the workshop entry/exit lifecycle.
+ * Reuses the RAG Engine for individual chunk reclassification. Card state
+ * is written back to _ragChunks so Finalize can detect what changed.
+ * @core-principles
+ *   1. Card edits mutate _ragChunks in memory only — no disk writes until Finalize.
+ *   2. onEnterRagWorkshop and onLeaveRagWorkshop bracket the step lifecycle cleanly.
+ * @api-declaration
+ *   onEnterRagWorkshop, onLeaveRagWorkshop, renderRagWorkshop, renderRagCard,
+ *   onRagTabSwitch, onRagRawInput, onRagRevertRaw, ragRegenCard
+ * @contract
+ *   assertions:
+ *     external_io: [generateRaw]
+ */
 // ─── Modal: RAG Workshop Helpers ──────────────────────────────────────────────
 
 /** Returns the compiled RAG document from current _ragChunks state. */
@@ -1990,6 +2180,24 @@ function onLeaveRagWorkshop() {
     _ragCallQueue = [];
 }
 
+/**
+ * @section Hooks Workshop
+ * @architectural-role Modal Step 1 — Hookseeker Review UI
+ * @description
+ * Owns Step 1 of the review modal. Builds the sync-window transcript for
+ * display, drives hookseeker regen, manages tab switching between the
+ * generated summary and the diff view, and renders the word-level diff
+ * against the previous sync's hookseeker output.
+ * @core-principles
+ *   1. Regen updates _priorSituation and _beforeSituation in memory; disk write deferred to Finalize.
+ *   2. Diff is always computed against the ledger node's before-state, never against a local variable.
+ * @api-declaration
+ *   buildSyncWindowTranscript, buildModalTranscript, onRegenHooksClick,
+ *   onHooksTabSwitch, updateHooksDiff, setHooksLoading
+ * @contract
+ *   assertions:
+ *     external_io: [generateRaw]
+ */
 // ─── Modal: Hooks Workshop ────────────────────────────────────────────────────
 
 function setHooksLoading(isLoading) {
@@ -2086,6 +2294,28 @@ function onRegenHooksClick() {
         });
 }
 
+/**
+ * @section Lorebook Workshop
+ * @architectural-role Modal Step 2 — Suggestion Review UI
+ * @description
+ * Owns Step 2 of the review modal. Manages the suggestion ingester UI,
+ * targeted generate, and draft staging. All entry edits go to _draftLorebook
+ * only — no disk writes until Finalize. The ingester cycles through AI
+ * suggestions and lets the user apply, reject, or revert each one individually,
+ * with freeform editing available at any point.
+ * @core-principles
+ *   1. All mutations go to _draftLorebook — the ingester never touches _lorebookData directly.
+ *   2. initWizardSession resets UI state only; _draftLorebook and _lorebookSuggestions persist.
+ * @api-declaration
+ *   onLbRegenClick, onLbTabSwitch, populateLbIngesterDropdown,
+ *   populateTargetedEntrySelect, renderLbIngesterDetail,
+ *   onLbSuggestionSelectChange, onLbIngesterEditorInput, onLbIngesterApply,
+ *   onLbIngesterReject, onLbIngesterRevertAi, onLbIngesterRevertDraft,
+ *   revertLbSuggestion, onLbApplyAllUnresolved, onTargetedGenerateClick
+ * @contract
+ *   assertions:
+ *     external_io: [generateRaw]
+ */
 // ─── Modal: Lorebook Workshop ─────────────────────────────────────────────────
 
 function setLbLoading(isLoading) {
@@ -2116,8 +2346,8 @@ function showLbError(message) {
 }
 
 /**
- * Re-fires the lorebook sync AI call using the pre-sync lorebook (reconstructed
- * from `_lorebookDelta`). Updates `_lorebookRawText`, `_lorebookSuggestions`,
+ * Re-fires the lorebook sync AI call using the parent node lorebook as baseline.
+ * Updates `_lorebookRawText`, `_lorebookSuggestions`,
  * and refreshes the Workshop and Ingester tabs.
  */
 async function onLbRegenClick() {
@@ -2178,11 +2408,6 @@ async function onLbRegenClick() {
                 s._applied = true;
             }
 
-            // Save and update in-memory state (but NOT _lorebookDelta — baseline stays fixed)
-            lbSaveLorebook(_lorebookName, _draftLorebook)
-                .then(() => { _lorebookData = structuredClone(_draftLorebook); })
-                .catch(err => toastr.error(`CNZ: Lorebook save failed — ${err.message}`));
-
             setLbLoading(false);
             $('#cnz-lb-freeform').val(text);
             _lbActiveIngesterIndex = Math.max(0, Math.min(_lbActiveIngesterIndex, _lorebookSuggestions.length - 1));
@@ -2230,7 +2455,7 @@ function populateTargetedEntrySelect() {
     const prevVal = $sel.val();
     $sel.empty().append('<option value="">— New entry —</option>');
 
-    const entries = _lorebookData?.entries ?? {};
+    const entries = _draftLorebook?.entries ?? {};
     const sorted  = Object.values(entries)
         .sort((a, b) => (a.comment || '').localeCompare(b.comment || ''));
 
@@ -2303,30 +2528,29 @@ function wordDiff(base, proposed) {
 
 function updateLbDiff() {
     const s = _lorebookSuggestions[_lbActiveIngesterIndex];
-    if (!s) return;
+    const uid = s?.linkedUid != null
+        ? String(s.linkedUid)
+        : $('#cnz-targeted-entry-select').val() || null;
+    if (!uid && !s) return;
+
     const name    = $('#cnz-lb-editor-name').val();
     const keys    = $('#cnz-lb-editor-keys').val().split(',').map(k => k.trim()).filter(Boolean);
     const content = $('#cnz-lb-editor-content').val();
     const proposed = toVirtualDoc(name, keys, content);
-    let base = '';
-    if (s.linkedUid !== null) {
-        const uidStr   = String(s.linkedUid);
-        const isNew    = _lorebookDelta?.createdUids?.includes(uidStr);
-        const preDelta = _lorebookDelta?.modifiedEntries?.[uidStr];
 
-        if (isNew) {
-            base = ''; // created this sync — no prior state
-        } else if (preDelta) {
-            const preSyncEntry = _lorebookData?.entries?.[uidStr];
-            if (preSyncEntry) {
-                base = toVirtualDoc(preSyncEntry.comment || '', preDelta.key ?? [], preDelta.content ?? '');
-            }
-        } else {
-            // Entry was not touched this sync — current state is the baseline
-            const entry = _draftLorebook?.entries?.[uidStr];
-            if (entry) base = toVirtualDoc(entry.comment || '', Array.isArray(entry.key) ? entry.key : [], entry.content || '');
+    let base = '';
+    if (uid) {
+        const parentEntry = _parentNodeLorebook?.entries?.[uid];
+        if (parentEntry) {
+            base = toVirtualDoc(
+                parentEntry.comment || '',
+                Array.isArray(parentEntry.key) ? parentEntry.key : [],
+                parentEntry.content || '',
+            );
         }
+        // no parentEntry → entry is new this sync → base stays ''
     }
+
     $('#cnz-lb-ingester-diff').html(wordDiff(base, proposed));
 }
 
@@ -2365,39 +2589,18 @@ function onLbIngesterRevertDraft() {
     const s = _lorebookSuggestions[_lbActiveIngesterIndex];
     if (!s || s.linkedUid === null) return;
 
-    const uidStr = String(s.linkedUid);
-    const delta  = _lorebookDelta?.modifiedEntries?.[uidStr];
-    const isNew  = _lorebookDelta?.createdUids?.includes(uidStr);
+    const uidStr      = String(s.linkedUid);
+    const parentEntry = _parentNodeLorebook?.entries?.[uidStr];
+    if (!parentEntry) return;  // new entry — no parent-node baseline to revert to
 
-    if (isNew) {
-        // Entry was created this sync — revert means delete it from the lorebook
-        if (!_draftLorebook?.entries) return;
-        delete _draftLorebook.entries[uidStr];
-        lbSaveLorebook(_lorebookName, _draftLorebook)
-            .then(() => { _lorebookData = structuredClone(_draftLorebook); })
-            .catch(err => toastr.error(`CNZ: Revert failed — ${err.message}`));
-        s._applied  = false;
-        s._rejected = true;
-        renderLbIngesterDetail(s);
-        populateLbIngesterDropdown();
-        updateLbDiff();
-        return;
-    }
-
-    if (!delta) return; // entry unchanged this sync — nothing to revert
-
-    // Restore pre-sync content and keys
     const entry = _draftLorebook?.entries?.[uidStr];
     if (!entry) return;
-    entry.content = delta.content;
-    entry.key     = [...(delta.key ?? [])];
-    s.name    = entry.comment || s.name;
+    entry.comment = parentEntry.comment || '';
+    entry.key     = Array.isArray(parentEntry.key) ? [...parentEntry.key] : [];
+    entry.content = parentEntry.content || '';
+    s.name    = entry.comment;
     s.keys    = [...entry.key];
     s.content = entry.content;
-
-    lbSaveLorebook(_lorebookName, _draftLorebook)
-        .then(() => { _lorebookData = structuredClone(_draftLorebook); })
-        .catch(err => toastr.error(`CNZ: Revert failed — ${err.message}`));
 
     renderLbIngesterDetail(s);
     const prefix = s._applied ? '\u2713 ' : (s._rejected ? '\u2717 ' : '');
@@ -2440,18 +2643,14 @@ function onLbIngesterApply() {
     }
     s._applied = true; s._rejected = false;
 
-    // Save to disk immediately (commit-first: apply is also immediate)
-    lbSaveLorebook(_lorebookName, _draftLorebook)
-        .then(() => { _lorebookData = structuredClone(_draftLorebook); })
-        .catch(err => toastr.error(`CNZ: Apply save failed \u2014 ${err.message}`));
-
     $('#cnz-lb-suggestion-select option').eq(_lbActiveIngesterIndex).text(escapeHtml(`\u2713 ${s.type}: ${s.name}`));
     updateLbDiff();
 }
 
 /**
- * Reverts the suggestion at `idx` to its pre-sync state in _draftLorebook
- * and saves immediately. Updates suggestion flags and UI.
+ * Reverts the suggestion at `idx` to its parent-node state in _draftLorebook.
+ * Restores entry content/keys if it existed before the sync; deletes it if it didn't.
+ * Memory-only — no disk write.
  * @param {number} idx  Index into _lorebookSuggestions.
  */
 function revertLbSuggestion(idx) {
@@ -2461,25 +2660,19 @@ function revertLbSuggestion(idx) {
     const uidStr = s.linkedUid !== null ? String(s.linkedUid) : null;
 
     if (uidStr !== null) {
-        const isNew = _lorebookDelta?.createdUids?.includes(uidStr);
-        const delta = _lorebookDelta?.modifiedEntries?.[uidStr];
-
-        if (isNew) {
-            if (_draftLorebook?.entries) delete _draftLorebook.entries[uidStr];
-        } else if (delta) {
+        const parentEntry = _parentNodeLorebook?.entries?.[uidStr];
+        if (parentEntry) {
+            // Entry existed before this sync — restore to parent node state
             const entry = _draftLorebook?.entries?.[uidStr];
             if (entry) {
-                entry.content = delta.content;
-                entry.key     = [...(delta.key ?? [])];
+                entry.comment = parentEntry.comment || '';
+                entry.key     = Array.isArray(parentEntry.key) ? [...parentEntry.key] : [];
+                entry.content = parentEntry.content || '';
             }
+        } else {
+            // Entry did not exist before this sync — remove it
+            if (_draftLorebook?.entries) delete _draftLorebook.entries[uidStr];
         }
-
-        lbSaveLorebook(_lorebookName, _draftLorebook)
-            .then(() => {
-                _lorebookData = structuredClone(_draftLorebook);
-                toastr.success('CNZ: Entry reverted to pre-sync state.');
-            })
-            .catch(err => toastr.error(`CNZ: Revert save failed \u2014 ${err.message}`));
     }
 
     s._rejected = true;
@@ -2758,6 +2951,25 @@ async function onConfirmClick() {
     closeModal();
 }
 
+/**
+ * @section Modal Orchestration
+ * @architectural-role Four-Step Wizard Lifecycle
+ * @description
+ * Owns the four-step review wizard lifecycle. Manages step transitions,
+ * panel population, and the Finalize commit sequence that writes only what
+ * changed to disk and patches the head ledger node. Delegates all content
+ * rendering to the three workshop sections. The key invariant is that
+ * initWizardSession resets UI state only — engine state is never cleared here.
+ * @core-principles
+ *   1. initWizardSession resets UI only; engine state (_ragChunks, _draftLorebook, etc.) is preserved.
+ *   2. onConfirmClick is the sole disk-write path from the modal — all other steps are staging only.
+ * @api-declaration
+ *   openReviewModal, initWizardSession, updateWizard, onConfirmClick,
+ *   closeModal, injectModal
+ * @contract
+ *   assertions:
+ *     external_io: [/api/worldinfo/*, /api/characters/edit, /api/files/upload, /api/files/delete, /api/chats/saveChat]
+ */
 // ─── Modal: Orchestration ─────────────────────────────────────────────────────
 
 function injectModal() {
@@ -2798,13 +3010,22 @@ function injectModal() {
         onLbTabSwitch($(this).data('tab'));
     });
     $('#cnz-modal').on('change', '#cnz-targeted-entry-select', function () {
-        const uid   = $(this).val();
+        const uid = $(this).val();
         if (!uid) {
             $('#cnz-targeted-keyword').val('');
+            $('#cnz-lb-editor-name').val('');
+            $('#cnz-lb-editor-keys').val('');
+            $('#cnz-lb-editor-content').val('');
+            $('#cnz-lb-ingester-diff').empty();
             return;
         }
-        const entry = _lorebookData?.entries?.[uid];
-        if (entry) $('#cnz-targeted-keyword').val(entry.comment || '');
+        const entry = _draftLorebook?.entries?.[uid];
+        if (!entry) return;
+        $('#cnz-targeted-keyword').val(entry.comment || '');
+        $('#cnz-lb-editor-name').val(entry.comment || '');
+        $('#cnz-lb-editor-keys').val(Array.isArray(entry.key) ? entry.key.join(', ') : '');
+        $('#cnz-lb-editor-content').val(entry.content || '');
+        updateLbDiff();
     });
     $('#cnz-modal').on('click', '#cnz-targeted-generate', onTargetedGenerateClick);
 
@@ -2857,7 +3078,7 @@ function onTargetedGenerateClick() {
     $('#cnz-targeted-error').addClass('cnz-hidden').text('');
 
     const mode    = uid ? 'update' : 'new';
-    const entry   = uid ? (_lorebookData?.entries?.[uid] ?? null) : null;
+    const entry   = uid ? (_draftLorebook?.entries?.[uid] ?? null) : null;
     const keys    = entry ? (Array.isArray(entry.key) ? entry.key.join(', ') : '') : '';
     const content = entry?.content ?? '';
 
@@ -3289,6 +3510,7 @@ async function openReviewModal() {
                 const parentNodeFile   = await fetchLedgerNodeFile(char.avatar, parentId);
                 _beforeSituation       = parentNodeFile?.state?.hooks    ?? '';
                 preSyncLorebookForDiff = parentNodeFile?.state?.lorebook ?? null;
+                _parentNodeLorebook    = preSyncLorebookForDiff;
             }
 
             // head node lorebook = current committed state; use as _draftLorebook baseline
@@ -3549,6 +3771,7 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
             }
         }
         const preSyncLorebook = headNodeFile?.state?.lorebook ?? _lorebookData;
+        _parentNodeLorebook   = preSyncLorebook;
         const prevHooksText   = headNodeFile?.state?.hooks   ?? _priorSituation;
 
         // ── 5. Fire Lorebook Sync + Hookseeker (staggered, with auto-retry) ──
@@ -3903,6 +4126,26 @@ function openPromptModal(settingsKey, title, defaultValue, vars = [], trailingPr
     requestAnimationFrame(() => $textarea[0]?.focus());
 }
 
+/**
+ * @section Settings Panel
+ * @architectural-role Extension Settings UI
+ * @description
+ * Owns the extension settings UI rendered in the ST extensions panel.
+ * Manages profile creation, switching, and deletion; binds all input
+ * handlers to activeState; and controls visibility of dependent controls
+ * (e.g. RAG AI controls hidden when RAG is disabled). The prompt modal
+ * for editing multi-line prompts is also launched from here.
+ * @core-principles
+ *   1. All handlers write to activeState first, then call saveSettingsDebounced.
+ *   2. refreshSettingsUI is the single source of truth for control state — never set DOM directly.
+ * @api-declaration
+ *   injectSettingsPanel, bindSettingsHandlers, refreshSettingsUI,
+ *   refreshProfileDropdown, updateDirtyIndicator,
+ *   updateRagAiControlsVisibility, openPromptModal
+ * @contract
+ *   assertions:
+ *     external_io: [none]
+ */
 // ─── Settings Panel ───────────────────────────────────────────────────────────
 
 /** True if activeState differs from the saved profile snapshot. */
@@ -4342,6 +4585,25 @@ function injectSettingsPanel() {
     updateRagAiControlsVisibility();
 }
 
+/**
+ * @section Event Handlers and Init
+ * @architectural-role ST Event Bindings and Extension Entry Point
+ * @description
+ * Owns the ST event bindings, the wand button, and the extension entry point.
+ * The pump trigger (onMessageReceived) fires after each AI message and decides
+ * whether to run a sync cycle. onChatChanged resets session state and triggers
+ * the Healer on character switch. Delegated click handlers dispatch wand menu
+ * actions. `init` registers all event listeners and injects persistent UI.
+ * @core-principles
+ *   1. No business logic here — handlers delegate immediately to engine functions.
+ *   2. checkOrphans runs once on init and on chat change; it never blocks the event loop.
+ * @api-declaration
+ *   onMessageReceived, onChatChanged, onWandButtonClick, injectWandButton,
+ *   checkOrphans, init
+ * @contract
+ *   assertions:
+ *     external_io: [eventSource, /api/chats/saveChat]
+ */
 // ─── Event Handlers ───────────────────────────────────────────────────────────
 
 async function onMessageReceived() {
@@ -4479,8 +4741,9 @@ function onChatChanged() {
         _stagedProsePairs  = [];
         _stagedPairOffset  = 0;
         _splitPairIdx      = 0;
-        _ragChunks         = [];
+        _ragChunks          = [];
         _splitIndexWhenRagBuilt = null;
+        _parentNodeLorebook = null;
         clearChunkChatLabels();
         if (char) {
             fetchOrBootstrapLedger(char.avatar)
@@ -4534,9 +4797,9 @@ function showSyncChoicePopup(bodyHtml, fullLabel, winLabel) {
 
 /**
  * Handles the CNZ wand toolbar button. Decision tree:
- *  - gap ≤ 0: open review modal (nothing to sync)
- *  - 0 < gap ≤ windowSize: run standard sync then open modal
- *  - gap > windowSize: show blocking choice popup (window vs all)
+ *  - gap < chunkEveryN:  open review modal only (not enough turns to sync)
+ *  - gap === chunkEveryN: run standard sync then open modal
+ *  - gap > chunkEveryN:  show blocking choice popup (window vs all)
  */
 async function onWandButtonClick() {
     const ctx = SillyTavern.getContext();
@@ -4552,8 +4815,8 @@ async function onWandButtonClick() {
     const char         = ctx.characters[ctx.characterId];
     const messages     = ctx.chat ?? [];
     const currentCount = messages.filter(m => !m.is_system).length;
-    const windowSize   = getSettings().chunkEveryN ?? 20;
-    const lcb          = getSettings().liveContextBuffer ?? 5;
+    const settings     = getSettings();
+    const lcb          = settings.liveContextBuffer ?? 5;
     const tbb          = Math.max(0, currentCount - lcb);
     const ledgerHead   = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
     const gap          = ledgerHead != null ? tbb - ledgerHead.sequenceNum : Infinity;
@@ -4565,7 +4828,7 @@ async function onWandButtonClick() {
         `  total turns:         ${currentCount} non-system\n` +
         `  liveContextBuffer:   ${lcb}  →  trailingBufferBoundary=${tbb}\n` +
         `  gap:                 ${isFinite(gap) ? gap : '∞ (never synced)'}\n` +
-        `  windowSize:          ${windowSize}\n` +
+        `  windowSize:          ${settings.chunkEveryN ?? 20}\n` +
         `  ledger head:         ${ledgerHead ? `nodeId=${ledgerHead.nodeId} seqNum=${ledgerHead.sequenceNum}` : 'none (never committed)'}`
     );
 
@@ -4630,25 +4893,32 @@ async function onWandButtonClick() {
     }
 
     // Nothing new to sync yet (everything committed, or gap below threshold) — open modal directly.
-    if (gap < windowSize) {
+    if (gap < (settings.chunkEveryN ?? 20)) {
         openReviewModal();
         return;
     }
 
-    // Gap > windowSize: more than a full window has accumulated.
+    if (gap === (settings.chunkEveryN ?? 20)) {
+        toastr.info('CNZ: Running sync…');
+        await runCnzSync(char, messages);
+        openReviewModal();
+        return;
+    }
+
+    // gap > chunkEveryN — ask the user how much to cover.
     // Ask the user how much to cover.
-    const extraWarning = `<p class="cnz-choice-warn">⚠ ${gap - windowSize} turn(s) in the middle may never have been captured by auto-sync.</p>`;
+    const extraWarning = `<p class="cnz-choice-warn">⚠ ${gap - (settings.chunkEveryN ?? 20)} turn(s) in the middle may never have been captured by auto-sync.</p>`;
     const choice = await showSyncChoicePopup(
         `<h3>How much should this sync cover?</h3>
-        <p>${gap} turn(s) have accumulated since the last sync (window size: ${windowSize}).</p>
+        <p>${gap} turn(s) have accumulated since the last sync (window size: ${settings.chunkEveryN ?? 20}).</p>
         ${extraWarning}`,
         `Full gap (${gap} turns)`,
-        `Standard window (last ${windowSize} turns)`,
+        `Standard window (last ${settings.chunkEveryN ?? 20} turns)`,
     );
     if (choice === 'cancel') return;
     const coverAll = choice === 'full';
 
-    toastr.info(`CNZ: Running sync (${coverAll ? `full ${gap}-turn gap` : `last ${windowSize} turns`})…`);
+    toastr.info(`CNZ: Running sync (${coverAll ? `full ${gap}-turn gap` : `last ${settings.chunkEveryN ?? 20} turns`})…`);
     await runCnzSync(char, messages, { coverAll });
     openReviewModal();
 }
