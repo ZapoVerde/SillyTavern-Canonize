@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
- * @version 0.9.40
+ * @version 0.9.41
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -81,9 +81,37 @@
 import { generateRaw, saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup, chat_metadata } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
 import { updateWorldInfoList } from '../../../../scripts/world-info.js';
-import { executeSlashCommandsWithOptions } from '../../../../scripts/slash-commands.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
 import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML, buildLedgerInspectorHTML, buildOrphanModalHTML } from './ui.js';
+
+// ─── Mobile Debug Panel ───────────────────────────────────────────────────────
+const MDP = false; // set true to enable on-screen console overlay for mobile debugging
+if (MDP) (function() {
+    const panel = document.createElement('div');
+    panel.id = 'cnz-debug-panel';
+    panel.style.cssText = [
+        'position:fixed', 'bottom:0', 'left:0', 'right:0', 'z-index:999999',
+        'background:#111', 'color:#0f0', 'font:11px monospace',
+        'max-height:40vh', 'overflow-y:auto', 'padding:4px',
+        'border-top:2px solid #0f0'
+    ].join(';');
+    document.body ? document.body.appendChild(panel) : document.addEventListener('DOMContentLoaded', () => document.body.appendChild(panel));
+
+    const orig = { log: console.log, warn: console.warn, error: console.error };
+    ['log', 'warn', 'error'].forEach(level => {
+        console[level] = function(...args) {
+            orig[level].apply(console, args);
+            const line = document.createElement('div');
+            line.style.color = level === 'error' ? '#f44' : level === 'warn' ? '#fa0' : '#0f0';
+            line.textContent = `[${level}] ${args.map(a => {
+                try { return typeof a === 'object' ? JSON.stringify(a) : String(a); }
+                catch { return String(a); }
+            }).join(' ')}`;
+            panel.appendChild(line);
+            panel.scrollTop = panel.scrollHeight;
+        };
+    });
+})();
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -1959,6 +1987,7 @@ async function restoreRagToNode(char, nodeFile) {
     }
 
     // ── 3. Purge vector index and revectorize ─────────────────────────────────
+    const { executeSlashCommandsWithOptions } = SillyTavern.getContext();
     await executeSlashCommandsWithOptions('/db-purge');
     await executeSlashCommandsWithOptions('/db-ingest');
 }
@@ -3184,3 +3213,2033 @@ function injectModal() {
             renderLbIngesterDetail(newSuggestion);
             syncFreeformFromSuggestions();
         }
+    });
+    $('#cnz-modal').on('click', '#cnz-targeted-generate', onTargetedGenerateClick);
+
+    // Step 3 — Narrative Memory Workshop
+    $('#cnz-modal').on('click', '#cnz-rag-tab-bar .cnz-tab-btn', function () {
+        onRagTabSwitch($(this).data('tab'));
+    });
+    $('#cnz-modal').on('input', '.cnz-rag-card-header', function () {
+        const idx = parseInt($(this).data('chunk-index'), 10);
+        autoResizeRagCardHeader(this);
+        if (!isNaN(idx) && _ragChunks[idx]) {
+            _ragChunks[idx].header = $(this).val();
+            _ragChunks[idx].status = 'manual';
+            $(`.cnz-rag-card[data-chunk-index="${idx}"]`).attr('data-status', 'manual');
+        }
+    });
+    $('#cnz-modal').on('click', '.cnz-rag-card-regen', function () {
+        const idx = parseInt($(this).data('chunk-index'), 10);
+        if (!isNaN(idx)) ragRegenCard(idx);
+    });
+    $('#cnz-rag-raw').on('input', onRagRawInput);
+    $('#cnz-rag-revert-raw-btn').on('click', onRagRevertRaw);
+
+    // Shared wizard footer
+    $('#cnz-cancel').on('click',    closeModal);
+    $('#cnz-move-back').on('click', () => updateWizard(_currentStep - 1));
+    $('#cnz-move-next').on('click', () => updateWizard(_currentStep + 1));
+    $('#cnz-confirm').on('click',   onConfirmClick);
+}
+
+function showModal() {
+    $('#cnz-overlay').removeClass('cnz-hidden');
+}
+
+/**
+ * Hides the modal overlay and resets modal session state.
+ * Must NOT clear engine state (`_ragChunks`, `_lorebookSuggestions`, `_priorSituation`, etc.).
+ */
+/**
+ * Lane 2 — Generate: fires a targeted NEW-entry AI call for the supplied keyword.
+ * The result is added as a new suggestion and loaded into the shared editor.
+ */
+function onTargetedGenerateClick() {
+    const keyword = $('#cnz-targeted-keyword').val().trim();
+    if (!keyword) {
+        $('#cnz-targeted-error').text('Enter a concept name.').removeClass('cnz-hidden');
+        return;
+    }
+    $('#cnz-targeted-error').addClass('cnz-hidden').text('');
+
+    const horizon    = getSettings().hookseekerHorizon ?? 70;
+    const upToLatest = $('#cnz-lb-up-to-latest').is(':checked');
+    const transcript = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon);
+
+    const targetedId = ++_targetedGenId;
+    $('#cnz-targeted-spinner').removeClass('cnz-hidden');
+    $('#cnz-targeted-generate').prop('disabled', true);
+
+    runTargetedLbCall('new', keyword, '', '', transcript)
+        .then(rawText => {
+            if (_targetedGenId !== targetedId) return;
+
+            const trimmed = rawText?.trim() ?? '';
+            if (!trimmed || trimmed === 'NO INFORMATION FOUND') {
+                $('#cnz-targeted-error')
+                    .text(trimmed || 'AI returned no output.')
+                    .removeClass('cnz-hidden');
+                return;
+            }
+
+            const parsed = parseLbSuggestions(trimmed);
+            if (!parsed.length) {
+                $('#cnz-targeted-error').text('Could not parse AI response.').removeClass('cnz-hidden');
+                return;
+            }
+
+            const fresh = parsed[0];
+            const newSuggestion = {
+                type:        fresh.type || 'NEW',
+                name:        fresh.name || keyword,
+                keys:        fresh.keys,
+                content:     fresh.content,
+                linkedUid:   null,
+                _applied:    false,
+                _rejected:   false,
+                _aiSnapshot: { name: fresh.name || keyword, keys: [...fresh.keys], content: fresh.content },
+            };
+
+            _lorebookSuggestions.push(newSuggestion);
+            _lbActiveIngesterIndex = _lorebookSuggestions.length - 1;
+            populateLbIngesterDropdown();
+            renderLbIngesterDetail(newSuggestion);
+            syncFreeformFromSuggestions();
+
+            toastr.success('CNZ: New entry generated — review in editor.');
+        })
+        .catch(err => {
+            if (_targetedGenId !== targetedId) return;
+            $('#cnz-targeted-error').text(`Generate failed: ${err.message}`).removeClass('cnz-hidden');
+        })
+        .finally(() => {
+            if (_targetedGenId !== targetedId) return;
+            $('#cnz-targeted-spinner').addClass('cnz-hidden');
+            $('#cnz-targeted-generate').prop('disabled', false);
+        });
+}
+
+function closeModal() {
+    $('#cnz-overlay').addClass('cnz-hidden');
+    // Kill all in-flight AI callbacks
+    _hooksGenId++;
+    _lorebookGenId++;
+    _ragGlobalGenId++;
+    _targetedGenId++;
+    // Reset modal UI state only (engine state must not be cleared here)
+    _hooksLoading               = false;
+    _lorebookLoading            = false;
+    _lbActiveIngesterIndex      = 0;
+    clearTimeout(_lbDebounceTimer);
+    _lbDebounceTimer            = null;
+    _ragRawDetached             = false;
+    _ragInFlightCount           = 0;
+    _ragCallQueue               = [];
+    _currentStep                = 1;
+}
+
+// ─── Ledger Inspector ─────────────────────────────────────────────────────────
+
+function closeLedgerInspector() {
+    $('#cnz-li-overlay').addClass('cnz-hidden');
+}
+
+// ─── Orphan Review Modal ───────────────────────────────────────────────────────
+
+function closeOrphanModal() {
+    $('#cnz-orphan-overlay').addClass('cnz-hidden');
+}
+
+/**
+ * Opens the Orphan Review modal for a given list of orphaned file paths.
+ * Each row shows the filename, a [Preview] toggle, and a [Delete] button.
+ * A [Delete All] button at the footer deletes all remaining files at once.
+ * @param {string[]} orphans  Client-relative paths of unreferenced files.
+ */
+function openOrphanModal(orphans) {
+    const $overlay = $('#cnz-orphan-overlay');
+    const $body    = $('#cnz-orphan-body');
+    const $footer  = $overlay.find('.cnz-orphan-footer');
+
+    $body.empty();
+    $footer.show();
+
+    if (!orphans.length) {
+        $body.append('<div class="cnz-li-empty">No orphaned files found.</div>');
+        $footer.hide();
+        $overlay.removeClass('cnz-hidden');
+        return;
+    }
+
+    $('#cnz-orphan-title').text(`Orphaned Files — ${orphans.length} file${orphans.length !== 1 ? 's' : ''}`);
+
+    function checkResolved() {
+        if ($body.find('.cnz-orphan-row').length === 0) {
+            $body.html('<div class="cnz-li-empty">All orphaned files resolved.</div>');
+            $footer.hide();
+        }
+    }
+
+    orphans.forEach(path => {
+        const filename = path.split('/').pop();
+        const $row = $(`
+<div class="cnz-orphan-row" data-path="${escapeHtml(path)}">
+  <div class="cnz-orphan-row-header">
+    <span class="cnz-orphan-filename">${escapeHtml(filename)}</span>
+    <button class="cnz-orphan-preview-btn cnz-btn cnz-btn-secondary cnz-btn-sm">Preview</button>
+    <button class="cnz-orphan-delete-btn cnz-btn cnz-btn-danger cnz-btn-sm">Delete</button>
+  </div>
+  <div class="cnz-orphan-preview-panel cnz-hidden"></div>
+</div>`);
+
+        // Preview toggle
+        $row.find('.cnz-orphan-preview-btn').on('click', async function () {
+            const $panel = $row.find('.cnz-orphan-preview-panel');
+            if (!$panel.hasClass('cnz-hidden')) {
+                $panel.addClass('cnz-hidden');
+                $(this).text('Preview');
+                return;
+            }
+            $(this).text('Loading…').prop('disabled', true);
+            try {
+                const res  = await fetch(path);
+                const text = res.ok ? await res.text() : `(fetch failed: HTTP ${res.status})`;
+                $panel.text(text);
+            } catch (err) {
+                $panel.text(`(fetch error: ${err.message})`);
+            }
+            $panel.removeClass('cnz-hidden');
+            $(this).text('Collapse').prop('disabled', false);
+        });
+
+        // Delete single row
+        $row.find('.cnz-orphan-delete-btn').on('click', async function () {
+            $(this).prop('disabled', true);
+            await cnzDeleteFile(path);
+            $row.remove();
+            checkResolved();
+        });
+
+        $body.append($row);
+    });
+
+    // Delete All
+    $('#cnz-orphan-delete-all').off('click.orphan').on('click.orphan', async function () {
+        $(this).prop('disabled', true);
+        const paths = $body.find('.cnz-orphan-row').map((_, el) => $(el).data('path')).get();
+        for (const p of paths) { await cnzDeleteFile(p); }
+        $body.find('.cnz-orphan-row').remove();
+        checkResolved();
+    });
+
+    // Close handlers
+    $('#cnz-orphan-close').off('click.orphan').on('click.orphan', closeOrphanModal);
+    $overlay.off('click.orphan').on('click.orphan', closeOrphanModal);
+    $('#cnz-orphan-modal').off('click.orphan').on('click.orphan', e => e.stopPropagation());
+
+    $overlay.removeClass('cnz-hidden');
+}
+
+/**
+ * Opens the read-only Ledger Inspector modal for the current character.
+ * Populates the header and renders a collapsed row per node (HEAD first).
+ * Node bodies are loaded lazily on first expand.
+ */
+function openLedgerInspector() {
+    const ctx  = SillyTavern.getContext();
+    const char = ctx?.characters?.[ctx?.characterId];
+
+    const $overlay = $('#cnz-li-overlay');
+    const $title   = $('#cnz-li-title');
+    const $body    = $('#cnz-li-body');
+
+    $body.empty();
+
+    if (!char || !_ledgerManifest?.nodes || !_ledgerManifest.headNodeId) {
+        const charName = char?.name ?? 'Unknown';
+        $title.text(`Ledger Inspector — ${charName}`);
+        $body.append(`<div class="cnz-li-empty">No ledger found for this character.</div>`);
+        $overlay.removeClass('cnz-hidden');
+        return;
+    }
+
+    // Build chain: HEAD first
+    const chain    = buildNodeChain(_ledgerManifest);  // root → head
+    const reversed = chain.slice().reverse();           // head first
+    const headId   = _ledgerManifest.headNodeId;
+    const headNode = _ledgerManifest.nodes[headId];
+
+    $title.text(
+        `${escapeHtml(_ledgerManifest.charName || char.name)} \u2022 ${chain.length} node${chain.length !== 1 ? 's' : ''} \u2022 Head: Turn ${headNode?.sequenceNum ?? '?'}`
+    );
+
+    // Track which nodes have had their file fetched (nodeId → node file object)
+    const _fetchedNodes = {};
+
+    reversed.forEach((summaryNode, idx) => {
+        const isHead     = summaryNode.nodeId === headId;
+        const isOrphaned = summaryNode.status === 'orphaned';
+        const nodeNum    = reversed.length - idx;  // descending from N to 1
+        const orphanBadge = isOrphaned
+            ? ' <span class="cnz-li-orphan-badge">orphaned</span>'
+            : '';
+        const headLabel  = isHead ? ' (HEAD)' : '';
+
+        const $row = $(`
+<div class="cnz-li-node-row${isOrphaned ? ' cnz-li-orphaned' : ''}" data-node-id="${escapeHtml(summaryNode.nodeId)}">
+  <div class="cnz-li-node-header">
+    <span class="cnz-li-chevron">\u25B6</span>
+    <span class="cnz-li-node-label">Node ${nodeNum}${headLabel}  Turn ${summaryNode.sequenceNum}${orphanBadge}</span>
+  </div>
+  <div class="cnz-li-node-body"></div>
+</div>`);
+
+        $row.find('.cnz-li-node-header').on('click', async function () {
+            const $nodeRow  = $(this).closest('.cnz-li-node-row');
+            const $nodeBody = $nodeRow.find('.cnz-li-node-body');
+            const $chevron  = $(this).find('.cnz-li-chevron');
+            const isOpen    = $nodeBody.hasClass('cnz-li-expanded');
+
+            if (isOpen) {
+                $nodeBody.removeClass('cnz-li-expanded');
+                $chevron.text('\u25B6');
+                return;
+            }
+
+            // Expand — lazy-fetch if not yet loaded
+            $nodeBody.addClass('cnz-li-expanded');
+            $chevron.text('\u25BC');
+
+            if (!_fetchedNodes[summaryNode.nodeId]) {
+                $nodeBody.html('<span class="cnz-li-spinner">Loading\u2026</span>');
+                const nodeFile = await fetchLedgerNodeFile(char.avatar, summaryNode.nodeId);
+                _fetchedNodes[summaryNode.nodeId] = nodeFile ?? false;
+            }
+
+            const nodeFile = _fetchedNodes[summaryNode.nodeId];
+            if (!nodeFile) {
+                $nodeBody.html('<span class="cnz-li-spinner">Failed to load node file.</span>');
+                return;
+            }
+
+            // Format committedAt
+            const when = nodeFile.committedAt
+                ? new Date(nodeFile.committedAt).toLocaleString(undefined, {
+                      year: 'numeric', month: '2-digit', day: '2-digit',
+                      hour: '2-digit', minute: '2-digit',
+                  })
+                : '—';
+
+            // Hooks: first 100 chars collapsed, full on expand (already expanded here)
+            const hooksText  = nodeFile.state?.hooks ?? '';
+            const hooksHTML  = `<span class="cnz-li-hooks-preview">${escapeHtml(hooksText)}</span>`;
+
+            // Lorebook entries
+            const lbEntries = nodeFile.state?.lorebook?.entries ?? {};
+            const lbNames   = Object.values(lbEntries)
+                .map(e => e.comment || e.uid || '(unnamed)')
+                .join(', ');
+            const lbCount   = Object.keys(lbEntries).length;
+            const lbHTML    = lbCount > 0
+                ? `${escapeHtml(lbNames)} <em>(${lbCount} entries)</em>`
+                : '<em>(none)</em>';
+
+            // RAG files
+            const ragFiles  = nodeFile.state?.ragFiles ?? [];
+            const ragHTML   = ragFiles.length > 0
+                ? ragFiles.map(f => `  ${escapeHtml(String(f))}`).join('\n')
+                : '  (none)';
+
+            $nodeBody.html(`
+<div class="cnz-li-field"><span class="cnz-li-field-label">Committed:</span> ${escapeHtml(when)}</div>
+<div class="cnz-li-field"><span class="cnz-li-field-label">Hooks:</span><br>${hooksHTML}</div>
+<div class="cnz-li-field"><span class="cnz-li-field-label">Lorebook:</span> ${lbHTML}</div>
+<div class="cnz-li-field"><span class="cnz-li-field-label">RAG files:</span> (${ragFiles.length} file${ragFiles.length !== 1 ? 's' : ''})<br><span class="cnz-li-hooks-preview">${escapeHtml(ragHTML)}</span></div>`);
+        });
+
+        $body.append($row);
+    });
+
+    // Wire close handlers (scoped so they don't accumulate across opens)
+    $('#cnz-li-close').off('click.li').on('click.li', closeLedgerInspector);
+    $overlay.off('click.li').on('click.li', closeLedgerInspector);
+    $('#cnz-li-modal').off('click.li').on('click.li', e => e.stopPropagation());
+
+    $overlay.removeClass('cnz-hidden');
+}
+
+/**
+ * Resets wizard UI to its initial state (tab selection, error panels, loading spinners).
+ * Must NOT touch engine state. Pass `preserveSuggestions = true` from `openReviewModal`
+ * to retain lorebook suggestions and raw text populated by the last sync.
+ * @param {boolean} [preserveSuggestions=false]
+ */
+function initWizardSession(preserveSuggestions = false) {
+    // Hooks Workshop reset
+    $('#cnz-hooks-tab-bar .cnz-tab-btn').each(function () {
+        $(this).toggleClass('cnz-tab-active', $(this).data('tab') === 'workshop');
+    });
+    $('#cnz-hooks-tab-workshop').removeClass('cnz-hidden');
+    $('#cnz-hooks-tab-new, #cnz-hooks-tab-old').addClass('cnz-hidden');
+    $('#cnz-hooks-diff').empty();
+    // Lorebook tab reset — Ingester is the default landing tab
+    $('#cnz-lb-tab-bar .cnz-tab-btn').each(function () {
+        $(this).toggleClass('cnz-tab-active', $(this).data('tab') === 'ingester');
+    });
+    $('#cnz-lb-tab-ingester').removeClass('cnz-hidden');
+    $('#cnz-lb-tab-freeform').addClass('cnz-hidden');
+    // Lane 2/3 reset
+    $('#cnz-targeted-entry-select').empty().append('<option value="">— Select entry —</option>');
+    $('#cnz-targeted-keyword').val('');
+    $('#cnz-targeted-spinner').addClass('cnz-hidden');
+    $('#cnz-targeted-error').addClass('cnz-hidden').text('');
+    $('#cnz-targeted-generate').prop('disabled', false);
+    populateTargetedEntrySelect();
+    // Lorebook and general reset
+    $('#cnz-lb-title').text(`Lorebook: ${_lorebookName}`);
+    $('#cnz-lb-freeform').val('');
+    $('#cnz-lb-error').addClass('cnz-hidden').text('');
+    $('#cnz-lb-error-ingester').addClass('cnz-hidden').text('');
+    $('#cnz-error-1').addClass('cnz-hidden').text('');
+    $('#cnz-error-4').addClass('cnz-hidden').text('');
+    $('#cnz-receipts').addClass('cnz-hidden');
+    $('#cnz-receipts-content').empty();
+    $('#cnz-recovery-guide').addClass('cnz-hidden');
+    $('#cnz-cancel').text('Cancel').prop('disabled', false);
+    // RAG Workshop reset
+    $('#cnz-rag-cards').empty();
+    $('#cnz-rag-no-summary, #cnz-rag-disabled').addClass('cnz-hidden');
+    $('#cnz-rag-detached-warn, #cnz-rag-detached-revert').addClass('cnz-hidden');
+    $('#cnz-rag-raw').val('').removeClass('cnz-rag-detached');
+    $('#cnz-rag-raw-detached-label').addClass('cnz-hidden');
+    $('#cnz-rag-tab-bar .cnz-tab-btn').each(function () {
+        $(this).toggleClass('cnz-tab-active', $(this).data('tab') === 'sectioned');
+    });
+    $('#cnz-rag-tab-sectioned').removeClass('cnz-hidden');
+    $('#cnz-rag-tab-raw').addClass('cnz-hidden');
+    // Lorebook ingester reset (engine state _lorebookSuggestions/_lorebookRawText must NOT be cleared here)
+    if (!preserveSuggestions) {
+        _lbActiveIngesterIndex = 0;
+    }
+    setHooksLoading(false);
+    setLbLoading(false);
+}
+
+/**
+ * Shows the given wizard step (1–4), hides all others, and updates footer
+ * button visibility. Triggers workshop population on step entry.
+ */
+function updateWizard(n) {
+    if (_currentStep === 3 && n < 3) onLeaveRagWorkshop();
+    _currentStep = n;
+    for (let i = 1; i <= 4; i++) {
+        $(`#cnz-step-${i}`).toggleClass('cnz-hidden', i !== n);
+    }
+    $('#cnz-move-back').toggleClass('cnz-hidden', n === 1);
+    $('#cnz-move-next').toggleClass('cnz-hidden', n === 4);
+    $('#cnz-confirm').toggleClass('cnz-hidden',   n !== 4);
+    if (n === 3) onEnterRagWorkshop();
+    if (n === 4) populateStep4Summary();
+}
+
+/**
+ * Opens the CNZ review modal. Loads committed hooks from character scenario,
+ * ensures lorebook and ledger are bootstrapped, then shows Step 1.
+ * Called from the sync toast "Review" link.
+ */
+async function openReviewModal() {
+    const ctx  = SillyTavern.getContext();
+    const char = ctx?.characters?.[ctx?.characterId];
+    if (!char) { toastr.error('CNZ: No character selected.'); return; }
+
+    // Ensure lorebook is loaded
+    const lbName = getSettings().lorebookName || char.name;
+    if (_lorebookName !== lbName || !_lorebookData) {
+        try {
+            _lorebookName  = lbName;
+            _lorebookData  = await lbEnsureLorebook(_lorebookName);
+            _draftLorebook = structuredClone(_lorebookData);
+        } catch (err) {
+            console.error('[CNZ] openReviewModal: lorebook load failed:', err);
+            _lorebookData  = { entries: {} };
+            _draftLorebook = { entries: {} };
+        }
+    }
+
+    // Ensure ledger is bootstrapped
+    if (!_ledgerManifest) {
+        await fetchOrBootstrapLedger(char.avatar).catch(err =>
+            console.error('[CNZ] openReviewModal: ledger bootstrap failed:', err),
+        );
+    }
+
+    // Derive before/after states from ledger and current character.
+    // Re-fetch character to pick up any scenario patch written during a
+    // background sync that may not yet be reflected in the original char ref.
+    const freshChar = SillyTavern.getContext().characters.find(c => c.avatar === char.avatar);
+    _priorSituation = extractHookseekerBlock((freshChar ?? char).scenario ?? '') ?? '';
+
+    // Derive before/after states from ledger nodes — stable across any number of modal opens.
+    // head node  = post-sync state (what's on disk now)
+    // parent node = pre-sync state (manual-edit-inclusive baseline the AI ran against)
+    const headChainEntry = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
+    _beforeSituation = '';
+    let preSyncLorebookForDiff = null;   // parent node's lorebook — diff baseline
+
+    if (headChainEntry) {
+        try {
+            const headNodeFile = await fetchLedgerNodeFile(char.avatar, headChainEntry.nodeId);
+            const parentId     = headNodeFile?.parentId ?? null;
+
+            // hooks: parent node's state.hooks is what existed before this sync
+            if (parentId) {
+                const parentNodeFile   = await fetchLedgerNodeFile(char.avatar, parentId);
+                _beforeSituation       = parentNodeFile?.state?.hooks    ?? '';
+                preSyncLorebookForDiff = parentNodeFile?.state?.lorebook ?? null;
+                _parentNodeLorebook    = preSyncLorebookForDiff;
+            }
+
+            // head node lorebook = current committed state; use as _draftLorebook baseline
+            if (headNodeFile?.state?.lorebook) {
+                _lorebookData  = structuredClone(headNodeFile.state.lorebook);
+                _draftLorebook = structuredClone(headNodeFile.state.lorebook);
+                _lorebookName  = headNodeFile.state.lorebook.name || _lorebookName;
+            }
+        } catch (err) {
+            console.warn('[CNZ] openReviewModal: could not fetch ledger nodes:', err);
+        }
+    }
+
+    // Derive _lorebookSuggestions from the node diff — no ephemeral sync-cycle data needed.
+    // This is stable: head lorebook vs parent lorebook, derived fresh on every modal open.
+    // Preserve session-generated suggestions (from Lane 2/3) if they are not replaced by the ledger diff.
+    const ledgerSuggestions = deriveSuggestionsFromLedgerDiff(
+        preSyncLorebookForDiff,
+        _draftLorebook,
+    );
+    // Merge: ledger-derived suggestions replace any existing ones by name; session-only ones are preserved.
+    _lorebookSuggestions = ledgerSuggestions;
+
+    // If no raw text from the current session, populate from the serialised suggestion list.
+    // This ensures freeform always shows the committed changes on first open, not a blank textarea.
+    if (!_lorebookRawText) {
+        _lorebookRawText = serialiseSuggestionsToFreeform(_lorebookSuggestions);
+    }
+
+    initWizardSession(true);
+
+    // Populate panels before showModal()
+    $('#cnz-situation-text').val(_priorSituation);
+    $('#cnz-hooks-new-display').text(_priorSituation);
+    $('#cnz-hooks-old-display').text(_beforeSituation);
+    updateHooksDiff();
+    $('#cnz-lb-freeform').val(_lorebookRawText);
+    if (_lorebookSuggestions.length) {
+        populateLbIngesterDropdown();
+        renderLbIngesterDetail(_lorebookSuggestions[0]);
+    }
+
+    showModal();
+    updateWizard(1);
+}
+
+// ─── CNZ Core ────────────────────────────────────────────────────────────────
+
+/**
+ * Fires every chunkEveryN turns (MESSAGE_RECEIVED handler).
+ * Executes the full background sync pipeline:
+ *   1. Derive the current turn window (last chunkEveryN pairs)
+ *   2. Fire Fact-Finder + Hookseeker in parallel
+ *   3. Apply lorebook updates silently
+ *   4. Write Hookseeker output into the character scenario anchor block
+ *   5. Build, classify, and upload RAG chunks as a chat attachment
+ *   6. Commit a Ledger node recording this milestone
+ *
+ * Each step is guarded individually; a failure emits a warning toast but
+ * does not abort subsequent steps or throw to the caller.
+ *
+ * @param {object} char     Character object from ST context at trigger time.
+ * @param {Array}  messages Full chat message array at trigger time.
+ */
+async function runCnzSync(char, messages, { coverAll = false } = {}) {
+    if (_syncInProgress) {
+        console.warn('[CNZ] Sync already in progress — skipping this trigger.');
+        return;
+    }
+    _syncInProgress = true;
+
+    const nonSystemCount = messages.filter(m => !m.is_system).length;
+    console.log(`[CNZ] runCnzSync start — char=${char.name} turns=${nonSystemCount} coverAll=${coverAll}`);
+
+    // Step flags for toast reporting
+    let lbOk        = false;
+    let hooksOk     = false;
+    let ragUrl      = null;
+    let ragFileName = null;   // filename only (no path) — stored in node.state.ragFiles
+    let ledgerOk    = false;
+
+    try {
+        const settings = getSettings();
+
+        // ── 1. Build turn window ──────────────────────────────────────────────
+        // Compute trailing buffer boundary: exclude the last liveContextBuffer
+        // non-system messages from sync so they stay in full live context.
+        const liveContextBuffer      = settings.liveContextBuffer ?? 5;
+        const totalNonSystemCount    = messages.filter(m => !m.is_system).length;
+        const trailingBufferBoundary = Math.max(0, totalNonSystemCount - liveContextBuffer);
+
+        // Build allPairs from ALL messages, then exclude pairs whose non-system
+        // index exceeds the trailing buffer boundary (i.e. the live context pairs).
+        const allPairs = buildProsePairs(messages).filter(p => p.validIdx < trailingBufferBoundary);
+
+        const windowSize = settings.chunkEveryN ?? 20;
+
+        // ── hookPairs: from ledger head to trailing buffer boundary ───────────
+        let hookPairs;
+        if (coverAll || !_ledgerManifest?.headNodeId) {
+            hookPairs = allPairs;
+        } else {
+            const ledgerHeadForHook = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
+            const firstUncommitted  = ledgerHeadForHook?.sequenceNum ?? 0;
+            const startIdx          = allPairs.findIndex(p => p.validIdx >= firstUncommitted);
+            if (startIdx === -1) {
+                console.log('[CNZ] All pairs already committed — skipping sync.');
+                return;
+            }
+            hookPairs = allPairs.slice(startIdx);
+        }
+
+        if (!hookPairs.length) {
+            console.log('[CNZ] No complete pairs in window — skipping sync.');
+            return;
+        }
+
+        // ── DEBUG: turn window coverage ───────────────────────────────────────
+        {
+            const firstPair = hookPairs[0];
+            const lastPair  = hookPairs[hookPairs.length - 1];
+            const firstTurn = (firstPair.validIdx ?? 0) + 1;
+            const lastTurn  = (lastPair.validIdx  ?? hookPairs.length - 1) + 1;
+            console.log(
+                `[CNZ-DBG] runCnzSync hookPairs: ${hookPairs.length} pairs` +
+                ` | validIdx range ${firstPair.validIdx}–${lastPair.validIdx}` +
+                ` | approx turns ${firstTurn}–${lastTurn}` +
+                ` | allPairs=${allPairs.length} windowSize=${windowSize} coverAll=${coverAll} trailingBufferBoundary=${trailingBufferBoundary}`
+            );
+            console.log('[CNZ-DBG] hookPairs summary:', hookPairs.map(p =>
+                `[${p.validIdx}] ${p.user?.name ?? '?'} → ${p.messages?.[0]?.name ?? '?'}`
+            ));
+        }
+
+        // Build hookseeker transcript — gap turns preceded by a lookback of
+        // already-committed turns for narrative context.
+        const hookseekerHorizon = settings.hookseekerHorizon ?? 70;
+        const ledgerHeadForHooks = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
+        let hooksTranscript;
+        {
+            const gapMessages = hookPairs.flatMap(p => [p.user, ...p.messages]);
+            const gapTranscript = buildTranscript(gapMessages);
+            if (ledgerHeadForHooks) {
+                // Prepend lookback: committed turns in range
+                // [max(0, ledgerHead.sequenceNum - hookseekerHorizon), ledgerHead.sequenceNum)
+                const lookbackStart = Math.max(0, ledgerHeadForHooks.sequenceNum - hookseekerHorizon);
+                const lookbackEnd   = ledgerHeadForHooks.sequenceNum;  // exclusive (0-based non-system index)
+                // allNonSystemPairs covers the full chat (pre-buffer); we need to look at
+                // the full message list for committed turns (they precede allPairs).
+                const fullPairs = buildProsePairs(messages);
+                const lookbackPairs = fullPairs.filter(
+                    p => p.validIdx >= lookbackStart && p.validIdx < lookbackEnd,
+                );
+                if (lookbackPairs.length > 0) {
+                    const lookbackMsgs       = lookbackPairs.flatMap(p => [p.user, ...p.messages]);
+                    const lookbackTranscript = buildTranscript(lookbackMsgs);
+                    hooksTranscript = `[narrative context from committed turns]\n${lookbackTranscript}\n\n${gapTranscript}`;
+                } else {
+                    hooksTranscript = gapTranscript;
+                }
+            } else {
+                // No ledger head — first sync, no lookback
+                hooksTranscript = gapTranscript;
+            }
+        }
+
+        // Build lorebook transcript — optionally from last sync point.
+        // In coverAll mode we always use the full gap transcript so that
+        // the entire gap is visible to the lorebook curator.
+        // NOTE: the lorebook never receives the hookseeker lookback context — only
+        // the gap pairs (hookPairs) are passed to the lorebook curator.
+        const gapOnlyTranscript = buildTranscript(hookPairs.flatMap(p => [p.user, ...p.messages]));
+        let lbTranscript;
+        if (!coverAll && settings.lorebookSyncStart === 'lastSync' && getMetaSettings().lastLorebookSyncAt != null) {
+            const lastAt = getMetaSettings().lastLorebookSyncAt;
+            // Fix D-01: use the FULL messages array so validIdx values are correct
+            // non-system indices into the complete chat, not a sliced sub-array.
+            const lbPairs = buildProsePairs(messages)
+                .filter(p => p.validIdx >= lastAt && p.validIdx < trailingBufferBoundary);
+            lbTranscript  = buildTranscript(lbPairs.flatMap(p => [p.user, ...p.messages]));
+            console.log(
+                `[CNZ-DBG] ── TURN ROUTING ──\n` +
+                `  → HOOKSEEKER AI  (${hookPairs.length} turns, validIdx ${hookPairs[0]?.validIdx ?? '?'}–${hookPairs[hookPairs.length - 1]?.validIdx ?? '?'}):` +
+                `\n      ` + hookPairs.map(p => `[${p.validIdx}] ${p.user?.name ?? '?'} → ${p.messages?.[0]?.name ?? '?'}`).join('\n      ') +
+                `\n  → LOREBOOK AI   (${lbPairs.length} turns from after lastSync turn ${lastAt}, lastSync mode):` +
+                `\n      ` + lbPairs.map(p => `[${p.validIdx}] ${p.user?.name ?? '?'} → ${p.messages?.[0]?.name ?? '?'}`).join('\n      ')
+            );
+        } else {
+            lbTranscript = gapOnlyTranscript;
+            console.log(
+                `[CNZ-DBG] ── TURN ROUTING ──\n` +
+                `  → HOOKSEEKER AI  (${hookPairs.length} turns, validIdx ${hookPairs[0]?.validIdx ?? '?'}–${hookPairs[hookPairs.length - 1]?.validIdx ?? '?'}):` +
+                `\n      ` + hookPairs.map(p => `[${p.validIdx}] ${p.user?.name ?? '?'} → ${p.messages?.[0]?.name ?? '?'}`).join('\n      ') +
+                `\n  → LOREBOOK AI   same window as hookseeker (${coverAll ? 'coverAll mode' : `lorebookSyncStart=${settings.lorebookSyncStart}`})`
+            );
+        }
+
+        // ── 2. Load (or create) lorebook — always fetch fresh to capture manual edits ──
+        const lbName = settings.lorebookName || char.name;
+        _lorebookName  = lbName;
+        _lorebookData  = await lbEnsureLorebook(_lorebookName);
+        _draftLorebook = structuredClone(_lorebookData);
+
+        // Auto-attach lorebook to character card if not already linked
+        try {
+            const freshCtxForLb = SillyTavern.getContext();
+            const charForLb     = freshCtxForLb.characters.find(c => c.avatar === char.avatar);
+            if (charForLb && charForLb.data?.extensions?.world !== _lorebookName) {
+                if (!charForLb.data)            charForLb.data            = {};
+                if (!charForLb.data.extensions) charForLb.data.extensions = {};
+                charForLb.data.extensions.world = _lorebookName;
+                await patchCharacterScenario(charForLb, charForLb.scenario ?? '');
+                await SillyTavern.getContext().getOneCharacter(charForLb.avatar);
+                console.log(`[CNZ] Lorebook "${_lorebookName}" auto-attached to character "${charForLb.name}".`);
+            }
+        } catch (err) {
+            console.warn('[CNZ] Could not auto-attach lorebook to character card:', err);
+        }
+
+        // ── 3. Bootstrap ledger if needed ─────────────────────────────────────
+        if (!_ledgerManifest) {
+            await fetchOrBootstrapLedger(char.avatar);
+        }
+
+        // ragPairs: the full uncommitted gap from ledger head to trailing buffer boundary.
+        // After the allPairs/hookPairs rebuild, ragPairs and hookPairs cover the same range.
+        const headNodeForRag = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
+        let ragPairs;
+        let ragPairOffset = 0;
+        if (!headNodeForRag || coverAll) {
+            ragPairs = allPairs;
+            // offset stays 0 — ragPairs starts at the beginning of allPairs
+        } else {
+            // allPairs already trimmed to trailingBufferBoundary; find first uncommitted pair.
+            const firstUncommittedSeq = headNodeForRag.sequenceNum;
+            const pairStartIdx        = allPairs.findIndex(p => p.validIdx >= firstUncommittedSeq);
+            ragPairOffset             = pairStartIdx === -1 ? 0 : pairStartIdx;
+            ragPairs                  = pairStartIdx === -1 ? [] : allPairs.slice(pairStartIdx);
+        }
+        // ── DEBUG: previous chunk (ledger head) and RAG window ────────────────
+        console.log(
+            `[CNZ-DBG] ── CHUNK / RAG WINDOW ──\n` +
+            `  previous chunk (ledger head): ${
+                headNodeForRag
+                    ? `nodeId=${headNodeForRag.nodeId}  seqNum=${headNodeForRag.sequenceNum}  (turns up to ${headNodeForRag.sequenceNum} committed)`
+                    : 'none — this is the first sync'
+            }\n` +
+            `  → RAG SUMMARIZER (${ragPairs.length} turns${ragPairs.length > 0 ? `, validIdx ${ragPairs[0].validIdx}–${ragPairs[ragPairs.length - 1].validIdx}` : ''}):` +
+            (ragPairs.length > 0
+                ? `\n      ` + ragPairs.map(p => `[${p.validIdx}] ${p.user?.name ?? '?'} → ${p.messages?.[0]?.name ?? '?'}`).join('\n      ')
+                : ' (empty — nothing to classify)') +
+            `\n  headSeqNum=${headNodeForRag?.sequenceNum ?? 'none'}  trailingBufferBoundary=${trailingBufferBoundary}  allPairs=${allPairs.length}  coverAll=${coverAll}`
+        );
+
+        // ── 4. Fetch head node file — before-state for AI calls ───────────────
+        // Key invariant: lorebook AI receives the state BEFORE this sync,
+        // not _lorebookData (which may already reflect a prior modal correction).
+        const headChainEntry = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
+        let headNodeFile = null;
+        if (headChainEntry) {
+            headNodeFile = await fetchLedgerNodeFile(char.avatar, headChainEntry.nodeId);
+            if (!headNodeFile) {
+                console.warn('[CNZ] Could not fetch head node file — lorebook AI will use current _lorebookData.');
+            }
+        }
+        const preSyncLorebook = headNodeFile?.state?.lorebook ?? _lorebookData;
+        _parentNodeLorebook   = preSyncLorebook;
+        const prevHooksText   = headNodeFile?.state?.hooks   ?? _priorSituation;
+
+        // ── 5. Fire Lorebook Sync + Hookseeker (staggered, with auto-retry) ──
+        let lorebookSyncText, hookseekerText;
+        {
+            const MAX_ATTEMPTS = 3;
+            let lastErr;
+            for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+                try {
+                    lorebookSyncText = await runLorebookSyncCall(lbTranscript, preSyncLorebook);
+                    await new Promise(r => setTimeout(r, 1000));
+                    hookseekerText   = await runHookseekerCall(hooksTranscript, prevHooksText);
+                    lastErr = null;
+                    break;
+                } catch (err) {
+                    lastErr = err;
+                    console.warn(`[CNZ] AI calls failed (attempt ${attempt}/${MAX_ATTEMPTS}):`, err);
+                    if (attempt < MAX_ATTEMPTS) {
+                        toastr.warning(`CNZ: AI call failed — retrying (${attempt}/${MAX_ATTEMPTS})…`);
+                        await new Promise(r => setTimeout(r, 2000 * attempt));
+                    }
+                }
+            }
+            if (lastErr) {
+                console.error('[CNZ] AI calls failed after all retries:', lastErr);
+                toastr.error(`CNZ: AI calls failed after ${MAX_ATTEMPTS} attempts — ${lastErr.message}`);
+                return;
+            }
+        }
+
+        // ── 6. Apply Lorebook Sync: parse → enrich → auto-apply → save ────────
+        try {
+            const preLorebook = structuredClone(_lorebookData);
+            const suggestions = parseLbSuggestions(lorebookSyncText);
+
+            // Reset suggestion list for this sync cycle (no carry-forward)
+            _lorebookSuggestions = [];
+            _lorebookSuggestions = enrichLbSuggestions(suggestions);
+
+            for (const s of _lorebookSuggestions) {
+                if (s.linkedUid !== null) {
+                    const entry = _draftLorebook.entries[String(s.linkedUid)];
+                    if (entry) {
+                        entry.comment = s.name;
+                        entry.key     = s.keys;
+                        entry.content = s.content;
+                    }
+                } else {
+                    const uid = nextLorebookUid();
+                    _draftLorebook.entries[String(uid)] = makeLbDraftEntry(uid, s.name, s.keys, s.content);
+                    s.linkedUid = uid;
+                }
+                s._applied = true;
+            }
+
+            await lbSaveLorebook(_lorebookName, _draftLorebook);
+            _lorebookData = structuredClone(_draftLorebook);
+            // Replace raw AI text with the clean serialised form so the modal shows
+            // the committed state rather than unprocessed AI output.
+            _lorebookRawText = serialiseSuggestionsToFreeform(_lorebookSuggestions);
+
+            // Record what changed for the Ledger snapshot
+            const createdUids      = [];
+            const modifiedEntries  = {};
+            for (const [uid, entry] of Object.entries(_draftLorebook.entries)) {
+                const orig = preLorebook.entries[uid];
+                if (!orig) {
+                    createdUids.push(uid);
+                } else if (
+                    orig.content !== entry.content ||
+                    JSON.stringify(orig.key) !== JSON.stringify(entry.key)
+                ) {
+                    modifiedEntries[uid] = { content: orig.content, key: [...(orig.key ?? [])] };
+                }
+            }
+            _lorebookDelta = { createdUids, modifiedEntries };
+            lbOk = true;
+            // Track the sync point for 'lastSync' mode — use trailingBufferBoundary
+            // so it stays consistent with the new sequenceNum convention.
+            getMetaSettings().lastLorebookSyncAt = trailingBufferBoundary;
+            saveSettingsDebounced();
+            console.log(`[CNZ] Lorebook updated: ${createdUids.length} created, ${Object.keys(modifiedEntries).length} modified.`);
+        } catch (err) {
+            console.error('[CNZ] Lorebook update failed:', err);
+            toastr.warning(`CNZ: Lorebook update failed — ${err.message}`);
+        }
+
+        // ── 7. Write Hookseeker output into character scenario ────────────────
+        try {
+            const freshCtx  = SillyTavern.getContext();
+            const freshChar = freshCtx.characters.find(c => c.avatar === char.avatar);
+            if (!freshChar) throw new Error('Character not found in context after AI calls.');
+            const newScenario = writeHookseekerBlock(freshChar.scenario ?? '', hookseekerText.trim());
+            await patchCharacterScenario(freshChar, newScenario);
+            await SillyTavern.getContext().getOneCharacter(freshChar.avatar);
+            hooksOk = true;
+            console.log('[CNZ] Scenario hooks block updated.');
+        } catch (err) {
+            console.error('[CNZ] Scenario update failed:', err);
+            toastr.warning(`CNZ: Scenario update failed — ${err.message}`);
+        }
+
+        // ── 8. Build, classify, and upload RAG chunks ─────────────────────────
+        if (!settings.enableRag) {
+            console.log('[CNZ] RAG disabled — skipping chunk build and upload.');
+        } else
+        try {
+            // Set module state for ragFireChunk/ragDrainQueue machinery
+            _stagedProsePairs      = ragPairs;
+            _stagedPairOffset      = ragPairOffset;
+            _splitPairIdx          = ragPairs.length;      // all gap pairs are archive
+            _ragGlobalGenId++;                             // invalidate any stale callbacks
+            _ragInFlightCount      = 0;
+            _ragCallQueue          = [];
+            _ragChunks             = buildRagChunks(ragPairs, ragPairOffset);
+            _splitIndexWhenRagBuilt = _splitPairIdx;       // guard against spurious rebuild (D-03)
+            _lastSummaryUsedForRag = hookseekerText.trim();
+
+            // Pre-populate headers from chat file — skips AI for already-classified chunks
+            hydrateChunkHeadersFromChat();
+
+            // Enqueue only chunks that weren't hydrated
+            _ragCallQueue = _ragChunks
+                .filter(c => c.status === 'pending')
+                .map(c => c.chunkIndex);
+            ragDrainQueue();
+
+            await waitForRagChunks();
+            renderAllChunkChatLabels();
+
+            const ragText = buildRagDocument(_ragChunks);
+            ragFileName   = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name);
+            ragUrl        = await uploadRagFile(ragText, ragFileName);
+            _lastRagUrl   = ragUrl;
+
+            const byteSize = new TextEncoder().encode(ragText).length;
+            registerCharacterAttachment(char.avatar, ragUrl, ragFileName, byteSize);
+            console.log(`[CNZ] RAG uploaded: ${ragFileName} (${_ragChunks.length} chunks, ${byteSize} bytes).`);
+        } catch (err) {
+            console.error('[CNZ] RAG upload failed:', err);
+            toastr.warning(`CNZ: RAG upload failed — ${err.message}`);
+        }
+
+        // ── 9. Commit Ledger node ─────────────────────────────────────────────
+        try {
+            // Update _priorSituation before buildLedgerNode so state.hooks is correct.
+            _priorSituation = hookseekerText?.trim() ?? '';
+
+            // Hash the message at the trailing buffer boundary — the same position
+            // the Healer resolves via findMessageIndexAtCount(messages, node.sequenceNum).
+            const milestoneMsgIdx   = findMessageIndexAtCount(messages, trailingBufferBoundary);
+            const headChainSummary  = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
+            const prevMilestoneHash = headChainSummary?.milestoneHash ?? null;
+            const milestoneHash     = milestoneMsgIdx >= 0
+                ? await hashMilestone(messages, milestoneMsgIdx, prevMilestoneHash)
+                : null;
+
+            const node = buildLedgerNode(_sessionStartId, trailingBufferBoundary, {}, milestoneHash);
+
+            // Build cumulative ragFiles list: previous node's files + new file (if any).
+            const previousRagFiles  = headNodeFile?.state?.ragFiles ?? [];
+            node.state.ragFiles     = ragFileName
+                ? [...previousRagFiles, ragFileName]
+                : previousRagFiles;
+
+            _sessionStartId = node.nodeId;
+            await commitLedgerManifest(char.avatar, node);
+            ledgerOk = true;
+            console.log(`[CNZ] Ledger committed: nodeId=${node.nodeId}`);
+        } catch (err) {
+            console.error('[CNZ] Ledger commit failed:', err);
+            toastr.warning(`CNZ: Ledger commit failed — ${err.message}`);
+        }
+
+        // ── 10. Report outcome ────────────────────────────────────────────────
+        const ragOk = !settings.enableRag || !!ragUrl;
+        if (lbOk && hooksOk && ragOk) {
+            toastr.success(
+                `CNZ: Chunk ${nonSystemCount} synced. <a href="#" class="cnz-review-link">Review</a>`,
+                '',
+                { timeOut: 8000, escapeHtml: false },
+            );
+            // Handler registered once in init() via event delegation — no per-sync binding.
+        } else {
+            // Partial success — individual steps already warned
+            console.log(`[CNZ] Sync partial: lb=${lbOk} hooks=${hooksOk} rag=${ragOk} ledger=${ledgerOk}`);
+        }
+
+    } finally {
+        _syncInProgress = false;
+    }
+}
+
+/**
+ * Fires on CHAT_CHANGED for same-character chat switches (and once at startup).
+ * Walks the Ledger hash chain against the current chat history to detect branches.
+ * If a branch is found, restores the lorebook and hooks block to the last valid
+ * milestone, rolls the Ledger head back, and orphans the diverged nodes.
+ *
+ * Outcomes:
+ *   - Same timeline (head hash matches) → silent return.
+ *   - No matching node (pre-CNZ or unrelated chat) → silent return.
+ *   - Branch detected → restore + toastr.warning.
+ *   - Restoration failure → toastr.error.
+ *
+ * @param {object} char         Current character object from context.
+ * @param {string} chatFileName Current chat filename (unused directly; kept for signature parity).
+ */
+async function runHealer(char, _chatFileName) {
+    // Ensure ledger is loaded for this character
+    if (!_ledgerManifest) {
+        await fetchOrBootstrapLedger(char.avatar);
+    }
+    if (!_ledgerManifest?.nodes || !_ledgerManifest.headNodeId) return;
+
+    const context  = SillyTavern.getContext();
+    const messages = context.chat ?? [];
+    if (!messages.length) return;
+
+    const chain = buildNodeChain(_ledgerManifest);
+    if (!chain.length) return;
+
+    // Walk root→head: find the deepest node whose hash still matches current messages.
+    let lastValidNodeIdx = -1;
+    for (let i = 0; i < chain.length; i++) {
+        const node     = chain[i];
+        const prevHash = i > 0 ? chain[i - 1].milestoneHash : null;
+        const msgIdx   = findMessageIndexAtCount(messages, node.sequenceNum);
+
+        if (msgIdx === -1) break;  // current chat shorter than this milestone
+
+        // Nodes written before Phase 3 have no milestoneHash — treat as unverifiable.
+        if (!node.milestoneHash) break;
+
+        const computedHash = await hashMilestone(messages, msgIdx, prevHash);
+        if (computedHash === node.milestoneHash) {
+            lastValidNodeIdx = i;
+        } else {
+            break;  // first mismatch — all deeper nodes are also invalid
+        }
+    }
+
+    // Head matches — same timeline, nothing to do.
+    if (lastValidNodeIdx === chain.length - 1) return;
+
+    // No node matched — chat predates CNZ or is unrelated.
+    if (lastValidNodeIdx === -1) return;
+
+    // ── Branch detected ───────────────────────────────────────────────────────
+    const targetNode = chain[lastValidNodeIdx];
+    const turnNum    = targetNode.sequenceNum;
+    console.log(`[CNZ] Healer: branch detected — restoring to Turn ${turnNum} (nodeId=${targetNode.nodeId})`);
+
+    // ── Confirm before touching anything ─────────────────────────────────────
+    const confirmed = await callPopup(
+        `<h3>CNZ: Timeline Branch Detected</h3>
+        <p>The current chat diverges from the last committed sync point at
+        <strong>Turn ${turnNum}</strong>.</p>
+        <p>CNZ will restore world state to that point:</p>
+        <ul>
+            <li>Lorebook entries rolled back</li>
+            <li>Narrative hooks rolled back</li>
+            <li>RAG files for orphaned turns removed</li>
+            <li>Vector index purged and rebuilt</li>
+        </ul>
+        <p>This cannot be undone.</p>`,
+        'confirm',
+    );
+
+    if (!confirmed) {
+        console.log('[CNZ] Healer: user cancelled restoration.');
+        toastr.warning(
+            'CNZ: Timeline branch detected but restoration was cancelled — ' +
+            'world state may not match the current chat.',
+            '',
+            { timeOut: 0, extendedTimeOut: 0, closeButton: true },
+        );
+        return;
+    }
+
+    try {
+        const targetNodeFile = await fetchLedgerNodeFile(char.avatar, targetNode.nodeId);
+        if (!targetNodeFile) throw new Error(`Could not fetch node file for ${targetNode.nodeId}`);
+
+        await restoreLorebookToNode(char, targetNode, targetNodeFile);
+        await restoreHooksToNode(char, targetNode, targetNodeFile);
+
+        try {
+            await restoreRagToNode(char, targetNodeFile);
+        } catch (err) {
+            console.error('[CNZ] Healer: RAG reconciliation failed:', err);
+            toastr.warning('CNZ: Branch healed but RAG reconciliation failed — vector index may be inconsistent.');
+        }
+
+        // Orphan all nodes that descended past the branch point
+        for (let i = lastValidNodeIdx + 1; i < chain.length; i++) {
+            chain[i].status = 'orphaned';
+        }
+
+        // Roll back the Ledger head
+        _ledgerManifest.headNodeId = targetNode.nodeId;
+        _sessionStartId            = targetNode.nodeId;
+
+        await commitLedgerManifest(char.avatar);
+
+        toastr.warning(`CNZ: Branch detected — restored to Turn ${turnNum}. Vector index rebuilt.`);
+        console.log(`[CNZ] Healer: restoration complete. Head → ${targetNode.nodeId}`);
+    } catch (err) {
+        console.error('[CNZ] Healer: restoration failed:', err);
+        toastr.error('CNZ: Branch detected but restoration failed — lorebook may be inconsistent.');
+    }
+}
+
+// ─── Prompt Modal ─────────────────────────────────────────────────────────────
+
+/**
+ * Opens the prompt-editor popup for a given settings key.
+ * Changes are saved live on input; the modal is closed with the Close button
+ * or by clicking the overlay backdrop.
+ * @param {string}      settingsKey        Key in extension_settings[EXT_NAME] to read/write.
+ * @param {string}      title              Title displayed in the modal header.
+ * @param {string}      defaultValue       Value used by the "Reset to Default" button.
+ * @param {string[]}    vars               Template variable names to display as badges.
+ * @param {string|null} trailingPromptKey  Optional settings key for a trailing prompt shown below the main textarea.
+ */
+function openPromptModal(settingsKey, title, defaultValue, vars = [], trailingPromptKey = null) {
+    const $overlay         = $('#cnz-pm-overlay');
+    const $textarea        = $('#cnz-pm-textarea');
+    const $titleEl         = $('#cnz-pm-title');
+    const $reset           = $('#cnz-pm-reset');
+    const $close           = $('#cnz-pm-close');
+    const $vars            = $('#cnz-pm-vars');
+    const $trailingSection = $('#cnz-pm-trailing-section');
+    const $trailingArea    = $('#cnz-pm-trailing-textarea');
+
+    $titleEl.text(title);
+    $textarea.val(getSettings()[settingsKey] ?? defaultValue);
+    $vars.html(vars.map(v => `<code class="cnz-pm-var">{{${v}}}</code>`).join(' '));
+
+    if (trailingPromptKey) {
+        $trailingArea.val(getSettings()[trailingPromptKey] ?? '');
+        $trailingSection.removeClass('cnz-hidden');
+    } else {
+        $trailingSection.addClass('cnz-hidden');
+    }
+
+    // Unbind any previous open's handlers before re-binding
+    $textarea.off('input.pm');
+    $trailingArea.off('input.pm');
+    $reset.off('click.pm');
+    $close.off('click.pm');
+    $overlay.off('click.pm');
+    $('#cnz-pm-modal').off('click.pm').on('click.pm', e => e.stopPropagation());
+
+    $textarea.on('input.pm', function () {
+        getSettings()[settingsKey] = $(this).val();
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    if (trailingPromptKey) {
+        $trailingArea.on('input.pm', function () {
+            getSettings()[trailingPromptKey] = $(this).val();
+            saveSettingsDebounced(); updateDirtyIndicator();
+        });
+    }
+
+    $reset.on('click.pm', function () {
+        getSettings()[settingsKey] = defaultValue;
+        $textarea.val(defaultValue);
+        if (trailingPromptKey) {
+            getSettings()[trailingPromptKey] = '';
+            $trailingArea.val('');
+        }
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    const closePromptModal = (e) => {
+        e?.stopPropagation();
+        $overlay.addClass('cnz-hidden');
+    };
+    $close.on('click.pm', closePromptModal);
+    $overlay.on('click.pm', function (e) {
+        if (e.target === this) closePromptModal(e);
+    });
+
+    $overlay.removeClass('cnz-hidden');
+    requestAnimationFrame(() => $textarea[0]?.focus());
+}
+
+/**
+ * @section Settings Panel
+ * @architectural-role Extension Settings UI
+ * @description
+ * Owns the extension settings UI rendered in the ST extensions panel.
+ * Manages profile creation, switching, and deletion; binds all input
+ * handlers to activeState; and controls visibility of dependent controls
+ * (e.g. RAG AI controls hidden when RAG is disabled). The prompt modal
+ * for editing multi-line prompts is also launched from here.
+ * @core-principles
+ *   1. All handlers write to activeState first, then call saveSettingsDebounced.
+ *   2. refreshSettingsUI is the single source of truth for control state — never set DOM directly.
+ * @api-declaration
+ *   injectSettingsPanel, bindSettingsHandlers, refreshSettingsUI,
+ *   refreshProfileDropdown, updateDirtyIndicator,
+ *   updateRagAiControlsVisibility, openPromptModal
+ * @contract
+ *   assertions:
+ *     external_io: [none]
+ */
+// ─── Settings Panel ───────────────────────────────────────────────────────────
+
+/** True if activeState differs from the saved profile snapshot. */
+function isStateDirty() {
+    const meta = getMetaSettings();
+    return JSON.stringify(meta.activeState) !== JSON.stringify(meta.profiles[meta.currentProfileName]);
+}
+
+/** Updates the profile dropdown label to append '*' when state is dirty. */
+function updateDirtyIndicator() {
+    const meta  = getMetaSettings();
+    const label = meta.currentProfileName + (isStateDirty() ? ' *' : '');
+    const $sel  = $('#cnz-profile-select');
+    $sel.find(`option[value="${CSS.escape(meta.currentProfileName)}"]`).text(label);
+    $sel.val(meta.currentProfileName);
+}
+
+/**
+ * Repopulates all settings inputs from activeState. Called after loading a profile.
+ * Connection profile dropdowns are re-initialized via handleDropdown, which
+ * requires the element to already be in the DOM.
+ */
+function refreshSettingsUI() {
+    const s = getSettings();
+
+    $('#cnz-set-live-context-buffer').val(s.liveContextBuffer ?? 5);
+    $('#cnz-set-chunk-every-n').val(s.chunkEveryN ?? 20);
+    $('#cnz-set-gap-snooze').val(s.gapSnoozeTurns ?? 5);
+    $('#cnz-set-hookseeker-horizon').val(s.hookseekerHorizon ?? 70);
+    $('#cnz-set-lorebook-sync-start').val(s.lorebookSyncStart ?? 'syncTurn');
+    $('#cnz-set-auto-advance-mask').prop('checked', s.autoAdvanceMask ?? false);
+    $('#cnz-set-enable-rag').prop('checked', s.enableRag ?? false);
+    $('#cnz-rag-settings-body').toggleClass('cnz-disabled', !(s.enableRag ?? false));
+    $('#cnz-set-rag-separator').val(s.ragSeparator ?? DEFAULT_SEPARATOR);
+    $('#cnz-set-rag-contents').val(s.ragContents ?? 'summary+full');
+
+    const hasSummary = (s.ragContents ?? 'summary+full') !== 'full';
+    $('#cnz-rag-summary-source-row').toggleClass('cnz-hidden', !hasSummary);
+    $('#cnz-set-rag-summary-source').val(s.ragSummarySource ?? 'defined');
+    $('#cnz-set-rag-max-tokens').val(s.ragMaxTokens ?? 100);
+    $('#cnz-set-rag-chunk-size').val(s.ragChunkSize ?? 2);
+    $('#cnz-set-rag-chunk-overlap').val(s.ragChunkOverlap ?? 0);
+    $('#cnz-set-rag-max-concurrent').val(s.maxConcurrentCalls ?? DEFAULT_CONCURRENCY);
+    $('#cnz-set-rag-retries').val(s.ragMaxRetries ?? 1);
+    updateRagAiControlsVisibility();
+
+    // Re-initialize connection profile dropdowns with the newly loaded values.
+    try {
+        ConnectionManagerRequestService.handleDropdown(
+            '#cnz-set-profile',
+            s.profileId ?? '',
+            (profile) => { getSettings().profileId = profile?.id ?? null; saveSettingsDebounced(); updateDirtyIndicator(); },
+        );
+    } catch (e) { /* silent */ }
+    try {
+        ConnectionManagerRequestService.handleDropdown(
+            '#cnz-set-rag-profile',
+            s.ragProfileId ?? '',
+            (profile) => { getSettings().ragProfileId = profile?.id ?? null; saveSettingsDebounced(); updateDirtyIndicator(); },
+        );
+    } catch (e) { /* silent */ }
+
+    updateDirtyIndicator();
+}
+
+/** Rebuilds the profile <select> options from the current profiles dict. */
+function refreshProfileDropdown() {
+    const meta = getMetaSettings();
+    const $sel = $('#cnz-profile-select');
+    $sel.empty();
+    for (const name of Object.keys(meta.profiles)) {
+        $sel.append($('<option>').val(name).text(name));
+    }
+    updateDirtyIndicator();
+}
+
+function bindSettingsHandlers() {
+    // ── Summary / Lorebook ────────────────────────────────────────────────────
+    $('#cnz-set-live-context-buffer').on('input', function () {
+        const val = Math.max(0, parseInt($(this).val()) || 5);
+        getSettings().liveContextBuffer = val;
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-chunk-every-n').on('input', function () {
+        const val = Math.max(1, parseInt($(this).val()) || 20);
+        getSettings().chunkEveryN = val;
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-gap-snooze').on('input', function () {
+        const val = Math.max(1, parseInt($(this).val()) || 5);
+        getSettings().gapSnoozeTurns = val;
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-hookseeker-horizon').on('input', function () {
+        const val = Math.max(1, parseInt($(this).val()) || 70);
+        getSettings().hookseekerHorizon = val;
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-lorebook-sync-start').on('change', function () {
+        getSettings().lorebookSyncStart = $(this).val();
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-auto-advance-mask').on('change', function () {
+        getSettings().autoAdvanceMask = $(this).prop('checked');
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-edit-summary-prompt').on('click', () =>
+        openPromptModal('hookseekerPrompt', 'Edit Summary Prompt', DEFAULT_HOOKSEEKER_PROMPT,
+            ['transcript', 'prev_summary'], 'hookseekerTrailingPrompt'));
+
+    $('#cnz-edit-lorebook-prompt').on('click', () =>
+        openPromptModal('lorebookSyncPrompt', 'Edit Lorebook Sync Prompt', DEFAULT_LOREBOOK_SYNC_PROMPT,
+            ['lorebook_entries', 'transcript']));
+
+    $('#cnz-edit-targeted-update-prompt').on('click', () =>
+        openPromptModal('targetedUpdatePrompt', 'Edit Targeted Update Prompt',
+            DEFAULT_TARGETED_UPDATE_PROMPT,
+            ['entry_name', 'entry_keys', 'entry_content', 'transcript']));
+
+    $('#cnz-edit-targeted-new-prompt').on('click', () =>
+        openPromptModal('targetedNewPrompt', 'Edit Targeted New Entry Prompt',
+            DEFAULT_TARGETED_NEW_PROMPT,
+            ['entry_name', 'transcript']));
+
+    // ── RAG ───────────────────────────────────────────────────────────────────
+    $('#cnz-set-enable-rag').on('change', function () {
+        getSettings().enableRag = $(this).prop('checked');
+        saveSettingsDebounced(); updateDirtyIndicator();
+        $('#cnz-rag-settings-body').toggleClass('cnz-disabled', !getSettings().enableRag);
+    });
+
+    $('#cnz-set-rag-separator').on('change', function () {
+        const newVal   = $(this).val();
+        const oldVal   = getSettings().ragSeparator ?? '';
+        if (newVal === oldVal) return;
+
+        // Count stored chunk headers in the current chat
+        const chat       = SillyTavern.getContext().chat ?? [];
+        const storedCount = chat.filter(m => m.extra?.cnz_chunk_header).length;
+
+        if (storedCount > 0) {
+            const approxTurns = storedCount * (getSettings().ragChunkSize ?? 2);
+            const confirmed   = confirm(
+                `Changing the separator invalidates ${storedCount} stored chunk header(s) ` +
+                `(~${approxTurns} turns).\n\n` +
+                `All headers will be cleared and reclassified, and your external vector store ` +
+                `will need to resync.\n\nProceed?`
+            );
+            if (!confirmed) {
+                $(this).val(oldVal);   // revert the input
+                return;
+            }
+            // Clear stored headers from all chat messages
+            for (const m of chat) {
+                if (m.extra?.cnz_chunk_header) {
+                    delete m.extra.cnz_chunk_header;
+                    delete m.extra.cnz_turn_label;
+                }
+            }
+            SillyTavern.getContext().saveChat().catch(err =>
+                console.error('[CNZ] saveChat after separator clear failed:', err),
+            );
+            // Mark any in-memory chunks as pending so they reclassify on next open
+            for (const c of _ragChunks) {
+                if (c.status === 'complete' || c.status === 'manual') c.status = 'pending';
+            }
+        }
+
+        getSettings().ragSeparator = newVal;
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-rag-contents').on('change', function () {
+        getSettings().ragContents = $(this).val();
+        saveSettingsDebounced(); updateDirtyIndicator();
+        const hasSummary = $(this).val() !== 'full';
+        $('#cnz-rag-summary-source-row').toggleClass('cnz-hidden', !hasSummary);
+        updateRagAiControlsVisibility();
+    });
+
+    $('#cnz-set-rag-summary-source').on('change', function () {
+        getSettings().ragSummarySource = $(this).val();
+        saveSettingsDebounced(); updateDirtyIndicator();
+        updateRagAiControlsVisibility();
+    });
+
+    $('#cnz-set-rag-max-tokens').on('input', function () {
+        const val = parseInt($(this).val(), 10);
+        if (!isNaN(val) && val >= 1) {
+            getSettings().ragMaxTokens = val;
+            saveSettingsDebounced(); updateDirtyIndicator();
+        }
+    });
+
+    $('#cnz-set-rag-chunk-size').on('input', function () {
+        const val = Math.max(1, parseInt($(this).val()) || 2);
+        getSettings().ragChunkSize = val;
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-rag-chunk-overlap').on('change', function () {
+        getSettings().ragChunkOverlap = parseInt($(this).val()) || 0;
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-rag-max-concurrent').on('input', function () {
+        const val = Math.max(1, parseInt($(this).val()) || DEFAULT_CONCURRENCY);
+        getSettings().maxConcurrentCalls = val;
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-rag-retries').on('input', function () {
+        const val = Math.max(0, parseInt($(this).val()) || 0);
+        getSettings().ragMaxRetries = val;
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-edit-classifier-prompt').on('click', () =>
+        openPromptModal('ragClassifierPrompt', 'Edit Classifier Prompt', DEFAULT_RAG_CLASSIFIER_PROMPT,
+            ['summary', 'target_turns']));
+
+    // ── Connection profiles ───────────────────────────────────────────────────
+    try {
+        ConnectionManagerRequestService.handleDropdown(
+            '#cnz-set-profile',
+            getSettings().profileId ?? '',
+            (profile) => {
+                getSettings().profileId = profile?.id ?? null;
+                saveSettingsDebounced(); updateDirtyIndicator();
+            },
+        );
+    } catch (e) {
+        console.warn('[CNZ] Could not initialize profile dropdown:', e);
+    }
+
+    try {
+        ConnectionManagerRequestService.handleDropdown(
+            '#cnz-set-rag-profile',
+            getSettings().ragProfileId ?? '',
+            (profile) => {
+                getSettings().ragProfileId = profile?.id ?? null;
+                saveSettingsDebounced(); updateDirtyIndicator();
+            },
+        );
+    } catch (e) {
+        console.warn('[CNZ] Could not initialize RAG profile dropdown:', e);
+    }
+
+    // ── Profile management ────────────────────────────────────────────────────
+    $('#cnz-profile-select').on('change', function () {
+        const newName = $(this).val();
+        const meta    = getMetaSettings();
+        if (!meta.profiles[newName]) return;
+        meta.currentProfileName = newName;
+        meta.activeState        = structuredClone(meta.profiles[newName]);
+        saveSettingsDebounced();
+        refreshSettingsUI();
+    });
+
+    $('#cnz-profile-save').on('click', function () {
+        const meta = getMetaSettings();
+        meta.profiles[meta.currentProfileName] = structuredClone(meta.activeState);
+        saveSettingsDebounced();
+        updateDirtyIndicator();
+    });
+
+    $('#cnz-profile-add').on('click', async function () {
+        const rawName = await callPopup('<h3>New profile name</h3>', 'input', '');
+        const name    = (rawName ?? '').trim();
+        if (!name) return;
+        const meta = getMetaSettings();
+        if (meta.profiles[name]) {
+            toastr.warning(`Profile "${name}" already exists.`);
+            return;
+        }
+        meta.profiles[name]     = structuredClone(meta.activeState);
+        meta.currentProfileName = name;
+        saveSettingsDebounced();
+        refreshProfileDropdown();
+    });
+
+    $('#cnz-profile-rename').on('click', async function () {
+        const meta    = getMetaSettings();
+        const rawName = await callPopup('<h3>Rename profile</h3>', 'input', meta.currentProfileName);
+        const newName = (rawName ?? '').trim();
+        if (!newName || newName === meta.currentProfileName) return;
+        if (meta.profiles[newName]) {
+            toastr.warning(`Profile "${newName}" already exists.`);
+            return;
+        }
+        meta.profiles[newName] = meta.profiles[meta.currentProfileName];
+        delete meta.profiles[meta.currentProfileName];
+        meta.currentProfileName = newName;
+        saveSettingsDebounced();
+        refreshProfileDropdown();
+    });
+
+    $('#cnz-profile-delete').on('click', async function () {
+        const meta = getMetaSettings();
+        if (Object.keys(meta.profiles).length <= 1) {
+            toastr.warning('Cannot delete the only profile.');
+            return;
+        }
+        const confirmed = await callPopup(
+            `<h3>Delete profile "${escapeHtml(meta.currentProfileName)}"?</h3>This cannot be undone.`,
+            'confirm',
+        );
+        if (!confirmed) return;
+        delete meta.profiles[meta.currentProfileName];
+        meta.currentProfileName = Object.keys(meta.profiles)[0];
+        meta.activeState        = structuredClone(meta.profiles[meta.currentProfileName]);
+        saveSettingsDebounced();
+        refreshProfileDropdown();
+        refreshSettingsUI();
+    });
+
+    $('#cnz-inspect-ledger').on('click', function () {
+        openLedgerInspector();
+    });
+
+    $('#cnz-purge-ledger').on('click', async function () {
+        // Guard conditions
+        if (_syncInProgress) {
+            toastr.warning('CNZ: Sync in progress — wait for it to complete before purging.');
+            return;
+        }
+        const ctx  = SillyTavern.getContext();
+        const char = ctx?.characters?.[ctx?.characterId];
+        if (!char) {
+            toastr.error('CNZ: No character selected.');
+            return;
+        }
+
+        // Confirmation modal — names the character and lists exactly what will be deleted.
+        const confirmed = await callPopup(`
+<h3>Purge CNZ Ledger</h3>
+<p>You are about to purge the CNZ sync history for:</p>
+<p><strong>${escapeHtml(char.name)}</strong></p>
+<p>This will permanently delete:</p>
+<ul>
+  <li>The narrative ledger and all committed sync points</li>
+  <li>The last sync position (next sync will start fresh)</li>
+  <li>Stored chunk classification headers in this chat (optional — see checkbox below)</li>
+</ul>
+<p>This cannot be undone. The character's lorebook and hookseeker summary are <strong>NOT</strong> affected — only the sync tracking is cleared.</p>
+<label style="display:flex;align-items:center;gap:0.5em;margin-top:0.75em;">
+  <input type="checkbox" id="cnz-purge-clear-headers" checked>
+  Also clear stored chunk headers from chat messages
+</label>`,
+            'confirm',
+        );
+        if (!confirmed) return;
+
+        const clearHeaders = document.getElementById('cnz-purge-clear-headers')?.checked ?? true;
+
+        // 1. Delete the ledger file from the Data Bank
+        const meta       = getMetaSettings();
+        const ledgerPath = meta.ledgerPaths?.[char.avatar];
+        if (ledgerPath) {
+            try {
+                await fetch('/api/files/delete', {
+                    method:  'POST',
+                    headers: getRequestHeaders(),
+                    body:    JSON.stringify({ path: ledgerPath }),
+                });
+            } catch (err) {
+                console.warn('[CNZ] Purge: ledger file delete failed (continuing):', err);
+            }
+        }
+
+        // 2. Clear the ledger path from settings
+        delete meta.ledgerPaths[char.avatar];
+        saveSettingsDebounced();
+
+        // 3. Reset in-memory ledger state
+        _ledgerManifest = null;
+        _sessionStartId = null;
+
+        // 4. Reset lastLorebookSyncAt
+        meta.lastLorebookSyncAt = null;
+        saveSettingsDebounced();
+
+        // 5. Optionally clear chunk headers from chat messages
+        if (clearHeaders) {
+            const chat = ctx.chat ?? [];
+            let modified = false;
+            for (const msg of chat) {
+                if (msg.extra?.cnz_chunk_header !== undefined || msg.extra?.cnz_turn_label !== undefined) {
+                    delete msg.extra.cnz_chunk_header;
+                    delete msg.extra.cnz_turn_label;
+                    modified = true;
+                }
+            }
+            if (modified) {
+                ctx.saveChat().catch(err => console.error('[CNZ] Purge: saveChat failed:', err));
+            }
+        }
+
+        // 6. Reset staged pairs and chunks
+        _stagedProsePairs       = [];
+        _splitPairIdx           = 0;
+        _stagedPairOffset       = 0;
+        _ragChunks              = [];
+        _splitIndexWhenRagBuilt = null;
+        clearChunkChatLabels();
+
+        // 7. Report
+        toastr.success('CNZ: Ledger purged — next sync will treat this character as new.');
+    });
+}
+
+/**
+ * Shows/hides the RAG AI controls subgroup based on current ragContents and
+ * ragSummarySource settings. Called on init and on dropdown changes.
+ */
+function updateRagAiControlsVisibility() {
+    const s = getSettings();
+    const hasSummary    = (s.ragContents ?? 'summary+full') !== 'full';
+    const isDefinedHere = (s.ragSummarySource ?? 'defined') === 'defined';
+    $('#cnz-rag-ai-controls').toggleClass('cnz-disabled', !(hasSummary && isDefinedHere));
+}
+
+function injectSettingsPanel() {
+    if ($('#cnz-settings').length) return;
+    const meta = getMetaSettings();
+    $('#extensions_settings').append(
+        buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName),
+    );
+    bindSettingsHandlers();
+    refreshProfileDropdown();
+    updateRagAiControlsVisibility();
+}
+
+/**
+ * @section Event Handlers and Init
+ * @architectural-role ST Event Bindings and Extension Entry Point
+ * @description
+ * Owns the ST event bindings, the wand button, and the extension entry point.
+ * The pump trigger (onMessageReceived) fires after each AI message and decides
+ * whether to run a sync cycle. onChatChanged resets session state and triggers
+ * the Healer on character switch. Delegated click handlers dispatch wand menu
+ * actions. `init` registers all event listeners and injects persistent UI.
+ * @core-principles
+ *   1. No business logic here — handlers delegate immediately to engine functions.
+ *   2. checkOrphans runs once on init and on chat change; it never blocks the event loop.
+ * @api-declaration
+ *   onMessageReceived, onChatChanged, onWandButtonClick, injectWandButton,
+ *   checkOrphans, init
+ * @contract
+ *   assertions:
+ *     external_io: [eventSource, /api/chats/saveChat]
+ */
+// ─── Event Handlers ───────────────────────────────────────────────────────────
+
+async function onMessageReceived() {
+    const context = SillyTavern.getContext();
+    if (!context || context.groupId || context.characterId == null) return;
+    if (!getSettings().autoSync) return;
+
+    const messages = context.chat ?? [];
+    const count    = messages.filter(m => !m.is_system).length;
+    const every    = getSettings().chunkEveryN ?? 20;
+    if (every <= 0 || count <= 0) return;
+
+    // ── Snooze check ──────────────────────────────────────────────────────────
+    if (count <= _snoozeUntilCount) return;
+
+    // ── Gap detection ─────────────────────────────────────────────────────────
+    // Ledger not loaded yet — bootstrap it in the background and skip this
+    // trigger. The next MESSAGE_RECEIVED will find the manifest ready.
+    if (!_ledgerManifest) {
+        const char = context.characters[context.characterId];
+        fetchOrBootstrapLedger(char.avatar).catch(err =>
+            console.error('[CNZ] onMessageReceived: ledger bootstrap failed:', err),
+        );
+        return;
+    }
+
+    // headNode.sequenceNum is the trailingBufferBoundary at the last commit.
+    // Compute the current trailing boundary and compare against it to find
+    // how many new turns are ready to be canonized.
+    const headNode            = _ledgerManifest.nodes?.[_ledgerManifest.headNodeId];
+    const priorSequenceNum    = headNode?.sequenceNum ?? 0;
+    const liveContextBuffer   = getSettings().liveContextBuffer ?? 5;
+    const trailingBoundary    = Math.max(0, count - liveContextBuffer);
+    const gap                 = trailingBoundary - priorSequenceNum;
+
+    if (gap < every) return;  // not enough new turns yet
+
+    const char = context.characters[context.characterId];
+
+    if (gap < every * 2) {
+        // Standard case — one window's worth of new turns, run silently.
+        runCnzSync(char, messages).catch(err =>
+            console.error('[CNZ] runCnzSync uncaught error:', err),
+        );
+        return;
+    }
+
+    // ── Large-gap path ────────────────────────────────────────────────────────
+    // Auto-run the standard window sync first so the user gets fast feedback,
+    // then offer to also canonize the remaining older turns.
+    if (_syncInProgress) return;  // already running from a prior trigger
+
+    try {
+        await runCnzSync(char, messages);
+    } catch (err) {
+        console.error('[CNZ] runCnzSync uncaught error:', err);
+        return;
+    }
+
+    // Re-read the head after the window sync — it may have covered the gap.
+    const newHead      = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
+    const newPrior     = newHead?.sequenceNum ?? 0;
+    const remaining    = trailingBoundary - newPrior;  // use same trailingBoundary
+    const snoozeTurns  = getSettings().gapSnoozeTurns ?? 5;
+
+    if (remaining < every) return;  // window sync was enough
+
+    // Show a persistent (non-blocking) toast — user clicks Sync all or Snooze
+    toastr.warning(
+        `CNZ: ${remaining} uncaptured turn(s). ` +
+        `<a href="#" class="cnz-gap-sync-all">Sync all</a> &nbsp; ` +
+        `<a href="#" class="cnz-gap-snooze">Snooze ${snoozeTurns} turns</a>`,
+        '',
+        { timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false },
+    );
+}
+
+/**
+ * Checks whether any files tracked in knownFiles are no longer referenced by
+ * any ledger manifest. Shows a persistent dismissible toast if orphans are found.
+ * Uses only in-memory manifests + ledgerPaths; does not fetch additional files.
+ */
+function checkOrphans() {
+    const meta      = getMetaSettings();
+    const knownFiles = meta.knownFiles ?? [];
+    if (!knownFiles.length) return;
+
+    const ledgerPaths = meta.ledgerPaths ?? {};
+    const expectedPaths = new Set(Object.values(ledgerPaths));
+
+    // Add node file paths derivable from the currently-loaded manifest
+    if (_ledgerManifest?.nodes) {
+        const manifestPath = ledgerPaths[_ledgerManifest.avatarKey]
+            ?? Object.entries(ledgerPaths).find(
+                   ([k]) => cnzAvatarKey(k) === _ledgerManifest.avatarKey
+               )?.[1]
+            ?? null;
+
+        if (manifestPath) {
+            const lastSlash = manifestPath.lastIndexOf('/');
+            const baseDir   = lastSlash >= 0 ? manifestPath.slice(0, lastSlash + 1) : '';
+            for (const nodeId of Object.keys(_ledgerManifest.nodes)) {
+                expectedPaths.add(baseDir + cnzFileName(_ledgerManifest.avatarKey, 'node', nodeId));
+            }
+        }
+    }
+
+    const orphans = knownFiles.filter(p => !expectedPaths.has(p));
+    if (!orphans.length) return;
+
+    _pendingOrphans = orphans;
+    console.warn('[CNZ] Orphan check: found', orphans.length, 'unreferenced file(s):', orphans);
+    toastr.warning(
+        `CNZ: ${orphans.length} unreferenced file${orphans.length !== 1 ? 's' : ''} detected in Data Bank. <a href="#" class="cnz-orphan-review">Review</a> <a href="#" class="cnz-orphan-dismiss">Dismiss</a>`,
+        '',
+        { timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false },
+    );
+}
+
+function onChatChanged() {
+    const context = SillyTavern.getContext();
+    if (!context || context.characterId == null) {
+        _lastKnownAvatar = null;
+        return;
+    }
+
+    const char         = context.characters[context.characterId];
+    const chatFileName = char?.chat ?? null;
+
+    // Character switched — reset cached ledger (it belongs to the old character),
+    // then bootstrap the new character's ledger and run the Healer.
+    if (!char || char.avatar !== _lastKnownAvatar) {
+        _ledgerManifest    = null;
+        _lastKnownAvatar   = char?.avatar ?? null;
+        _stagedProsePairs  = [];
+        _stagedPairOffset  = 0;
+        _splitPairIdx      = 0;
+        _ragChunks          = [];
+        _splitIndexWhenRagBuilt = null;
+        _parentNodeLorebook = null;
+        clearChunkChatLabels();
+        if (char) {
+            fetchOrBootstrapLedger(char.avatar)
+                .then(() => {
+                    console.log(`[CNZ] Ledger loaded on chat open — headNodeId=${_ledgerManifest?.headNodeId ?? 'none (fresh)'}`);
+                    checkOrphans();
+                    return runHealer(char, char.chat);
+                })
+                .catch(err => console.error('[CNZ] onChatChanged: bootstrap/healer failed:', err));
+        }
+        return;
+    }
+
+    // Same character, different chat — Healer territory
+    if (chatFileName) {
+        runHealer(char, chatFileName).catch(err =>
+            console.error('[CNZ] runHealer uncaught error:', err),
+        );
+    }
+}
+
+// ─── Wand Menu Button ─────────────────────────────────────────────────────────
+
+/**
+ * Shows a three-button choice dialog. Returns a Promise that resolves to
+ * 'full', 'window', or 'cancel'.
+ * @param {string} bodyHtml   Inner HTML for the message body.
+ * @param {string} fullLabel  Label for the "full gap" button.
+ * @param {string} winLabel   Label for the "standard window" button.
+ */
+function showSyncChoicePopup(bodyHtml, fullLabel, winLabel) {
+    return new Promise(resolve => {
+        const $overlay = $(`
+            <div class="cnz-choice-overlay">
+                <div class="cnz-choice-dialog">
+                    ${bodyHtml}
+                    <div class="cnz-choice-buttons">
+                        <button class="cnz-choice-full menu_button">${fullLabel}</button>
+                        <button class="cnz-choice-win menu_button">${winLabel}</button>
+                        <button class="cnz-choice-cancel menu_button">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        `);
+        $overlay.find('.cnz-choice-full').on('click',   () => { $overlay.remove(); resolve('full'); });
+        $overlay.find('.cnz-choice-win').on('click',    () => { $overlay.remove(); resolve('window'); });
+        $overlay.find('.cnz-choice-cancel').on('click', () => { $overlay.remove(); resolve('cancel'); });
+        $('body').append($overlay);
+    });
+}
+
+/**
+ * Handles the CNZ wand toolbar button. Decision tree:
+ *  - gap < chunkEveryN:  open review modal only (not enough turns to sync)
+ *  - gap === chunkEveryN: run standard sync then open modal
+ *  - gap > chunkEveryN:  show blocking choice popup (window vs all)
+ */
+async function onWandButtonClick() {
+    const ctx = SillyTavern.getContext();
+    if (!ctx || ctx.groupId || ctx.characterId == null) {
+        toastr.error('CNZ: No character selected.');
+        return;
+    }
+    if (_syncInProgress) {
+        toastr.warning('CNZ: Sync already in progress — please wait.');
+        return;
+    }
+
+    const char         = ctx.characters[ctx.characterId];
+    const messages     = ctx.chat ?? [];
+    const currentCount = messages.filter(m => !m.is_system).length;
+    const settings     = getSettings();
+    const lcb          = settings.liveContextBuffer ?? 5;
+    const tbb          = Math.max(0, currentCount - lcb);
+    const ledgerHead   = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
+    const gap          = ledgerHead != null ? tbb - ledgerHead.sequenceNum : tbb;
+
+    // ── DEBUG: manual trigger state ───────────────────────────────────────────
+    console.log(
+        `[CNZ-DBG] ═══ MANUAL TRIGGER ═══\n` +
+        `  char:                ${char.name}\n` +
+        `  total turns:         ${currentCount} non-system\n` +
+        `  liveContextBuffer:   ${lcb}  →  trailingBufferBoundary=${tbb}\n` +
+        `  gap:                 ${isFinite(gap) ? gap : '∞ (never synced)'}\n` +
+        `  windowSize:          ${settings.chunkEveryN ?? 20}\n` +
+        `  ledger head:         ${ledgerHead ? `nodeId=${ledgerHead.nodeId} seqNum=${ledgerHead.sequenceNum}` : 'none (never committed)'}`
+    );
+
+    // ── DEBUG: PLANNED WINDOWS (what SHOULD go to each AI, computed from current state) ──
+    {
+        // All pairs up to the trailing buffer boundary
+        const _allPairs = buildProsePairs(messages).filter(p => p.validIdx < tbb);
+
+        // Hook window: full gap from ledger head to buffer boundary (standard, non-coverAll)
+        let _hookPairs;
+        if (!ledgerHead) {
+            _hookPairs = _allPairs;
+        } else {
+            const _startIdx = _allPairs.findIndex(p => p.validIdx >= ledgerHead.sequenceNum);
+            _hookPairs = _startIdx === -1 ? [] : _allPairs.slice(_startIdx);
+        }
+
+        // Live context (buffer) turns — NOT sent to any AI
+        const _livePairs = buildProsePairs(messages).filter(p => p.validIdx >= tbb);
+
+        // Lorebook window
+        const _lbMode    = getSettings().lorebookSyncStart ?? 'syncTurn';
+        const _lastSyncT = getMetaSettings().lastLorebookSyncAt;
+        let _lbPairs;
+        if (_lbMode === 'lastSync' && _lastSyncT != null) {
+            let _nsL = 0;
+            const _msgsFromLastSync = messages.filter(m => {
+                if (!m.is_system) _nsL++;
+                return m.is_system || _nsL > _lastSyncT;
+            });
+            _lbPairs = buildProsePairs(_msgsFromLastSync).filter(p => p.validIdx < tbb);
+        } else {
+            _lbPairs = null; // same as hook window
+        }
+
+        // RAG window: the full uncommitted gap
+        let _ragPairs;
+        if (!ledgerHead) {
+            _ragPairs = _allPairs;
+        } else {
+            const _startIdx = _allPairs.findIndex(p => p.validIdx >= ledgerHead.sequenceNum);
+            _ragPairs       = _startIdx === -1 ? [] : _allPairs.slice(_startIdx);
+        }
+
+        const _fmt = pairs => pairs.length
+            ? pairs.map(p => `[validIdx=${p.validIdx}] ${p.user?.name ?? '?'} → ${p.messages?.[0]?.name ?? '?'}`).join('\n      ')
+            : '(none)';
+
+        console.log(
+            `[CNZ-DBG] ═══ PLANNED WINDOWS (standard window — what SHOULD be sent) ═══\n` +
+            `\n  CONTEXT MASK — turns hidden from main AI prompt (ledger head seqNum=${ledgerHead?.sequenceNum ?? 'none'}):\n` +
+            `      (determined by ledger head — see CHAT_COMPLETION_PROMPT_READY handler)` +
+            `\n\n  LIVE CONTEXT BUFFER — last ${lcb} turns, NOT sent to any AI:\n` +
+            `      ` + _fmt(_livePairs) +
+            `\n\n  HOOKSEEKER AI — gap from ledger head to buffer boundary (${_hookPairs.length} pairs):\n` +
+            `      ` + _fmt(_hookPairs) +
+            `\n\n  LOREBOOK AI — ${_lbPairs ? `lastSync mode, from after turn ${_lastSyncT} (${_lbPairs.length} pairs)` : `same window as hookseeker (${_hookPairs.length} pairs)`}:\n` +
+            `      ` + (_lbPairs ? _fmt(_lbPairs) : '(same as hookseeker)') +
+            `\n\n  RAG SUMMARIZER — gap chunk${ledgerHead ? ` after seqNum=${ledgerHead.sequenceNum}` : ' (first sync — all turns)'} (${_ragPairs.length} pairs):\n` +
+            `      ` + _fmt(_ragPairs)
+        );
+    }
+
+    // Nothing new to sync yet (everything committed, or gap below threshold) — open modal directly.
+    if (gap < (settings.chunkEveryN ?? 20)) {
+        openReviewModal();
+        return;
+    }
+
+    if (gap === (settings.chunkEveryN ?? 20)) {
+        toastr.info('CNZ: Running sync…');
+        await runCnzSync(char, messages);
+        openReviewModal();
+        return;
+    }
+
+    // gap > chunkEveryN — ask the user how much to cover.
+    // Ask the user how much to cover.
+    const extraWarning = `<p class="cnz-choice-warn">⚠ ${gap - (settings.chunkEveryN ?? 20)} turn(s) in the middle may never have been captured by auto-sync.</p>`;
+    const choice = await showSyncChoicePopup(
+        `<h3>How much should this sync cover?</h3>
+        <p>${gap} turn(s) have accumulated since the last sync (window size: ${settings.chunkEveryN ?? 20}).</p>
+        ${extraWarning}`,
+        `Full gap (${gap} turns)`,
+        `Standard window (last ${settings.chunkEveryN ?? 20} turns)`,
+    );
+    if (choice === 'cancel') return;
+    const coverAll = choice === 'full';
+
+    toastr.info(`CNZ: Running sync (${coverAll ? `full ${gap}-turn gap` : `last ${settings.chunkEveryN ?? 20} turns`})…`);
+    await runCnzSync(char, messages, { coverAll });
+    openReviewModal();
+}
+
+function injectWandButton() {
+    if ($('#cnz-wand-btn').length) return;
+    const btn = $(
+        '<div id="cnz-wand-btn" class="list-group-item flex-container flexGap5" title="Run Canonize">' +
+        '<i class="fa-solid fa-book-open"></i>' +
+        '<span>Run Canonize</span>' +
+        '</div>'
+    );
+    btn.on('click', () => onWandButtonClick().catch(err => {
+        console.error('[CNZ] Wand button error:', err);
+        toastr.error(`CNZ: ${err.message}`);
+    }));
+    $('#extensionsMenu').append(btn);
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+
+async function init() {
+    initSettings();
+    injectModal();
+    injectSettingsPanel();
+    injectWandButton();
+    eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
+    eventSource.on(event_types.CHAT_CHANGED,     onChatChanged);
+    // Delegated click handler for the review toast link (registered once — not per-sync)
+    $(document).on('click', '.cnz-review-link', (e) => {
+        e.preventDefault();
+        openReviewModal();
+    });
+    // Delegated click handlers for the orphan-check toast links
+    $(document).on('click', '.cnz-orphan-review', (e) => {
+        e.preventDefault();
+        toastr.clear();
+        openOrphanModal(_pendingOrphans);
+    });
+    $(document).on('click', '.cnz-orphan-dismiss', (e) => {
+        e.preventDefault();
+        toastr.clear();
+    });
+    // Delegated handlers for the large-gap toast (Step 15)
+    $(document).on('click', '.cnz-gap-sync-all', (e) => {
+        e.preventDefault();
+        toastr.clear();
+        const ctx = SillyTavern.getContext();
+        if (!ctx || ctx.characterId == null) return;
+        const char     = ctx.characters[ctx.characterId];
+        const messages = ctx.chat ?? [];
+        runCnzSync(char, messages, { coverAll: true }).catch(err =>
+            console.error('[CNZ] Gap sync-all failed:', err),
+        );
+    });
+    $(document).on('click', '.cnz-gap-snooze', (e) => {
+        e.preventDefault();
+        toastr.clear();
+        const ctx      = SillyTavern.getContext();
+        const messages = ctx?.chat ?? [];
+        const count    = messages.filter(m => !m.is_system).length;
+        const snoozeTurns = getSettings().gapSnoozeTurns ?? 5;
+        _snoozeUntilCount = count + snoozeTurns;
+        console.log(`[CNZ] Large-gap offer snoozed until turn ${_snoozeUntilCount}.`);
+    });
+    eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, (data) => {
+        if (_cnzGenerating) return;  // skip mask for CNZ's own internal AI calls
+        const ledgerHead = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
+        if (!ledgerHead) return;  // no ledger head — apply no mask
+        const maskBoundary = ledgerHead.sequenceNum;
+        if (maskBoundary <= 0) return;
+
+        let nsCount = 0;
+        const filtered = data.chat.filter((msg) => {
+            if (msg.role === 'system') return true;
+            nsCount++;
+            return nsCount > maskBoundary;
+        });
+        const hidden = data.chat.length - filtered.length;
+        if (hidden > 0) {
+            // Capture hidden messages BEFORE the splice
+            const hiddenMsgs = data.chat.filter(m => !filtered.includes(m));
+            const firstKept  = filtered.find(m => m.role !== 'system');
+            data.chat.splice(0, data.chat.length, ...filtered);
+            console.log(
+                `[CNZ-DBG] ── CONTEXT MASK ──\n` +
+                `  maskBoundary=${maskBoundary}  hidden=${hiddenMsgs.length} non-system msg(s)  total prompt msgs after=${filtered.length}\n` +
+                `  first kept non-system: "${firstKept?.name ?? '?'}" (role=${firstKept?.role ?? '?'})\n` +
+                `  masked turns (excluded from main AI prompt): ${hiddenMsgs.filter(m => m.role !== 'system').length} turn(s)`
+            );
+        }
+    });
+
+}
+
+await init();
