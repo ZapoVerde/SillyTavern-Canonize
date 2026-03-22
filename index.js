@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
- * @version 0.9.42
+ * @version 0.9.43
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -95,8 +95,8 @@ if (MDP) (function() {
         'max-height:40vh', 'overflow-y:auto', 'padding:4px',
         'border-top:2px solid #0f0'
     ].join(';');
-    document.body ? document.body.appendChild(panel) : document.addEventListener('DOMContentLoaded', () => document.body.appendChild(panel));
-
+    //document.body ? document.body.appendChild(panel) : document.addEventListener('DOMContentLoaded', () => document.body.appendChild(panel));
+    document.addEventListener('DOMContentLoaded', () => document.body.appendChild(panel));
     const orig = { log: console.log, warn: console.warn, error: console.error };
     ['log', 'warn', 'error'].forEach(level => {
         console[level] = function(...args) {
