@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
- * @version 0.9.38
+ * @version 0.9.39
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -2093,57 +2093,61 @@ function onEnterRagWorkshop() {
             ` last.validIdx=${last.validIdx} (${last.user?.name}→${last.ai?.name})`
         );
     } else {
-        console.warn('[CNZ-DBG] onEnterRagWorkshop — _stagedProsePairs is EMPTY; falling back to live chat context.');
-        // No prior sync this session — seed staged pairs from the live chat so the
-        // workshop has something to classify. Use the same gap logic as runCnzSync.
-        const settings   = getSettings();
-        const messages   = SillyTavern.getContext().chat ?? [];
-        const totalNS    = messages.filter(m => !m.is_system).length;
-        const lcb        = settings.liveContextBuffer ?? 5;
-        const tbb        = Math.max(0, totalNS - lcb);
+        // No sync ran this session — reconstruct from ledger + chat file.
+        // headNode gives us the committed window; buildRagChunks rebuilds the
+        // chunk skeleton; hydrateChunkHeadersFromChat fills stored headers.
+        console.warn('[CNZ-DBG] onEnterRagWorkshop — _stagedProsePairs is EMPTY; attempting cross-session reconstruction.');
 
-        // Guard: if gap is below sync threshold, nothing should be classified yet.
-        const _fbHeadNode  = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
-        const _fbGap       = tbb - (_fbHeadNode?.sequenceNum ?? 0);
-        if (_fbGap < (settings.chunkEveryN ?? 20)) {
-            console.log(`[CNZ-DBG] onEnterRagWorkshop fallback: gap=${_fbGap} < windowSize=${settings.chunkEveryN ?? 20} — nothing to classify yet`);
-            toastr.info('CNZ: Not enough new turns to classify yet — run a sync first.');
+        if (!_ledgerManifest || !_ledgerManifest.headNodeId) {
+            toastr.warning('CNZ: No prior sync found — run a sync before opening the workshop.');
             return;
         }
 
-        const filteredPairs = buildProsePairs(messages).filter(p => p.validIdx < tbb);
-        const headNode      = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
-        let windowPairs;
-        if (!headNode) {
-            // No prior commits — use all pairs up to buffer boundary
-            windowPairs       = filteredPairs;
-            _stagedPairOffset = 0;
-        } else {
-            // Anchor to the committed head: classify the gap from ledger head to buffer boundary.
-            // If the ledger head is already at or beyond tbb there is nothing uncommitted below
-            // the buffer to classify — show a message rather than a blank workshop.
-            if (headNode.sequenceNum >= tbb) {
-                console.log(`[CNZ-DBG] onEnterRagWorkshop fallback: ledger head seqNum=${headNode.sequenceNum} >= tbb=${tbb} — nothing to classify`);
-                toastr.info('CNZ: All available turns are either committed or in the live buffer. Nothing to classify yet.');
-                return;
-            }
-            // Run findIndex against filteredPairs (already trimmed to tbb), not the full pair list,
-            // so the returned index is valid as a slice offset into the same array.
-            const pairStartIdx = filteredPairs.findIndex(p => p.validIdx >= headNode.sequenceNum);
-            _stagedPairOffset  = pairStartIdx === -1 ? 0 : pairStartIdx;
-            windowPairs        = pairStartIdx === -1 ? [] : filteredPairs.slice(pairStartIdx);
+        // Step 1 — Derive the committed window from the ledger
+        const headChainEntry   = _ledgerManifest.nodes[_ledgerManifest.headNodeId];
+        const parentChainEntry = headChainEntry.parentId
+            ? _ledgerManifest.nodes[headChainEntry.parentId]
+            : null;
+
+        const windowStart = parentChainEntry?.sequenceNum ?? 0;  // inclusive
+        const windowEnd   = headChainEntry.sequenceNum;           // exclusive
+
+        console.log(`[CNZ-DBG] onEnterRagWorkshop reconstruct: windowStart=${windowStart} windowEnd=${windowEnd}`);
+
+        // Step 2 — Slice those pairs from the live chat
+        const messages  = SillyTavern.getContext().chat ?? [];
+        const allPairs  = buildProsePairs(messages);
+
+        const windowPairs = allPairs.filter(
+            p => p.validIdx >= windowStart && p.validIdx < windowEnd
+        );
+
+        if (windowPairs.length === 0) {
+            toastr.warning('CNZ: Committed turns are no longer in the chat — cannot reconstruct workshop.');
+            return;
         }
-        if (windowPairs.length > 0) {
-            _stagedProsePairs = windowPairs;
-            _splitPairIdx     = windowPairs.length;
-            console.log(
-                `[CNZ-DBG] onEnterRagWorkshop: seeded _stagedProsePairs from live chat` +
-                ` — ${windowPairs.length} pairs (validIdx ${windowPairs[0].validIdx}–${windowPairs[windowPairs.length - 1].validIdx})` +
-                ` liveContextBuffer=${lcb} trailingBufferBoundary=${tbb} headSeqNum=${headNode?.sequenceNum ?? 'none'}`
-            );
-        } else {
-            console.warn('[CNZ-DBG] onEnterRagWorkshop: live chat also yielded 0 pairs — chat may be empty or all system messages.');
-        }
+
+        // Step 3 — Set module state
+        const pairStartIdx    = allPairs.findIndex(p => p.validIdx >= windowStart);
+        _stagedPairOffset     = pairStartIdx === -1 ? 0 : pairStartIdx;
+        _stagedProsePairs     = windowPairs;
+        _splitPairIdx         = windowPairs.length;  // all window pairs are archive
+
+        console.log(
+            `[CNZ-DBG] onEnterRagWorkshop reconstruct: ${windowPairs.length} pairs` +
+            ` (validIdx ${windowPairs[0].validIdx}–${windowPairs[windowPairs.length - 1].validIdx})` +
+            ` _stagedPairOffset=${_stagedPairOffset}`
+        );
+
+        // Step 4 — Build the chunk skeleton
+        _ragChunks              = buildRagChunks(windowPairs, _stagedPairOffset);
+        _splitIndexWhenRagBuilt = _splitPairIdx;
+        _lastSummaryUsedForRag  = $('#cnz-situation-text').val().trim() || null;
+
+        console.log(`[CNZ-DBG] onEnterRagWorkshop reconstruct: built ${_ragChunks.length} chunks`);
+
+        // Step 5 — Hydrate stored headers from the chat file
+        hydrateChunkHeadersFromChat();
     }
 
     // Build or refresh chunks from staged pairs (already set by runCnzSync or fallback above)
