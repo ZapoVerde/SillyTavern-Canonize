@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
- * @version 0.9.41
+ * @version 0.9.42
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -85,7 +85,7 @@ import { ConnectionManagerRequestService } from '../../shared.js';
 import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML, buildLedgerInspectorHTML, buildOrphanModalHTML } from './ui.js';
 
 // ─── Mobile Debug Panel ───────────────────────────────────────────────────────
-const MDP = false; // set true to enable on-screen console overlay for mobile debugging
+const MDP = true; // set true to enable on-screen console overlay for mobile debugging
 if (MDP) (function() {
     const panel = document.createElement('div');
     panel.id = 'cnz-debug-panel';
