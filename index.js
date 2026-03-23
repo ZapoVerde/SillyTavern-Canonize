@@ -1808,33 +1808,35 @@ async function fetchOrBootstrapLedger(avatarKey) {
 
 /**
  * Re-fetches the ledger and compares its `headNodeId` against `_sessionStartId`.
- * Returns true only if nothing committed between session-open and now.
+ * Returns null on success, or a human-readable error string on failure.
  * @param {string} avatarKey
- * @returns {Promise<boolean>}
+ * @returns {Promise<null|string>}
  */
 async function verifyFreshnessLock(avatarKey) {
     const storedPath = (getMetaSettings().ledgerPaths ?? {})[avatarKey];
     if (!storedPath) {
-        return _sessionStartId === null;
+        return _sessionStartId === null
+            ? null
+            : 'Ledger path is missing but a session ID exists — state is inconsistent. Try reloading the page.';
     }
     try {
         const res = await fetch(storedPath);
-        if (!res.ok) return false;
+        if (!res.ok) return `Ledger manifest file not found (HTTP ${res.status}). The Data Bank file may have been deleted. Try Settings → Canonize → Reset Ledger.`;
         const freshManifest = await res.json();
-        if (freshManifest.headNodeId !== _sessionStartId) return false;
+        if (freshManifest.headNodeId !== _sessionStartId) return 'A sync committed while this modal was open. Close and re-open to retry.';
         _ledgerManifest = freshManifest;
         // Also capture the head node's editToken so step 4 can detect
         // concurrent in-place writes that don't change headNodeId.
         if (freshManifest.headNodeId) {
             const headNode = await fetchLedgerNodeFile(avatarKey, freshManifest.headNodeId);
-            if (!headNode) return false;
+            if (!headNode) return 'Head ledger node file not found. The Data Bank may be incomplete. Try Settings → Canonize → Reset Ledger.';
             _sessionHeadEditToken = headNode.editToken ?? null;
         } else {
             _sessionHeadEditToken = null;
         }
-        return true;
-    } catch (_) {
-        return false;
+        return null;
+    } catch (err) {
+        return `Could not read the ledger manifest: ${err.message}`;
     }
 }
 
@@ -3146,8 +3148,9 @@ async function onConfirmClick() {
     showReceiptsPanel();
 
     // Freshness lock — abort if another sync committed since modal opened
-    if (!await verifyFreshnessLock(char.avatar)) {
-        abortCommitWithError('Another sync committed since you opened this modal. Close and re-open to retry.');
+    const freshnessError = await verifyFreshnessLock(char.avatar);
+    if (freshnessError) {
+        abortCommitWithError(freshnessError);
         return;
     }
 
