@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
- * @version 0.9.46
+ * @version 0.9.47
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -66,7 +66,7 @@
  *       _lorebookData, _draftLorebook, _parentNodeLorebook,
  *       _ledgerManifest, _sessionStartId,
  *       _priorSituation, _beforeSituation,
- *       _lorebookName, _lorebookSuggestions, _lorebookRawText, _lorebookDelta,
+ *       _lorebookName, _lorebookSuggestions, _lorebookDelta,
  *       _stagedProsePairs, _stagedPairOffset, _splitPairIdx,
  *       _ragChunks, _splitIndexWhenRagBuilt, _lastSummaryUsedForRag,
  *       _lastRagUrl, _ragGlobalGenId, _ragInFlightCount, _ragCallQueue,
@@ -181,7 +181,7 @@ Output rules — follow exactly, no exceptions:
 - Output ONLY the 2–3 sentence header text in present tense.
 - No quotes. No final punctuation. No explanations. No other text at all.
 - Capture ONLY the core dramatic event, revelation, confrontation, decision, or emotional shift in the TARGET TURNS.
-- Ignore the GLOBAL CHAPTER SUMMARY except as loose context.
+- Ignore any history and global summary except as loose context.
 
 Focus priority:
 - Most significant narrative moment only
@@ -194,6 +194,11 @@ Header: The protagonist discovers undeniable proof of betrayal in the hidden let
 GLOBAL CHAPTER SUMMARY (context only — do NOT classify):
 {{summary}}
 
+{{#if history}}
+PRECEDING TURNS (context only — do NOT classify):
+{{history}}
+
+{{/if}}
 TARGET TURNS:
 {{target_turns}}
 `;
@@ -294,6 +299,7 @@ const PROFILE_DEFAULTS = Object.freeze({
     ragMaxTokens:             100,
     ragChunkSize:             2,
     ragChunkOverlap:          0,
+    ragClassifierHistory:     0,
     ragClassifierPrompt:      DEFAULT_RAG_CLASSIFIER_PROMPT,
     targetedUpdatePrompt:     DEFAULT_TARGETED_UPDATE_PROMPT,
     targetedNewPrompt:        DEFAULT_TARGETED_NEW_PROMPT,
@@ -306,6 +312,7 @@ let _lorebookData   = null;  // {entries:{}} — server copy of the active loreb
 let _draftLorebook  = null;  // working copy for staged changes
 let _ledgerManifest = null;  // in-memory manifest fetched/bootstrapped on demand
 let _sessionStartId = null;  // headNodeId captured at session start
+let _sessionHeadEditToken = null;  // editToken of head node file at lock-check time
 
 // Concurrency guard — prevents overlapping syncs
 let _syncInProgress = false;
@@ -361,7 +368,6 @@ let _lorebookGenId           = 0;
 let _lorebookLoading         = false;
 let _lbActiveIngesterIndex   = 0;
 let _lbDebounceTimer         = null;
-let _lorebookRawText         = '';
 let _ragRawDetached          = false;
 let _splitIndexWhenRagBuilt  = null;  // _splitPairIdx at last chunk build; null = not built
 let _targetedGenId           = 0;     // stale-callback guard for targeted generate calls
@@ -450,10 +456,6 @@ function escapeHtml(str) {
         .replace(/"/g, '&quot;');
 }
 
-/** Escapes a string for safe embedding in a RegExp pattern. */
-function escapeRegex(str) {
-    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
 
 /**
  * Computes a SHA-256 hash that chains a message's content, its index, and
@@ -488,7 +490,14 @@ function findMessageIndexAtCount(messages, nonSystemCount) {
 }
 
 function interpolate(template, vars) {
-    return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? '');
+    // Process {{#if key}}...{{/if}} blocks first
+    let result = template.replace(
+        /\{\{#if (\w+)\}\}([\s\S]*?)\{\{\/if\}\}/g,
+        (_, key, inner) => (vars[key] ? inner : ''),
+    );
+    // Then substitute {{variable}} tokens
+    result = result.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? '');
+    return result;
 }
 
 // ─── Scenario Anchor Management ───────────────────────────────────────────────
@@ -625,6 +634,13 @@ function buildRagDocument(ragChunks) {
  * @returns {Array}
  */
 function buildRagChunks(pairs, pairOffset = 0) {
+    // Exclude user-only pairs (no AI response yet) — they produce empty RAG chunks
+    // that confuse the classifier with a stimulus and no reply.
+    // Note: filtering here shifts turn indices for any pair that follows a removed one,
+    // which would misalign chunk turn labels. In practice user-only pairs only appear at
+    // the trailing edge of an active conversation (buildProsePairs never produces them
+    // mid-sequence), so no label misalignment occurs.
+    pairs = pairs.filter(p => p.messages.length > 0);
     const chunks    = [];
     const settings  = getSettings();
     const useQvink  = (settings.ragSummarySource ?? 'defined') === 'qvink';
@@ -846,7 +862,40 @@ function renderRagCard(chunkIndex) {
  * Respects per-chunk genId and global ragGlobalGenId for staleness detection.
  * @param {number} chunkIndex
  */
-async function ragFireChunk(chunkIndex, delayMs = 0) {
+/**
+ * Resolves the history context pairs for a RAG classifier call.
+ * Pulls up to `historyN` pairs immediately preceding the chunk's
+ * pairStart. Looks first into _stagedProsePairs (with _stagedPairOffset
+ * as the reference), then reaches back into committed turns via the
+ * full chat pair array.
+ *
+ * @param {number}   pairStart     chunk.pairStart — index into _stagedProsePairs
+ * @param {number}   historyN      number of pairs to include
+ * @param {object[]} fullPairs     buildProsePairs(messages) — full chat pair array
+ * @returns {string}               formatted transcript, or '' if nothing to show
+ */
+function resolveClassifierHistory(pairStart, historyN, fullPairs) {
+    if (historyN <= 0) return '';
+
+    // Absolute index of chunk.pairStart in the full pair array
+    const absoluteStart = _stagedPairOffset + pairStart;
+
+    // Slice the history window — may reach into committed turns
+    const historySliceStart = Math.max(0, absoluteStart - historyN);
+    const historyPairs      = fullPairs.slice(historySliceStart, absoluteStart);
+
+    if (!historyPairs.length) return '';
+
+    return historyPairs
+        .map(p => {
+            const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
+            for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
+            return parts.join('\n\n');
+        })
+        .join('\n\n');
+}
+
+async function ragFireChunk(chunkIndex, delayMs = 0, fullPairs = null) {
     const chunk = _ragChunks[chunkIndex];
     if (!chunk) return;
     const localGenId       = ++chunk.genId;
@@ -868,8 +917,14 @@ async function ragFireChunk(chunkIndex, delayMs = 0) {
         const targetPairs  = _stagedProsePairs.slice(pairStart, Math.min(pairEnd, _splitPairIdx));
 
         if (targetPairs.length === 0) {
-            console.warn(`[CNZ] RAG chunk ${chunkIndex} (${chunk.turnRange}) — classifier received no turns (pairStart=${pairStart} pairEnd=${pairEnd} splitPairIdx=${_splitPairIdx})`);
+            console.warn(`[CNZ] RAG chunk ${chunkIndex} (${chunk.turnRange}) — classifier received no turns (pairStart=${pairStart} pairEnd=${pairEnd} splitPairIdx=${_splitPairIdx}); aborting`);
+            chunk.status = 'pending';
+            return;
         }
+
+        const historyN   = getSettings().ragClassifierHistory ?? 0;
+        const pairs      = fullPairs ?? buildProsePairs(SillyTavern.getContext().chat ?? []);
+        const historyStr = resolveClassifierHistory(pairStart, historyN, pairs);
 
         const maxRetries = getSettings().ragMaxRetries ?? 1;
         let header;
@@ -877,7 +932,7 @@ async function ragFireChunk(chunkIndex, delayMs = 0) {
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             if (_ragGlobalGenId !== globalGenId || chunk.genId !== localGenId) return;
             try {
-                header = await runRagClassifierCall(summaryAtCall, targetPairs);
+                header = await runRagClassifierCall(summaryAtCall, targetPairs, historyStr);
                 lastErr = null;
                 break;
             } catch (err) {
@@ -924,11 +979,13 @@ async function ragFireChunk(chunkIndex, delayMs = 0) {
  * Fires queued chunks up to the maxConcurrentCalls limit.
  */
 function ragDrainQueue() {
-    const max = getSettings().maxConcurrentCalls ?? DEFAULT_CONCURRENCY;
-    let staggerIdx = 0;
+    const max       = getSettings().maxConcurrentCalls ?? DEFAULT_CONCURRENCY;
+    const messages  = SillyTavern.getContext().chat ?? [];
+    const fullPairs = buildProsePairs(messages);
+    let staggerIdx  = 0;
     while (_ragInFlightCount < max && _ragCallQueue.length > 0) {
         const idx = _ragCallQueue.shift();
-        ragFireChunk(idx, (staggerIdx + 1) * 500);
+        ragFireChunk(idx, (staggerIdx + 1) * 500, fullPairs);
         staggerIdx++;
     }
 }
@@ -956,7 +1013,7 @@ async function waitForRagChunks(timeoutMs = 120_000) {
  * @param {Array}  targetPairs
  * @returns {Promise<string>}
  */
-async function runRagClassifierCall(summaryText, targetPairs) {
+async function runRagClassifierCall(summaryText, targetPairs, historyText = '') {
     const formatPairs = pairs => pairs
         .map(p => {
             const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
@@ -969,6 +1026,7 @@ async function runRagClassifierCall(summaryText, targetPairs) {
     const formattedTurns = formatPairs(targetPairs);
     const prompt = interpolate(promptTemplate, {
         summary:      summaryText,
+        history:      historyText,
         target_turns: formattedTurns,
     });
 
@@ -1403,7 +1461,7 @@ function enrichLbSuggestions(freshParsed) {
                     keys:        [...existing.keys],
                     content:     existing.content,
                     linkedUid:   existing.linkedUid,
-                    _applied:    true,
+                    _applied:    false,
                     _rejected:   false,
                     _deleted:    false,
                     _aiSnapshot: {
@@ -1469,13 +1527,13 @@ function enrichLbSuggestions(freshParsed) {
  * Used by openReviewModal to reconstruct what changed in the last sync
  * entirely from ledger node data — no ephemeral sync-cycle variables needed.
  *
- * Entries present in `after` but not in `before` → type NEW, _applied true.
- * Entries present in both but with changed content/keys → type UPDATE, _applied true.
+ * Entries present in `after` but not in `before` → type NEW, _applied false.
+ * Entries present in both but with changed content/keys → type UPDATE, _applied false.
  * Entries present in `before` but removed from `after` → skipped (deletions not surfaced).
  *
- * All returned suggestions are marked _applied = true and _deleted = false
- * (they represent state already committed to disk). The user can revert
- * individual entries via the Reject button or remove them via Delete.
+ * All returned suggestions are marked _applied = false so the user can review
+ * them via Apply/Reject. The underlying lorebook data is already committed to
+ * disk; Apply/Reject only set the UI label and control Next Unresolved skipping.
  *
  * @param {object|null} before  Pre-sync lorebook (parent node state.lorebook), or null.
  * @param {object|null} after   Post-sync lorebook (head node state.lorebook).
@@ -1500,7 +1558,7 @@ function deriveSuggestionsFromLedgerDiff(before, after) {
                 keys,
                 content,
                 linkedUid:   parseInt(uid, 10),
-                _applied:    true,
+                _applied:    false,
                 _rejected:   false,
                 _deleted:    false,
                 _aiSnapshot: { name, keys: [...keys], content },
@@ -1517,7 +1575,7 @@ function deriveSuggestionsFromLedgerDiff(before, after) {
                     keys,
                     content,
                     linkedUid:   parseInt(uid, 10),
-                    _applied:    true,
+                    _applied:    false,
                     _rejected:   false,
                     _deleted:    false,
                     _aiSnapshot: { name, keys: [...keys], content },
@@ -1649,7 +1707,15 @@ async function cnzDeleteFile(path) {
             headers: getRequestHeaders(),
             body:    JSON.stringify({ path }),
         });
-    } catch (_) { /* already gone — ignore */ }
+    } catch (_) {
+        // NOTE: knownFiles was already updated above, so a network failure here
+        // leaves the old file on disk permanently invisible: it is no longer in
+        // knownFiles, and expectedPaths (derived from the live manifest) does not
+        // include it either, so the orphan checker cannot surface it.  Low
+        // severity — the file wastes a small amount of storage but causes no
+        // functional harm.  A future improvement could defer the knownFiles
+        // splice until after a confirmed delete, or re-add the path on failure.
+    }
 }
 
 /**
@@ -1757,6 +1823,15 @@ async function verifyFreshnessLock(avatarKey) {
         const freshManifest = await res.json();
         if (freshManifest.headNodeId !== _sessionStartId) return false;
         _ledgerManifest = freshManifest;
+        // Also capture the head node's editToken so step 4 can detect
+        // concurrent in-place writes that don't change headNodeId.
+        if (freshManifest.headNodeId) {
+            const headNode = await fetchLedgerNodeFile(avatarKey, freshManifest.headNodeId);
+            if (!headNode) return false;
+            _sessionHeadEditToken = headNode.editToken ?? null;
+        } else {
+            _sessionHeadEditToken = null;
+        }
         return true;
     } catch (_) {
         return false;
@@ -1779,6 +1854,7 @@ function buildLedgerNode(parentNodeId, sequenceNum, _unused, milestoneHash = nul
     const char = ctx.characters[ctx.characterId];
     return {
         nodeId:        crypto.randomUUID(),
+        editToken:     crypto.randomUUID(),
         parentId:      parentNodeId,
         sequenceNum,
         milestoneHash: milestoneHash,
@@ -1797,7 +1873,7 @@ function buildLedgerNode(parentNodeId, sequenceNum, _unused, milestoneHash = nul
 }
 
 /**
- * Uploads the current `_ledgerManifest` as JSON (deleting the old file first).
+ * Uploads the current `_ledgerManifest` as JSON (upload-first, then deletes old).
  * When `node` is provided, also uploads the node as a separate file and adds
  * its chain summary (nodeId, parentId, sequenceNum, milestoneHash) to the
  * manifest before uploading. The caller must NOT pre-insert the node into
@@ -1828,18 +1904,19 @@ async function commitLedgerManifest(avatarKey, node = null) {
         _ledgerManifest.charName   = node.charName;
     }
 
-    // 3. Delete the old manifest file (best-effort).
-    const storedPaths = getMetaSettings().ledgerPaths ?? {};
-    await cnzDeleteFile(storedPaths[avatarKey]);
-
-    // 4. Upload the updated manifest.
+    // 3. Upload the updated manifest first — old file still exists if this throws.
     const manifestFileName = cnzFileName(safeKey, 'manifest');
     const newPath = await cnzUploadFile(manifestFileName, _ledgerManifest);
 
-    // 5. Persist the new manifest path in settings.
+    // 4. Persist the new path before deleting old, so a crash here leaves two
+    //    copies rather than zero.
     if (!getMetaSettings().ledgerPaths) getMetaSettings().ledgerPaths = {};
+    const oldPath = (getMetaSettings().ledgerPaths ?? {})[avatarKey];
     getMetaSettings().ledgerPaths[avatarKey] = newPath;
     saveSettingsDebounced();
+
+    // 5. Delete the old manifest (best-effort — safe to lose now that new is live).
+    await cnzDeleteFile(oldPath);
 }
 
 /**
@@ -2047,7 +2124,9 @@ function ragRegenCard(chunkIndex) {
     _ragCallQueue = _ragCallQueue.filter(i => i !== chunkIndex);
     chunk.status  = 'pending';
     renderRagCard(chunkIndex);
-    ragFireChunk(chunkIndex);
+    const messages  = SillyTavern.getContext().chat ?? [];
+    const fullPairs = buildProsePairs(messages);
+    ragFireChunk(chunkIndex, 0, fullPairs);
 }
 
 function onRagTabSwitch(tabName) {
@@ -2104,6 +2183,60 @@ function getRagModeLabel() {
  * Called when the user enters Step 3 (RAG Workshop). Guards against disabled RAG,
  * then renders existing `_ragChunks` or rebuilds them if the split boundary changed.
  */
+/**
+ * Reconstructs _stagedProsePairs, _stagedPairOffset, _splitPairIdx, _ragChunks,
+ * and _splitIndexWhenRagBuilt from the ledger manifest and live chat.
+ * Called when the RAG workshop is opened after a page reload with no prior sync
+ * in the current session.
+ *
+ * Returns true if reconstruction succeeded and _ragChunks is populated.
+ * Returns false if the ledger has no committed window or the chat no longer
+ * contains the committed turns.
+ *
+ * @returns {boolean}
+ */
+function reconstructStagedPairsFromLedger() {
+    if (!_ledgerManifest?.headNodeId) return false;
+
+    const headChainEntry   = _ledgerManifest.nodes[_ledgerManifest.headNodeId];
+    const parentChainEntry = headChainEntry?.parentId
+        ? _ledgerManifest.nodes[headChainEntry.parentId]
+        : null;
+
+    const windowStart = parentChainEntry?.sequenceNum ?? 0;  // inclusive
+    const windowEnd   = headChainEntry?.sequenceNum   ?? 0;  // exclusive
+
+    if (windowEnd <= windowStart) return false;
+
+    const messages = SillyTavern.getContext().chat ?? [];
+    const allPairs = buildProsePairs(messages);
+
+    const windowPairs = allPairs.filter(
+        p => p.validIdx >= windowStart && p.validIdx < windowEnd
+    );
+
+    if (!windowPairs.length) return false;
+
+    // Set module state
+    const pairStartIdx    = allPairs.findIndex(p => p.validIdx >= windowStart);
+    _stagedPairOffset     = pairStartIdx === -1 ? 0 : pairStartIdx;
+    _stagedProsePairs     = windowPairs;
+    _splitPairIdx         = windowPairs.length;  // all committed window pairs are archive
+
+    // Build chunk skeleton and hydrate from chat
+    _ragChunks              = buildRagChunks(windowPairs, _stagedPairOffset);
+    _splitIndexWhenRagBuilt = _splitPairIdx;
+    hydrateChunkHeadersFromChat();
+
+    console.log(
+        `[CNZ] RAG reconstruction: window=${windowStart}–${windowEnd} ` +
+        `pairs=${windowPairs.length} chunks=${_ragChunks.length} ` +
+        `complete=${_ragChunks.filter(c => c.status === 'complete').length}`,
+    );
+
+    return true;
+}
+
 function onEnterRagWorkshop() {
     if (!getSettings().enableRag) {
         $('#cnz-rag-mode-note').addClass('cnz-hidden');
@@ -2113,101 +2246,74 @@ function onEnterRagWorkshop() {
     $('#cnz-rag-disabled').addClass('cnz-hidden');
     $('#cnz-rag-mode-note').text(getRagModeLabel()).removeClass('cnz-hidden');
 
-    const summaryText = $('#cnz-situation-text').val().trim();
-    const hasError    = !$('#cnz-error-1').hasClass('cnz-hidden');
-
-    if (_stagedProsePairs.length > 0) {
-        // staged pairs available from this session — use them
-    } else {
-        // No sync ran this session — reconstruct from ledger + chat file.
-        // headNode gives us the committed window; buildRagChunks rebuilds the
-        // chunk skeleton; hydrateChunkHeadersFromChat fills stored headers.
-        console.warn(`[CNZ] RAG workshop — no staged pairs, attempting cross-session reconstruction from ledger (headNodeId=${_ledgerManifest?.headNodeId ?? 'none'})`);
-
-        if (!_ledgerManifest || !_ledgerManifest.headNodeId) {
+    // ── Path 1: No staged pairs — attempt reconstruction ─────────────────────
+    if (_stagedProsePairs.length === 0) {
+        const ok = reconstructStagedPairsFromLedger();
+        if (!ok) {
             toastr.warning('CNZ: No prior sync found — run a sync before opening the workshop.');
+            showRagNoSummaryMessage();
             return;
         }
+        // Reconstruction succeeded — _ragChunks is now populated and hydrated.
+        // Fall through to the shared classification path below.
+    }
 
-        // Step 1 — Derive the committed window from the ledger
-        const headChainEntry   = _ledgerManifest.nodes[_ledgerManifest.headNodeId];
-        const parentChainEntry = headChainEntry.parentId
-            ? _ledgerManifest.nodes[headChainEntry.parentId]
-            : null;
-
-        const windowStart = parentChainEntry?.sequenceNum ?? 0;  // inclusive
-        const windowEnd   = headChainEntry.sequenceNum;           // exclusive
-
-        // Step 2 — Slice those pairs from the live chat
-        const messages  = SillyTavern.getContext().chat ?? [];
-        const allPairs  = buildProsePairs(messages);
-
-        const windowPairs = allPairs.filter(
-            p => p.validIdx >= windowStart && p.validIdx < windowEnd
-        );
-
-        if (windowPairs.length === 0) {
-            toastr.warning('CNZ: Committed turns are no longer in the chat — cannot reconstruct workshop.');
+    // ── Path 2: Staged pairs exist — check if chunk rebuild is needed ─────────
+    if (_ragChunks.length === 0) {
+        const archivePairs = _stagedProsePairs.slice(0, _splitPairIdx);
+        if (!archivePairs.length) {
+            showRagNoSummaryMessage();
             return;
         }
-
-        // Step 3 — Set module state
-        const pairStartIdx    = allPairs.findIndex(p => p.validIdx >= windowStart);
-        _stagedPairOffset     = pairStartIdx === -1 ? 0 : pairStartIdx;
-        _stagedProsePairs     = windowPairs;
-        _splitPairIdx         = windowPairs.length;  // all window pairs are archive
-
-        // Step 4 — Build the chunk skeleton
-        _ragChunks              = buildRagChunks(windowPairs, _stagedPairOffset);
+        _ragChunks              = buildRagChunks(archivePairs, _stagedPairOffset);
         _splitIndexWhenRagBuilt = _splitPairIdx;
-        _lastSummaryUsedForRag  = $('#cnz-situation-text').val().trim() || null;
-
-        // Step 5 — Hydrate stored headers from the chat file
+        hydrateChunkHeadersFromChat();
+    } else if (_splitPairIdx !== _splitIndexWhenRagBuilt) {
+        toastr.warning('Sync window has changed — Narrative Memory chunks will be rebuilt.');
+        const archivePairs      = _stagedProsePairs.slice(0, _splitPairIdx);
+        _ragChunks              = buildRagChunks(archivePairs, _stagedPairOffset);
+        _splitIndexWhenRagBuilt = _splitPairIdx;
         hydrateChunkHeadersFromChat();
     }
 
-    // Build or refresh chunks from staged pairs (already set by runCnzSync or fallback above)
-    if (_ragChunks.length === 0 && _stagedProsePairs.length > 0) {
-        const archivePairs = _stagedProsePairs.slice(0, _splitPairIdx);
-        if (archivePairs.length > 0) {
-            _ragChunks = buildRagChunks(archivePairs, _stagedPairOffset);
-            _splitIndexWhenRagBuilt = _splitPairIdx;
-            // Labels haven't been rendered yet (no prior sync ran) — render the
-            // turn-range placeholders now; AI-classified headers appear via ragFireChunk
-            renderAllChunkChatLabels();
-        }
-        renderRagWorkshop();
-    } else if (_ragChunks.length > 0) {
-        if (_splitIndexWhenRagBuilt !== null && _splitPairIdx !== _splitIndexWhenRagBuilt) {
-            toastr.warning('Sync window has changed — Narrative Memory chunks will be rebuilt.');
-            const archivePairs = _stagedProsePairs.slice(0, _splitPairIdx);
-            _ragChunks = buildRagChunks(archivePairs, _stagedPairOffset);
-            _splitIndexWhenRagBuilt = _splitPairIdx;
-        }
-        renderRagWorkshop();
-    }
+    // ── Shared: Render workshop UI ────────────────────────────────────────────
+    renderRagWorkshop();
+    renderAllChunkChatLabels();
 
-    // Hydrate headers from chat file — pre-populates complete chunks, skips their AI calls
-    hydrateChunkHeadersFromChat();
-
-    if (!summaryText || hasError)  { showRagNoSummaryMessage(); return; }
-    hideRagNoSummaryMessage();
-
+    // Restore raw tab if active
     const activeTab = $('#cnz-rag-tab-bar .cnz-tab-active').data('tab') ?? 'sectioned';
     if (activeTab === 'raw' && !_ragRawDetached) {
         $('#cnz-rag-raw').val(compileRagFromChunks());
         requestAnimationFrame(() => autoResizeRagRaw());
     }
 
-    const summaryChanged = _lastSummaryUsedForRag !== null && _lastSummaryUsedForRag !== summaryText;
-    if (summaryChanged) {
+    // ── Shared: Summary change detection and classification ───────────────────
+    // _lastSummaryUsedForRag is seeded from the ledger head in openReviewModal
+    // so it is available even after a page reload.
+    if (!_lastSummaryUsedForRag) {
+        showRagNoSummaryMessage();
+        return;
+    }
+    hideRagNoSummaryMessage();
+
+    // Detect summary change since last classification
+    const currentSummary = $('#cnz-situation-text').val().trim();
+    if (currentSummary && currentSummary !== _lastSummaryUsedForRag) {
         toastr.warning('Hooks text has changed — stale headers will be refreshed.');
         for (const chunk of _ragChunks) {
             if (chunk.status === 'complete') chunk.status = 'stale';
         }
+        _lastSummaryUsedForRag = currentSummary;
+    } else if (currentSummary) {
+        _lastSummaryUsedForRag = currentSummary;
     }
-    _lastSummaryUsedForRag = summaryText;
+    // If textarea is empty (step 1 not yet visited this session),
+    // _lastSummaryUsedForRag retains its ledger-seeded value — correct.
 
+    // If all chunks are already complete (or manual), nothing left to do.
+    if (_ragChunks.every(c => c.status === 'complete' || c.status === 'manual')) return;
+
+    // Enqueue pending and stale chunks
     _ragCallQueue = [];
     for (let i = 0; i < _ragChunks.length; i++) {
         const s = _ragChunks[i].status;
@@ -2266,20 +2372,23 @@ function buildModalTranscript(horizonTurns) {
  * Builds a transcript bounded by the sync window (_stagedProsePairs), so AI calls
  * never see turns beyond the edge of the last sync. Falls back to full context if no
  * sync has been staged yet.
+ * Always enforces liveContextBuffer at read time — a no-op when _stagedProsePairs was
+ * correctly pre-trimmed by runCnzSync, but prevents buffer leakage if that invariant
+ * is ever violated by a future writer.
  * @param {number} horizonTurns  Number of trailing turns to include.
  * @returns {string}
  */
 function buildSyncWindowTranscript(horizonTurns) {
+    const settings = getSettings();
+    const messages = SillyTavern.getContext().chat ?? [];
+    const totalNS  = messages.filter(m => !m.is_system).length;
+    const lcb      = settings.liveContextBuffer ?? 5;
+    const tbb      = Math.max(0, totalNS - lcb);
+
     let allPairs;
     if (_stagedProsePairs.length > 0) {
-        allPairs = _stagedProsePairs.slice(0, _splitPairIdx);
+        allPairs = _stagedProsePairs.slice(0, _splitPairIdx).filter(p => p.validIdx < tbb);
     } else {
-        // Fallback: build from live chat, honouring liveContextBuffer
-        const settings          = getSettings();
-        const messages          = SillyTavern.getContext().chat ?? [];
-        const totalNS           = messages.filter(m => !m.is_system).length;
-        const lcb               = settings.liveContextBuffer ?? 5;
-        const tbb               = Math.max(0, totalNS - lcb);
         allPairs = buildProsePairs(messages).filter(p => p.validIdx < tbb);
     }
     const windowPairs = allPairs.slice(-horizonTurns);
@@ -2384,7 +2493,7 @@ function showLbError(message) {
  */
 async function onLbRegenClick() {
     const confirmed = await callPopup(
-        'This will run a fresh lorebook AI call and rebuild the suggestion list from scratch, discarding any corrections already made. Continue?',
+        'This will run a fresh lorebook AI call and rebuild the suggestion list from scratch, resetting to the parent node baseline and discarding any corrections or previously committed lorebook changes made in this session. Continue?',
         'confirm',
     );
     if (!confirmed) return;
@@ -2409,8 +2518,11 @@ async function onLbRegenClick() {
         }
     } catch (err) {
         console.warn('[CNZ] onLbRegenClick: could not fetch parent node for baseline:', err);
+        showLbError('Lorebook baseline fetch failed — regenerating against cached pre-sync state. Results may be inaccurate.');
     }
-    preSyncLorebook ??= structuredClone(_lorebookData ?? { entries: {} });
+    // Prefer _parentNodeLorebook (set by openReviewModal from the same ledger chain) over
+    // _lorebookData, which already reflects the post-sync head and is the wrong baseline.
+    preSyncLorebook ??= _parentNodeLorebook ? structuredClone(_parentNodeLorebook) : structuredClone(_lorebookData ?? { entries: {} });
 
     const lbId       = ++_lorebookGenId;
     const horizon    = getSettings().chunkEveryN ?? 20;
@@ -2420,11 +2532,14 @@ async function onLbRegenClick() {
         .then(text => {
             if (_lorebookGenId !== lbId) return;
 
-            // Store serialised form (not the raw AI text)
-            _lorebookRawText = '';
-
-            // Reset draft to pre-sync baseline (captured before this async call)
+            // Reset draft AND server-copy baseline to pre-sync state (captured before this
+            // async call).  Both must share the same reference point so isDraftDirty only
+            // fires when the AI actually produced changes — otherwise a regen that yields
+            // no suggestions would compare _draftLorebook (A) against a stale _lorebookData
+            // that reflects a previously-committed lorebook (B), producing a false dirty and
+            // overwriting B with A on Finalize.
             _draftLorebook = structuredClone(preSyncLorebook);
+            _lorebookData  = structuredClone(preSyncLorebook);
 
             // Parse and auto-apply new suggestions
             const suggestions = parseLbSuggestions(text);
@@ -3132,9 +3247,14 @@ async function onConfirmClick() {
             if (headChainEntry) {
                 const headNodeFile = await fetchLedgerNodeFile(char.avatar, headChainEntry.nodeId);
                 if (headNodeFile) {
+                    if ((headNodeFile.editToken ?? null) !== _sessionHeadEditToken) {
+                        abortCommitWithError('Ledger node was modified by another session. Close and re-open to retry.');
+                        return;
+                    }
                     if (hooksChanged)    headNodeFile.state.hooks    = _priorSituation;
                     if (lorebookChanged) headNodeFile.state.lorebook = Object.assign({ name: _lorebookName }, structuredClone(_draftLorebook));
                     if (ragChanged)      headNodeFile.state.ragFiles  = [...(headNodeFile.state.ragFiles ?? []), newRagFileName];
+                    headNodeFile.editToken = crypto.randomUUID();
                     const safeKey      = cnzAvatarKey(char.avatar);
                     const nodeFileName = cnzFileName(safeKey, 'node', headNodeFile.nodeId);
                     await cnzUploadFile(nodeFileName, headNodeFile);
@@ -3645,6 +3765,7 @@ function initWizardSession(preserveSuggestions = false) {
     $('#cnz-receipts-content').empty();
     $('#cnz-recovery-guide').addClass('cnz-hidden');
     $('#cnz-cancel').text('Cancel').prop('disabled', false);
+    $('#cnz-confirm').prop('disabled', false);
     // RAG Workshop reset
     $('#cnz-rag-cards').empty();
     $('#cnz-rag-no-summary, #cnz-rag-disabled').addClass('cnz-hidden');
@@ -3656,7 +3777,7 @@ function initWizardSession(preserveSuggestions = false) {
     });
     $('#cnz-rag-tab-sectioned').removeClass('cnz-hidden');
     $('#cnz-rag-tab-raw').addClass('cnz-hidden');
-    // Lorebook ingester reset (engine state _lorebookSuggestions/_lorebookRawText must NOT be cleared here)
+    // Lorebook ingester reset (engine state _lorebookSuggestions must NOT be cleared here)
     if (!preserveSuggestions) {
         _lbActiveIngesterIndex = 0;
     }
@@ -3746,6 +3867,11 @@ async function openReviewModal() {
                 _draftLorebook = structuredClone(headNodeFile.state.lorebook);
                 _lorebookName  = headNodeFile.state.lorebook.name || _lorebookName;
             }
+
+            // Seed RAG summary from ledger head if not already set by current session
+            if (!_lastSummaryUsedForRag && headNodeFile?.state?.hooks) {
+                _lastSummaryUsedForRag = headNodeFile.state.hooks;
+            }
         } catch (err) {
             console.warn('[CNZ] openReviewModal: could not fetch ledger nodes:', err);
         }
@@ -3753,19 +3879,12 @@ async function openReviewModal() {
 
     // Derive _lorebookSuggestions from the node diff — no ephemeral sync-cycle data needed.
     // This is stable: head lorebook vs parent lorebook, derived fresh on every modal open.
-    // Preserve session-generated suggestions (from Lane 2/3) if they are not replaced by the ledger diff.
-    const ledgerSuggestions = deriveSuggestionsFromLedgerDiff(
-        preSyncLorebookForDiff,
-        _draftLorebook,
-    );
-    // Merge: ledger-derived suggestions replace any existing ones by name; session-only ones are preserved.
+    // Only diff when a head node exists — without one, no sync has run and every pre-existing
+    // lorebook entry would be incorrectly surfaced as a NEW suggestion.
+    const ledgerSuggestions = headChainEntry
+        ? deriveSuggestionsFromLedgerDiff(preSyncLorebookForDiff, _draftLorebook)
+        : [];
     _lorebookSuggestions = ledgerSuggestions;
-
-    // If no raw text from the current session, populate from the serialised suggestion list.
-    // This ensures freeform always shows the committed changes on first open, not a blank textarea.
-    if (!_lorebookRawText) {
-        _lorebookRawText = serialiseSuggestionsToFreeform(_lorebookSuggestions);
-    }
 
     initWizardSession(true);
 
@@ -3774,7 +3893,7 @@ async function openReviewModal() {
     $('#cnz-hooks-new-display').text(_priorSituation);
     $('#cnz-hooks-old-display').text(_beforeSituation);
     updateHooksDiff();
-    $('#cnz-lb-freeform').val(_lorebookRawText);
+    $('#cnz-lb-freeform').val(serialiseSuggestionsToFreeform(_lorebookSuggestions));
     if (_lorebookSuggestions.length) {
         populateLbIngesterDropdown();
         renderLbIngesterDetail(_lorebookSuggestions[0]);
@@ -4103,9 +4222,6 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
             await lbSaveLorebook(_lorebookName, _draftLorebook);
             _lorebookData = structuredClone(_draftLorebook);
-            // Replace raw AI text with the clean serialised form so the modal shows
-            // the committed state rather than unprocessed AI output.
-            _lorebookRawText = serialiseSuggestionsToFreeform(_lorebookSuggestions);
 
             // Record what changed for the Ledger snapshot
             const createdUids      = [];
@@ -4490,6 +4606,7 @@ function refreshSettingsUI() {
     $('#cnz-set-rag-max-tokens').val(s.ragMaxTokens ?? 100);
     $('#cnz-set-rag-chunk-size').val(s.ragChunkSize ?? 2);
     $('#cnz-set-rag-chunk-overlap').val(s.ragChunkOverlap ?? 0);
+    $('#cnz-set-rag-classifier-history').val(s.ragClassifierHistory ?? 0);
     $('#cnz-set-rag-max-concurrent').val(s.maxConcurrentCalls ?? DEFAULT_CONCURRENCY);
     $('#cnz-set-rag-retries').val(s.ragMaxRetries ?? 1);
     updateRagAiControlsVisibility();
@@ -4671,9 +4788,15 @@ function bindSettingsHandlers() {
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
+    $('#cnz-set-rag-classifier-history').on('input', function () {
+        const val = Math.max(0, parseInt($(this).val()) || 0);
+        getSettings().ragClassifierHistory = val;
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
     $('#cnz-edit-classifier-prompt').on('click', () =>
         openPromptModal('ragClassifierPrompt', 'Edit Classifier Prompt', DEFAULT_RAG_CLASSIFIER_PROMPT,
-            ['summary', 'target_turns']));
+            ['summary', 'history', 'target_turns']));
 
     // ── Connection profiles ───────────────────────────────────────────────────
     try {
@@ -5040,14 +5163,17 @@ function onChatChanged() {
     // Character switched — reset cached ledger (it belongs to the old character),
     // then bootstrap the new character's ledger and run the Healer.
     if (!char || char.avatar !== _lastKnownAvatar) {
-        _ledgerManifest    = null;
-        _lastKnownAvatar   = char?.avatar ?? null;
-        _stagedProsePairs  = [];
-        _stagedPairOffset  = 0;
-        _splitPairIdx      = 0;
-        _ragChunks          = [];
-        _splitIndexWhenRagBuilt = null;
-        _parentNodeLorebook = null;
+        _ledgerManifest      = null;
+        _lastKnownAvatar     = char?.avatar ?? null;
+        _stagedProsePairs    = [];
+        _stagedPairOffset    = 0;
+        _splitPairIdx        = 0;
+        _ragChunks           = [];
+        _splitIndexWhenRagBuilt  = null;
+        _parentNodeLorebook  = null;
+        _lorebookSuggestions = [];
+        _lorebookData        = null;
+        _draftLorebook       = null;
         clearChunkChatLabels();
         if (char) {
             fetchOrBootstrapLedger(char.avatar)

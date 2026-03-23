@@ -456,6 +456,12 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
             </div>
 
             <div class="cnz-settings-inline-row">
+              <label for="cnz-set-rag-classifier-history">Classifier History ${tip('Number of turn-pairs preceding each chunk to include as context in the classifier prompt. 0 = disabled. Pairs are drawn from the current sync window first, then committed chat history.')}</label>
+              <input id="cnz-set-rag-classifier-history" type="number" min="0" step="1"
+                     value="${escapeHtml(String(s.ragClassifierHistory ?? 0))}"> pairs
+            </div>
+
+            <div class="cnz-settings-inline-row">
               <label for="cnz-set-rag-max-concurrent">Simultaneous Calls ${tip('How many chunk classification calls run in parallel. Higher values finish faster but may overwhelm slow backends. Default: 3.')}</label>
               <input id="cnz-set-rag-max-concurrent" type="number" min="1" max="10" step="1"
                      value="${escapeHtml(String(s.maxConcurrentCalls ?? 3))}">
