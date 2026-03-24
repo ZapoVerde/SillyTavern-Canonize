@@ -488,6 +488,7 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
       <div class="cnz-settings-group">
         <div class="cnz-settings-row">
           <button id="cnz-inspect-ledger" class="cnz-btn cnz-btn-secondary cnz-btn-sm" title="Inspect the CNZ ledger chain for the current character">Inspect Ledger</button>
+          <button id="cnz-storage-report" class="cnz-btn cnz-btn-secondary cnz-btn-sm" title="Show disk usage of all CNZ files in the Data Bank">Storage Report</button>
           <button id="cnz-purge-ledger" class="cnz-btn cnz-btn-danger cnz-btn-sm" title="Clear all CNZ sync history for the current character">Purge Ledger</button>
         </div>
       </div>

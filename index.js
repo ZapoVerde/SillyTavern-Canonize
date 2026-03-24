@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
- * @version 0.9.49
+ * @version 0.9.50
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -3730,6 +3730,162 @@ function openLedgerInspector() {
     $overlay.removeClass('cnz-hidden');
 }
 
+// ─── Storage Report ───────────────────────────────────────────────────────────
+
+function formatBytes(n) {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+/**
+ * Fetches all CNZ files for every character with a ledger path and reports
+ * their approximate sizes (measured from JSON/text content length).
+ * Covers: manifest, node files, RAG .txt files (from head node's state.ragFiles).
+ */
+async function cnzStorageReport() {
+    const meta         = getMetaSettings();
+    const ledgerPaths  = meta.ledgerPaths ?? {};
+    const entries      = Object.entries(ledgerPaths);
+
+    if (entries.length === 0) {
+        await callPopup('<p>No CNZ ledger files found. Run at least one sync to create ledger data.</p>', 'text');
+        return;
+    }
+
+    toastr.info(`CNZ: Measuring storage for ${entries.length} character(s)…`);
+
+    const rows         = [];
+    let grandTotal     = 0;
+
+    for (const [avatarKey, manifestPath] of entries) {
+        // ── Fetch manifest ────────────────────────────────────────────────────
+        let manifest;
+        if (avatarKey === SillyTavern.getContext()?.characters?.[SillyTavern.getContext()?.characterId]?.avatar && _ledgerManifest) {
+            manifest = _ledgerManifest;
+        } else {
+            try {
+                const res = await fetch(manifestPath);
+                if (!res.ok) {
+                    rows.push({ name: avatarKey, error: `manifest fetch failed (HTTP ${res.status})` });
+                    continue;
+                }
+                manifest = await res.json();
+            } catch (err) {
+                rows.push({ name: avatarKey, error: err.message });
+                continue;
+            }
+        }
+
+        const manifestBytes = JSON.stringify(manifest).length;
+        const nodeIds       = Object.keys(manifest.nodes ?? {});
+        const baseDir       = manifestPath.includes('/')
+            ? manifestPath.slice(0, manifestPath.lastIndexOf('/') + 1)
+            : '';
+
+        // ── Fetch node files ──────────────────────────────────────────────────
+        let nodeBytes   = 0;
+        let missingNodes = 0;
+        let headNode    = null;
+
+        for (const nodeId of nodeIds) {
+            const nodeFile = await fetchLedgerNodeFile(avatarKey, nodeId);
+            if (nodeFile) {
+                nodeBytes += JSON.stringify(nodeFile).length;
+                if (nodeId === manifest.headNodeId) headNode = nodeFile;
+            } else {
+                missingNodes++;
+            }
+        }
+
+        // ── Fetch RAG files (from head node's cumulative list) ────────────────
+        const ragFileNames = headNode?.state?.ragFiles ?? [];
+        let ragBytes       = 0;
+        let missingRag     = 0;
+
+        for (const ragName of ragFileNames) {
+            const ragPath = baseDir + ragName;
+            try {
+                const res = await fetch(ragPath);
+                if (res.ok) {
+                    const text = await res.text();
+                    ragBytes += text.length;
+                } else {
+                    missingRag++;
+                }
+            } catch {
+                missingRag++;
+            }
+        }
+
+        const charName  = manifest.charName ?? avatarKey;
+        const rowTotal  = manifestBytes + nodeBytes + ragBytes;
+        grandTotal     += rowTotal;
+
+        rows.push({
+            name: charName,
+            nodeCount:    nodeIds.length,
+            ragCount:     ragFileNames.length,
+            manifestBytes,
+            nodeBytes,
+            ragBytes,
+            rowTotal,
+            missingNodes,
+            missingRag,
+        });
+    }
+
+    // ── Render ────────────────────────────────────────────────────────────────
+    const rowsHtml = rows.map(r => {
+        if (r.error) {
+            return `<tr>
+  <td>${escapeHtml(r.name)}</td>
+  <td colspan="6" style="color:#f66">${escapeHtml(r.error)}</td>
+</tr>`;
+        }
+        const nodeSuffix = r.missingNodes > 0
+            ? ` <span style="color:#fa0">(${r.missingNodes} missing)</span>` : '';
+        const ragSuffix  = r.missingRag  > 0
+            ? ` <span style="color:#fa0">(${r.missingRag} missing)</span>`  : '';
+        return `<tr>
+  <td style="padding:0.2em 0.5em">${escapeHtml(r.name)}</td>
+  <td style="padding:0.2em 0.5em;text-align:right">${r.nodeCount}${nodeSuffix}</td>
+  <td style="padding:0.2em 0.5em;text-align:right">${r.ragCount}${ragSuffix}</td>
+  <td style="padding:0.2em 0.5em;text-align:right">${formatBytes(r.manifestBytes)}</td>
+  <td style="padding:0.2em 0.5em;text-align:right">${formatBytes(r.nodeBytes)}</td>
+  <td style="padding:0.2em 0.5em;text-align:right">${formatBytes(r.ragBytes)}</td>
+  <td style="padding:0.2em 0.5em;text-align:right"><strong>${formatBytes(r.rowTotal)}</strong></td>
+</tr>`;
+    }).join('');
+
+    const html = `
+<h3>CNZ Storage Report</h3>
+<p style="color:#aaa;font-size:0.85em">Sizes are measured from fetched content (UTF-8 character count, not compressed disk bytes).</p>
+<table style="width:100%;border-collapse:collapse;font-size:0.9em">
+  <thead>
+    <tr style="border-bottom:1px solid #555">
+      <th style="text-align:left;padding:0.3em 0.5em">Character</th>
+      <th style="text-align:right;padding:0.3em 0.5em">Nodes</th>
+      <th style="text-align:right;padding:0.3em 0.5em">RAG files</th>
+      <th style="text-align:right;padding:0.3em 0.5em">Manifest</th>
+      <th style="text-align:right;padding:0.3em 0.5em">Nodes</th>
+      <th style="text-align:right;padding:0.3em 0.5em">RAG</th>
+      <th style="text-align:right;padding:0.3em 0.5em">Total</th>
+    </tr>
+  </thead>
+  <tbody>${rowsHtml}</tbody>
+  <tfoot>
+    <tr style="border-top:1px solid #555">
+      <td colspan="6" style="padding:0.3em 0.5em"><strong>Grand Total</strong></td>
+      <td style="padding:0.3em 0.5em;text-align:right"><strong>${formatBytes(grandTotal)}</strong></td>
+    </tr>
+  </tfoot>
+</table>
+<p style="color:#aaa;font-size:0.85em;margin-top:0.75em">Each sync appends a new node file (full snapshot). Use <em>Purge Ledger</em> to reclaim space.</p>`;
+
+    await callPopup(html, 'text');
+}
+
 /**
  * Resets wizard UI to its initial state (tab selection, error panels, loading spinners).
  * Must NOT touch engine state. Pass `preserveSuggestions = true` from `openReviewModal`
@@ -4908,6 +5064,10 @@ function bindSettingsHandlers() {
 
     $('#cnz-inspect-ledger').on('click', function () {
         openLedgerInspector();
+    });
+
+    $('#cnz-storage-report').on('click', async function () {
+        await cnzStorageReport();
     });
 
     $('#cnz-purge-ledger').on('click', async function () {
