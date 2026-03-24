@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
- * @version 0.9.54
+ * @version 0.9.55
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -1022,16 +1022,25 @@ async function waitForRagChunks(timeoutMs = 120_000) {
  * @returns {Promise<string>}
  */
 async function runRagClassifierCall(summaryText, targetPairs) {
-    // If summaryText is empty/undefined, DON'T BAIL. 
-    // Provide a generic context so the AI can still classify.
-    const safeSummary = summaryText || "Continuing the previous scene.";
-    
-    const prompt = interpolate(getSettings().ragClassifierPrompt, {
-        summary: safeSummary, // Never empty
-        target_turns: formatPairs(targetPairs),
+    // FALLBACK: If no summary exists, provide a generic one so the AI doesn't stall.
+    const safeSummary = (summaryText && summaryText.trim().length > 0) 
+        ? summaryText 
+        : "The current scene in the tavern.";
+
+    const promptTemplate = getSettings().ragClassifierPrompt || DEFAULT_RAG_CLASSIFIER_PROMPT;
+    const formattedTurns = targetPairs.map(p => {
+        const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
+        for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
+        return parts.join('\n\n');
+    }).join('\n\n');
+
+    const prompt = interpolate(promptTemplate, {
+        summary:      safeSummary,
+        history:      "", // Optional history can be added here
+        target_turns: formattedTurns,
     });
-    
-    return generateWithRagProfile(prompt);
+
+    return await generateWithRagProfile(prompt);
 }
 
 /**
@@ -2163,13 +2172,15 @@ function renderRagWorkshop() {
 
 function ragRegenCard(chunkIndex) {
     const chunk = _ragChunks[chunkIndex];
-    if (!chunk || !_lastSummaryUsedForRag) return;
+    if (!chunk) return; // Removed the check for _lastSummaryUsedForRag
+    
     if (chunk.status === 'in-flight') {
         _ragInFlightCount = Math.max(0, _ragInFlightCount - 1);
     }
     _ragCallQueue = _ragCallQueue.filter(i => i !== chunkIndex);
     chunk.status  = 'pending';
     renderRagCard(chunkIndex);
+    
     const messages  = SillyTavern.getContext().chat ?? [];
     const fullPairs = buildProsePairs(messages);
     ragFireChunk(chunkIndex, 0, fullPairs);
@@ -2292,78 +2303,41 @@ function onEnterRagWorkshop() {
     $('#cnz-rag-disabled').addClass('cnz-hidden');
     $('#cnz-rag-mode-note').text(getRagModeLabel()).removeClass('cnz-hidden');
 
-    // ── Path 1: No staged pairs — attempt reconstruction ─────────────────────
+    // Path 1: Attempt reconstruction if pairs are missing
     if (_stagedProsePairs.length === 0) {
-        const ok = reconstructStagedPairsFromLedger();
-        if (!ok) {
-            toastr.warning('CNZ: No prior sync found — run a sync before opening the workshop.');
-            showRagNoSummaryMessage();
-            return;
-        }
-        // Reconstruction succeeded — _ragChunks is now populated and hydrated.
-        // Fall through to the shared classification path below.
+        reconstructStagedPairsFromLedger();
     }
 
-    // ── Path 2: Staged pairs exist — check if chunk rebuild is needed ─────────
+    // Path 2: Build chunks if they don't exist
     if (_ragChunks.length === 0) {
         const archivePairs = _stagedProsePairs.slice(0, _splitPairIdx);
-        if (!archivePairs.length) {
-            showRagNoSummaryMessage();
-            return;
+        if (archivePairs.length > 0) {
+            _ragChunks = buildRagChunks(archivePairs, _stagedPairOffset);
+            _splitIndexWhenRagBuilt = _splitPairIdx;
+            hydrateChunkHeadersFromChat();
         }
-        _ragChunks              = buildRagChunks(archivePairs, _stagedPairOffset);
-        _splitIndexWhenRagBuilt = _splitPairIdx;
-        hydrateChunkHeadersFromChat();
-    } else if (_splitPairIdx !== _splitIndexWhenRagBuilt) {
-        toastr.warning('Sync window has changed — Narrative Memory chunks will be rebuilt.');
-        const archivePairs      = _stagedProsePairs.slice(0, _splitPairIdx);
-        _ragChunks              = buildRagChunks(archivePairs, _stagedPairOffset);
-        _splitIndexWhenRagBuilt = _splitPairIdx;
-        hydrateChunkHeadersFromChat();
     }
 
-    // ── Shared: Render workshop UI ────────────────────────────────────────────
+    // --- GRIDLOCK BREAKER: REMOVED THE "if (!_lastSummaryUsedForRag) return" ---
     renderRagWorkshop();
     renderAllChunkChatLabels();
+    hideRagNoSummaryMessage(); // Force the UI to show
 
-    // Restore raw tab if active
-    const activeTab = $('#cnz-rag-tab-bar .cnz-tab-active').data('tab') ?? 'sectioned';
-    if (activeTab === 'raw' && !_ragRawDetached) {
-        $('#cnz-rag-raw').val(compileRagFromChunks());
-        requestAnimationFrame(() => autoResizeRagRaw());
-    }
-
-    // ── Shared: Summary change detection and classification ───────────────────
-    // _lastSummaryUsedForRag is seeded from the ledger head in openReviewModal
-    // so it is available even after a page reload.
-    if (!_lastSummaryUsedForRag) {
-        showRagNoSummaryMessage();
-        return;
-    }
-    hideRagNoSummaryMessage();
-
-    // Detect summary change since last classification
-    const currentSummary = $('#cnz-situation-text').val().trim();
+    // Detect if the user edited the hooks text in Step 1
+    const currentSummary = $('#cnz-situation-text').val()?.trim() || "";
     if (currentSummary && currentSummary !== _lastSummaryUsedForRag) {
-        toastr.warning('Hooks text has changed — stale headers will be refreshed.');
-        for (const chunk of _ragChunks) {
-            if (chunk.status === 'complete') chunk.status = 'stale';
-        }
         _lastSummaryUsedForRag = currentSummary;
-    } else if (currentSummary) {
-        _lastSummaryUsedForRag = currentSummary;
+        // Optional: mark chunks as stale if you want them to re-run with the new info
     }
-    // If textarea is empty (step 1 not yet visited this session),
-    // _lastSummaryUsedForRag retains its ledger-seeded value — correct.
 
-    // If all chunks are already complete (or manual), nothing left to do.
+    // If all chunks are done, stop. Otherwise, drain queue.
     if (_ragChunks.every(c => c.status === 'complete' || c.status === 'manual')) return;
 
-    // Enqueue pending and stale chunks
     _ragCallQueue = [];
     for (let i = 0; i < _ragChunks.length; i++) {
-        const s = _ragChunks[i].status;
-        if (s === 'pending' || s === 'stale') _ragCallQueue.push(i);
+        if (_ragChunks[i].status === 'pending' || _ragChunks[i].status === 'stale') {
+            _ragCallQueue.push(i);
+        }
     }
     ragDrainQueue();
 }
