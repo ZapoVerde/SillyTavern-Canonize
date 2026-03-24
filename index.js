@@ -559,12 +559,19 @@ function buildProsePairs(messages) {
     const valid = messages.filter(m => !m.is_system && m.mes !== undefined);
     const pairs = [];
     let current = null;
+
     for (let i = 0; i < valid.length; i++) {
         const msg = valid[i];
         if (msg.is_user) {
+            // Standard: Start a new pair on User message
             if (current) pairs.push(current);
             current = { user: msg, messages: [], validIdx: i };
-        } else if (current) {
+        } else {
+            // If the chat starts with an AI message (no user yet), 
+            // create a dummy 'System' user so the greeting isn't lost.
+            if (!current) {
+                current = { user: { name: 'System', mes: 'Story Start' }, messages: [], validIdx: i };
+            }
             current.messages.push(msg);
         }
     }
@@ -2418,21 +2425,25 @@ function buildModalTranscript(horizonTurns) {
  * @returns {string}
  */
 function buildSyncWindowTranscript(horizonTurns) {
+    const settings = getSettings();
     const messages = SillyTavern.getContext().chat ?? [];
     const allPairs = buildProsePairs(messages);
     
-    // REMOVE the liveContextBuffer subtraction here. 
-    // If the user triggered a sync, they WANT to sync what is visible.
-    const ledgerHead = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
-    const firstUncommitted = ledgerHead?.sequenceNum ?? 0;
+    // Window logic: Head -> (Total - Buffer)
+    const lcb = settings.liveContextBuffer ?? 5;
+    const totalNS = messages.filter(m => !m.is_system).length;
+    const tbb = Math.max(0, totalNS - lcb);
 
-    // Just get the gap. No guards.
-    const gapPairs = allPairs.filter(p => p.validIdx >= firstUncommitted);
-    
-    // Fallback: If no gap, just take the last N turns. Don't return empty.
-    const finalPairs = gapPairs.length > 0 ? gapPairs : allPairs.slice(-5);
-    
-    return buildTranscript(finalPairs.flatMap(p => [p.user, ...p.messages]));
+    let windowPairs = allPairs.filter(p => p.validIdx < tbb);
+
+    // SURGICAL UNLOCK: If the buffer is larger than the chat,
+    // don't send an empty transcript. Send the last available pair.
+    if (windowPairs.length === 0 && allPairs.length > 0) {
+        windowPairs = [allPairs[allPairs.length - 1]];
+    }
+
+    const windowMsgs = windowPairs.slice(-horizonTurns).flatMap(p => [p.user, ...p.messages]);
+    return buildTranscript(windowMsgs);
 }
 
 /**
