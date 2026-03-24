@@ -1022,12 +1022,12 @@ async function waitForRagChunks(timeoutMs = 120_000) {
  * @returns {Promise<string>}
  */
 async function runRagClassifierCall(summaryText, targetPairs) {
-    // FALLBACK: If no summary exists, provide a generic one so the AI doesn't stall.
-    const safeSummary = (summaryText && summaryText.trim().length > 0) 
-        ? summaryText 
-        : "The current scene in the tavern.";
+    // PULL LIVE: Even if the caller passed a stale variable, check the UI one last time
+    const uiSummary = $('#cnz-situation-text').val()?.trim();
+    const finalSummary = uiSummary || summaryText || "The current scene continues.";
 
     const promptTemplate = getSettings().ragClassifierPrompt || DEFAULT_RAG_CLASSIFIER_PROMPT;
+    
     const formattedTurns = targetPairs.map(p => {
         const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
         for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
@@ -1035,8 +1035,8 @@ async function runRagClassifierCall(summaryText, targetPairs) {
     }).join('\n\n');
 
     const prompt = interpolate(promptTemplate, {
-        summary:      safeSummary,
-        history:      "", // Optional history can be added here
+        summary:      finalSummary,
+        history:      "", 
         target_turns: formattedTurns,
     });
 
@@ -2303,12 +2303,28 @@ function onEnterRagWorkshop() {
     $('#cnz-rag-disabled').addClass('cnz-hidden');
     $('#cnz-rag-mode-note').text(getRagModeLabel()).removeClass('cnz-hidden');
 
-    // Path 1: Attempt reconstruction if pairs are missing
+    // 1. SYNC: Pull the most current summary from the Step 1 textarea
+    const currentTextareaSummary = $('#cnz-situation-text').val()?.trim();
+    
+    // 2. LOGIC: If the summary changed (or was just generated), update the RAG context
+    if (currentTextareaSummary && currentTextareaSummary !== _lastSummaryUsedForRag) {
+        console.log("[CNZ] RAG Workshop: Using updated summary from Step 1.");
+        _lastSummaryUsedForRag = currentTextareaSummary;
+        
+        // Mark existing chunks as stale so they know they need a refresh with the new context
+        for (const chunk of _ragChunks) {
+            if (chunk.status === 'complete') chunk.status = 'stale';
+        }
+    } else if (!_lastSummaryUsedForRag && currentTextareaSummary) {
+        _lastSummaryUsedForRag = currentTextareaSummary;
+    }
+
+    // Path: Attempt reconstruction if pairs are missing
     if (_stagedProsePairs.length === 0) {
         reconstructStagedPairsFromLedger();
     }
 
-    // Path 2: Build chunks if they don't exist
+    // Path: Build chunks if they don't exist
     if (_ragChunks.length === 0) {
         const archivePairs = _stagedProsePairs.slice(0, _splitPairIdx);
         if (archivePairs.length > 0) {
@@ -2318,16 +2334,16 @@ function onEnterRagWorkshop() {
         }
     }
 
-    // --- GRIDLOCK BREAKER: REMOVED THE "if (!_lastSummaryUsedForRag) return" ---
+    // RENDER UI
     renderRagWorkshop();
     renderAllChunkChatLabels();
-    hideRagNoSummaryMessage(); // Force the UI to show
 
-    // Detect if the user edited the hooks text in Step 1
-    const currentSummary = $('#cnz-situation-text').val()?.trim() || "";
-    if (currentSummary && currentSummary !== _lastSummaryUsedForRag) {
-        _lastSummaryUsedForRag = currentSummary;
-        // Optional: mark chunks as stale if you want them to re-run with the new info
+    // GRIDLOCK BREAKER: Always hide the "No Summary" message if we have ANY text to work with
+    if (_lastSummaryUsedForRag || currentTextareaSummary) {
+        hideRagNoSummaryMessage();
+    } else {
+        showRagNoSummaryMessage();
+        return; // Only bail if there truly is NO summary anywhere
     }
 
     // If all chunks are done, stop. Otherwise, drain queue.
@@ -2335,9 +2351,8 @@ function onEnterRagWorkshop() {
 
     _ragCallQueue = [];
     for (let i = 0; i < _ragChunks.length; i++) {
-        if (_ragChunks[i].status === 'pending' || _ragChunks[i].status === 'stale') {
-            _ragCallQueue.push(i);
-        }
+        const s = _ragChunks[i].status;
+        if (s === 'pending' || s === 'stale') _ragCallQueue.push(i);
     }
     ragDrainQueue();
 }
