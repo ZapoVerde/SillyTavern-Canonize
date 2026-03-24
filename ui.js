@@ -368,6 +368,12 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
         </div>
 
         <div class="cnz-settings-inline-row">
+          <label for="cnz-set-ledger-max-nodes">Ledger history (nodes) ${tip('Maximum sync snapshots kept per character. On each sync the oldest nodes beyond this limit are deleted from the Data Bank. 0 = keep all (no pruning). Reducing this limits how far back you can roll back.')}</label>
+          <input id="cnz-set-ledger-max-nodes" type="number" min="0" step="1"
+                 value="${escapeHtml(String(s.ledgerMaxNodes ?? 0))}">
+        </div>
+
+        <div class="cnz-settings-inline-row">
           <label for="cnz-set-lorebook-sync-start">Lorebook sync start ${tip('"From latest turn": each sync processes from the Begin sync turn value. "From sync point": only new turns since the last successful lorebook sync are processed — avoids re-analysing old content.')}</label>
           <select id="cnz-set-lorebook-sync-start" class="cnz-select cnz-settings-select-sm">
             <option value="syncTurn"  ${(s.lorebookSyncStart ?? 'syncTurn') === 'syncTurn'  ? 'selected' : ''}>From latest turn</option>

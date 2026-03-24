@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
- * @version 0.9.50
+ * @version 0.9.51
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -290,6 +290,7 @@ const PROFILE_DEFAULTS = Object.freeze({
     hookseekerTrailingPrompt: '',
     // Rolling trim
     autoAdvanceMask:          false,
+    ledgerMaxNodes:           0,    // 0 = keep all; >0 = prune to N most recent nodes on each sync
     // RAG
     enableRag:                false,
     ragSeparator:             'Chunk {{chunk_number}} ({{turn_range}})',
@@ -1919,6 +1920,50 @@ async function commitLedgerManifest(avatarKey, node = null) {
 
     // 5. Delete the old manifest (best-effort — safe to lose now that new is live).
     await cnzDeleteFile(oldPath);
+}
+
+/**
+ * Prunes node files older than the `ledgerMaxNodes` limit.
+ * Walks the chain from HEAD, keeps the newest N nodes, deletes the rest from the
+ * Data Bank, removes them from the in-memory manifest, and re-uploads the manifest.
+ * The oldest surviving node becomes the new chain root (parentId set to null).
+ * No-op when ledgerMaxNodes is 0 or the chain is already within the limit.
+ * @param {string} avatarKey  Raw avatar filename (e.g. "seraphina.png").
+ * @returns {Promise<number>} Number of nodes pruned.
+ */
+async function pruneOldLedgerNodes(avatarKey) {
+    const maxNodes = getSettings().ledgerMaxNodes ?? 0;
+    if (maxNodes <= 0 || !_ledgerManifest?.nodes) return 0;
+
+    const chain = buildNodeChain(_ledgerManifest);
+    if (chain.length <= maxNodes) return 0;
+
+    const toPrune = chain.slice(0, chain.length - maxNodes);
+    const toKeep  = chain.slice(chain.length - maxNodes);
+
+    const manifestPath = getMetaSettings().ledgerPaths?.[avatarKey];
+    if (!manifestPath) return 0;
+    const lastSlash = manifestPath.lastIndexOf('/');
+    const baseDir   = lastSlash >= 0 ? manifestPath.slice(0, lastSlash + 1) : '';
+    const safeKey   = cnzAvatarKey(avatarKey);
+
+    for (const node of toPrune) {
+        const nodePath = baseDir + cnzFileName(safeKey, 'node', node.nodeId);
+        await cnzDeleteFile(nodePath);
+        delete _ledgerManifest.nodes[node.nodeId];
+    }
+
+    // Sever the chain at the new root so buildNodeChain stays consistent.
+    const newRootId = toKeep[0]?.nodeId;
+    if (newRootId && _ledgerManifest.nodes[newRootId]) {
+        _ledgerManifest.nodes[newRootId] = Object.assign(
+            {}, _ledgerManifest.nodes[newRootId], { parentId: null },
+        );
+    }
+
+    await commitLedgerManifest(avatarKey, null);
+    console.log(`[CNZ] GC: pruned ${toPrune.length} node(s) (limit ${maxNodes}), ${toKeep.length} retained.`);
+    return toPrune.length;
 }
 
 /**
@@ -3858,6 +3903,33 @@ async function cnzStorageReport() {
 </tr>`;
     }).join('');
 
+    // ── Fetch server memory report (requires cnz-diag plugin + enableServerPlugins: true) ──
+    let memHtml = '';
+    try {
+        const memRes = await fetch('/api/plugins/cnz-diag/memory', {
+            method:  'POST',
+            headers: getRequestHeaders(),
+        });
+        if (memRes.ok) {
+            const m = await memRes.json();
+            const p = m.process;
+            const o = m.os;
+            memHtml = `
+<h4 style="margin:1em 0 0.4em">Server Memory (logged to console)</h4>
+<table style="width:100%;border-collapse:collapse;font-size:0.9em">
+  <tr><td style="padding:0.15em 0.5em;color:#aaa">Process RSS</td>       <td style="text-align:right;padding:0.15em 0.5em">${formatBytes(p.rss)}</td></tr>
+  <tr><td style="padding:0.15em 0.5em;color:#aaa">Heap used / total</td> <td style="text-align:right;padding:0.15em 0.5em">${formatBytes(p.heapUsed)} / ${formatBytes(p.heapTotal)}</td></tr>
+  <tr><td style="padding:0.15em 0.5em;color:#aaa">External / Buffers</td><td style="text-align:right;padding:0.15em 0.5em">${formatBytes(p.external)} / ${formatBytes(p.arrayBuffers)}</td></tr>
+  <tr><td style="padding:0.15em 0.5em;color:#aaa">OS free / total</td>   <td style="text-align:right;padding:0.15em 0.5em">${formatBytes(o.freeMem)} / ${formatBytes(o.totalMem)}</td></tr>
+  <tr><td style="padding:0.15em 0.5em;color:#aaa">Load avg (1/5/15m)</td><td style="text-align:right;padding:0.15em 0.5em">${o.loadAvg1.toFixed(2)} / ${o.loadAvg5.toFixed(2)} / ${o.loadAvg15.toFixed(2)}</td></tr>
+</table>`;
+        } else if (memRes.status === 404) {
+            memHtml = `<p style="color:#888;font-size:0.85em;margin-top:0.75em">Server memory unavailable — enable the cnz-diag plugin (see README).</p>`;
+        }
+    } catch {
+        // Plugin not present or server plugins disabled — silent skip
+    }
+
     const html = `
 <h3>CNZ Storage Report</h3>
 <p style="color:#aaa;font-size:0.85em">Sizes are measured from fetched content (UTF-8 character count, not compressed disk bytes).</p>
@@ -3881,7 +3953,8 @@ async function cnzStorageReport() {
     </tr>
   </tfoot>
 </table>
-<p style="color:#aaa;font-size:0.85em;margin-top:0.75em">Each sync appends a new node file (full snapshot). Use <em>Purge Ledger</em> to reclaim space.</p>`;
+<p style="color:#aaa;font-size:0.85em;margin-top:0.75em">Each sync appends a new node file (full snapshot). Use <em>Purge Ledger</em> to reclaim space.</p>
+${memHtml}`;
 
     await callPopup(html, 'text');
 }
@@ -4496,6 +4569,14 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
             _sessionStartId = node.nodeId;
             await commitLedgerManifest(char.avatar, node);
+
+            // GC: prune oldest nodes beyond the configured limit (best-effort, non-fatal)
+            if ((getSettings().ledgerMaxNodes ?? 0) > 0) {
+                pruneOldLedgerNodes(char.avatar).catch(err =>
+                    console.warn('[CNZ] GC: node pruning failed (non-fatal):', err),
+                );
+            }
+
             ledgerOk = true;
             _syncNode = node;
         } catch (err) {
@@ -4764,6 +4845,7 @@ function refreshSettingsUI() {
     $('#cnz-set-hookseeker-horizon').val(s.hookseekerHorizon ?? 70);
     $('#cnz-set-lorebook-sync-start').val(s.lorebookSyncStart ?? 'syncTurn');
     $('#cnz-set-auto-advance-mask').prop('checked', s.autoAdvanceMask ?? false);
+    $('#cnz-set-ledger-max-nodes').val(s.ledgerMaxNodes ?? 0);
     $('#cnz-set-enable-rag').prop('checked', s.enableRag ?? false);
     $('#cnz-rag-settings-body').toggleClass('cnz-disabled', !(s.enableRag ?? false));
     $('#cnz-set-rag-separator').val(s.ragSeparator ?? DEFAULT_SEPARATOR);
@@ -4843,6 +4925,12 @@ function bindSettingsHandlers() {
 
     $('#cnz-set-auto-advance-mask').on('change', function () {
         getSettings().autoAdvanceMask = $(this).prop('checked');
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-ledger-max-nodes').on('input', function () {
+        const val = Math.max(0, parseInt($(this).val()) || 0);
+        getSettings().ledgerMaxNodes = val;
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
