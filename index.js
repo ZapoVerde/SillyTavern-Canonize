@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
- * @version 0.9.51
+ * @version 0.9.52
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -1607,10 +1607,10 @@ async function patchCharacterScenario(char, newScenario) {
     formData.append('creator_notes',             char.data?.creator_notes              ?? '');
     formData.append('system_prompt',             char.data?.system_prompt              ?? '');
     formData.append('post_history_instructions', char.data?.post_history_instructions  ?? '');
-    formData.append('tags',                      JSON.stringify(char.tags              ?? []));
+    //formData.append('tags', char.tags ?? []);
     formData.append('creator',                   char.data?.creator                    ?? '');
     formData.append('character_version',         char.data?.character_version          ?? '');
-    formData.append('alternate_greetings',       JSON.stringify(char.data?.alternate_greetings ?? []));
+    //formData.append('alternate_greetings', char.data?.alternate_greetings ?? []);
     formData.append('json_data',                 JSON.stringify(char));
     formData.append('avatar_url',                char.avatar);
     formData.append('chat',                      char.chat);
