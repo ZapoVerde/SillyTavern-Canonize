@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
- * @version 0.9.48
+ * @version 0.9.49
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -4042,18 +4042,24 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
         const windowSize = settings.chunkEveryN ?? 20;
 
-        // ── hookPairs: from ledger head to trailing buffer boundary ───────────
+        // ── hookPairs ─────────────────────────────────────────────────────────
+        // coverAll  → head to buffer  (full uncommitted gap; no committed turns included)
+        // standard  → head to head+N (rolling window; any remaining gap stays uncommitted
+        //             until the next wand trigger or auto-sync after a new turn)
         let hookPairs;
-        if (coverAll || !_ledgerManifest?.headNodeId) {
+        if (!_ledgerManifest?.headNodeId) {
+            // First sync — no committed head yet; process everything up to the buffer.
             hookPairs = allPairs;
         } else {
-            const ledgerHeadForHook = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
+            const ledgerHeadForHook = _ledgerManifest.nodes[_ledgerManifest.headNodeId];
             const firstUncommitted  = ledgerHeadForHook?.sequenceNum ?? 0;
             const startIdx          = allPairs.findIndex(p => p.validIdx >= firstUncommitted);
             if (startIdx === -1) {
                 return;
             }
-            hookPairs = allPairs.slice(startIdx);
+            hookPairs = coverAll
+                ? allPairs.slice(startIdx)                         // full gap: head → buffer
+                : allPairs.slice(startIdx, startIdx + windowSize); // window:   head → head+N
         }
 
         if (!hookPairs.length) {
@@ -4137,20 +4143,24 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
             await fetchOrBootstrapLedger(char.avatar);
         }
 
-        // ragPairs: the full uncommitted gap from ledger head to trailing buffer boundary.
-        // After the allPairs/hookPairs rebuild, ragPairs and hookPairs cover the same range.
+        // ragPairs mirrors hookPairs — same window bounds, same coverAll logic.
         const headNodeForRag = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
         let ragPairs;
         let ragPairOffset = 0;
-        if (!headNodeForRag || coverAll) {
+        if (!headNodeForRag) {
             ragPairs = allPairs;
-            // offset stays 0 — ragPairs starts at the beginning of allPairs
         } else {
-            // allPairs already trimmed to trailingBufferBoundary; find first uncommitted pair.
             const firstUncommittedSeq = headNodeForRag.sequenceNum;
             const pairStartIdx        = allPairs.findIndex(p => p.validIdx >= firstUncommittedSeq);
-            ragPairOffset             = pairStartIdx === -1 ? 0 : pairStartIdx;
-            ragPairs                  = pairStartIdx === -1 ? [] : allPairs.slice(pairStartIdx);
+            if (pairStartIdx === -1) {
+                ragPairs      = [];
+                ragPairOffset = 0;
+            } else {
+                ragPairOffset = pairStartIdx;
+                ragPairs      = coverAll
+                    ? allPairs.slice(pairStartIdx)                         // full gap: head → buffer
+                    : allPairs.slice(pairStartIdx, pairStartIdx + windowSize); // window: head → head+N
+            }
         }
 
         logSyncStart(hookPairs, ragPairs, lbPairs, coverAll, windowSize);
