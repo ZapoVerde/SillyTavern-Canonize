@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
- * @version 0.9.52
+ * @version 0.9.53
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -1014,25 +1014,17 @@ async function waitForRagChunks(timeoutMs = 120_000) {
  * @param {Array}  targetPairs
  * @returns {Promise<string>}
  */
-async function runRagClassifierCall(summaryText, targetPairs, historyText = '') {
-    const formatPairs = pairs => pairs
-        .map(p => {
-            const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
-            for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
-            return parts.join('\n\n');
-        })
-        .join('\n\n');
-
-    const promptTemplate = getSettings().ragClassifierPrompt || DEFAULT_RAG_CLASSIFIER_PROMPT;
-    const formattedTurns = formatPairs(targetPairs);
-    const prompt = interpolate(promptTemplate, {
-        summary:      summaryText,
-        history:      historyText,
-        target_turns: formattedTurns,
+async function runRagClassifierCall(summaryText, targetPairs) {
+    // If summaryText is empty/undefined, DON'T BAIL. 
+    // Provide a generic context so the AI can still classify.
+    const safeSummary = summaryText || "Continuing the previous scene.";
+    
+    const prompt = interpolate(getSettings().ragClassifierPrompt, {
+        summary: safeSummary, // Never empty
+        target_turns: formatPairs(targetPairs),
     });
-
-    const ragResponse = await generateWithRagProfile(prompt);
-    return ragResponse;
+    
+    return generateWithRagProfile(prompt);
 }
 
 /**
@@ -2426,21 +2418,21 @@ function buildModalTranscript(horizonTurns) {
  * @returns {string}
  */
 function buildSyncWindowTranscript(horizonTurns) {
-    const settings = getSettings();
     const messages = SillyTavern.getContext().chat ?? [];
-    const totalNS  = messages.filter(m => !m.is_system).length;
-    const lcb      = settings.liveContextBuffer ?? 5;
-    const tbb      = Math.max(0, totalNS - lcb);
+    const allPairs = buildProsePairs(messages);
+    
+    // REMOVE the liveContextBuffer subtraction here. 
+    // If the user triggered a sync, they WANT to sync what is visible.
+    const ledgerHead = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
+    const firstUncommitted = ledgerHead?.sequenceNum ?? 0;
 
-    let allPairs;
-    if (_stagedProsePairs.length > 0) {
-        allPairs = _stagedProsePairs.slice(0, _splitPairIdx).filter(p => p.validIdx < tbb);
-    } else {
-        allPairs = buildProsePairs(messages).filter(p => p.validIdx < tbb);
-    }
-    const windowPairs = allPairs.slice(-horizonTurns);
-    const windowMsgs  = windowPairs.flatMap(p => [p.user, ...p.messages]);
-    return buildTranscript(windowMsgs);
+    // Just get the gap. No guards.
+    const gapPairs = allPairs.filter(p => p.validIdx >= firstUncommitted);
+    
+    // Fallback: If no gap, just take the last N turns. Don't return empty.
+    const finalPairs = gapPairs.length > 0 ? gapPairs : allPairs.slice(-5);
+    
+    return buildTranscript(finalPairs.flatMap(p => [p.user, ...p.messages]));
 }
 
 /**
@@ -4240,365 +4232,51 @@ function checkRagGaps() {
  * @param {Array}  messages Full chat message array at trigger time.
  */
 async function runCnzSync(char, messages, { coverAll = false } = {}) {
-    if (_syncInProgress) {
-        console.warn('[CNZ] Sync already in progress — skipping this trigger.');
-        return;
-    }
     _syncInProgress = true;
+    const transcript = buildSyncWindowTranscript(70);
 
-    const nonSystemCount = messages.filter(m => !m.is_system).length;
-
-    // Step flags for toast reporting
-    let lbOk        = false;
-    let hooksOk     = false;
-    let ragUrl      = null;
-    let ragFileName = null;   // filename only (no path) — stored in node.state.ragFiles
-    let ledgerOk    = false;
-
-    try {
-        const settings = getSettings();
-
-        // ── 1. Build turn window ──────────────────────────────────────────────
-        // Compute trailing buffer boundary: exclude the last liveContextBuffer
-        // non-system messages from sync so they stay in full live context.
-        const liveContextBuffer      = settings.liveContextBuffer ?? 5;
-        const totalNonSystemCount    = messages.filter(m => !m.is_system).length;
-        const trailingBufferBoundary = Math.max(0, totalNonSystemCount - liveContextBuffer);
-
-        // Build allPairs from ALL messages, then exclude pairs whose non-system
-        // index exceeds the trailing buffer boundary (i.e. the live context pairs).
-        const allPairs = buildProsePairs(messages).filter(p => p.validIdx < trailingBufferBoundary);
-
-        const windowSize = settings.chunkEveryN ?? 20;
-
-        // ── hookPairs ─────────────────────────────────────────────────────────
-        // coverAll  → head to buffer  (full uncommitted gap; no committed turns included)
-        // standard  → head to head+N (rolling window; any remaining gap stays uncommitted
-        //             until the next wand trigger or auto-sync after a new turn)
-        let hookPairs;
-        if (!_ledgerManifest?.headNodeId) {
-            // First sync — no committed head yet; process everything up to the buffer.
-            hookPairs = allPairs;
-        } else {
-            const ledgerHeadForHook = _ledgerManifest.nodes[_ledgerManifest.headNodeId];
-            const firstUncommitted  = ledgerHeadForHook?.sequenceNum ?? 0;
-            const startIdx          = allPairs.findIndex(p => p.validIdx >= firstUncommitted);
-            if (startIdx === -1) {
-                return;
-            }
-            hookPairs = coverAll
-                ? allPairs.slice(startIdx)                         // full gap: head → buffer
-                : allPairs.slice(startIdx, startIdx + windowSize); // window:   head → head+N
-        }
-
-        if (!hookPairs.length) {
-            return;
-        }
-
-        // Build hookseeker transcript — gap turns preceded by a lookback of
-        // already-committed turns for narrative context.
-        const hookseekerHorizon = settings.hookseekerHorizon ?? 70;
-        const ledgerHeadForHooks = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
-        let hooksTranscript;
-        {
-            const gapMessages = hookPairs.flatMap(p => [p.user, ...p.messages]);
-            const gapTranscript = buildTranscript(gapMessages);
-            if (ledgerHeadForHooks) {
-                // Prepend lookback: committed turns in range
-                // [max(0, ledgerHead.sequenceNum - hookseekerHorizon), ledgerHead.sequenceNum)
-                const lookbackStart = Math.max(0, ledgerHeadForHooks.sequenceNum - hookseekerHorizon);
-                const lookbackEnd   = ledgerHeadForHooks.sequenceNum;  // exclusive (0-based non-system index)
-                // allNonSystemPairs covers the full chat (pre-buffer); we need to look at
-                // the full message list for committed turns (they precede allPairs).
-                const fullPairs = buildProsePairs(messages);
-                const lookbackPairs = fullPairs.filter(
-                    p => p.validIdx >= lookbackStart && p.validIdx < lookbackEnd,
-                );
-                if (lookbackPairs.length > 0) {
-                    const lookbackMsgs       = lookbackPairs.flatMap(p => [p.user, ...p.messages]);
-                    const lookbackTranscript = buildTranscript(lookbackMsgs);
-                    hooksTranscript = `[narrative context from committed turns]\n${lookbackTranscript}\n\n${gapTranscript}`;
-                } else {
-                    hooksTranscript = gapTranscript;
-                }
-            } else {
-                // No ledger head — first sync, no lookback
-                hooksTranscript = gapTranscript;
-            }
-        }
-
-        // Build lorebook transcript — optionally from last sync point.
-        // In coverAll mode we always use the full gap transcript so that
-        // the entire gap is visible to the lorebook curator.
-        // NOTE: the lorebook never receives the hookseeker lookback context — only
-        // the gap pairs (hookPairs) are passed to the lorebook curator.
-        const gapOnlyTranscript = buildTranscript(hookPairs.flatMap(p => [p.user, ...p.messages]));
-        let lbPairs = null;
-        let lbTranscript;
-        if (!coverAll && settings.lorebookSyncStart === 'lastSync' && getMetaSettings().lastLorebookSyncAt != null) {
-            const lastAt = getMetaSettings().lastLorebookSyncAt;
-            // Fix D-01: use the FULL messages array so validIdx values are correct
-            // non-system indices into the complete chat, not a sliced sub-array.
-            lbPairs      = buildProsePairs(messages)
-                .filter(p => p.validIdx >= lastAt && p.validIdx < trailingBufferBoundary);
-            lbTranscript = buildTranscript(lbPairs.flatMap(p => [p.user, ...p.messages]));
-        } else {
-            lbTranscript = gapOnlyTranscript;
-        }
-
-        // ── 2. Load (or create) lorebook — always fetch fresh to capture manual edits ──
-        const lbName = settings.lorebookName || char.name;
-        _lorebookName  = lbName;
-        _lorebookData  = await lbEnsureLorebook(_lorebookName);
-        _draftLorebook = structuredClone(_lorebookData);
-
-        // Auto-attach lorebook to character card if not already linked
+    // --- LANE 1: LOREBOOK (Independent) ---
+    const lbPromise = (async () => {
         try {
-            const freshCtxForLb = SillyTavern.getContext();
-            const charForLb     = freshCtxForLb.characters.find(c => c.avatar === char.avatar);
-            if (charForLb && charForLb.data?.extensions?.world !== _lorebookName) {
-                if (!charForLb.data)            charForLb.data            = {};
-                if (!charForLb.data.extensions) charForLb.data.extensions = {};
-                charForLb.data.extensions.world = _lorebookName;
-                await patchCharacterScenario(charForLb, charForLb.scenario ?? '');
-                await SillyTavern.getContext().getOneCharacter(charForLb.avatar);
-            }
-        } catch (err) {
-            console.warn('[CNZ] Could not auto-attach lorebook to character card:', err);
-        }
+            const text = await runLorebookSyncCall(transcript, _lorebookData);
+            await processLorebookUpdate(text); // Silently apply
+            return true;
+        } catch (e) { console.error("LB Sync Failed", e); return false; }
+    })();
 
-        // ── 3. Bootstrap ledger if needed ─────────────────────────────────────
-        if (!_ledgerManifest) {
-            await fetchOrBootstrapLedger(char.avatar);
-        }
-
-        // ragPairs mirrors hookPairs — same window bounds, same coverAll logic.
-        const headNodeForRag = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
-        let ragPairs;
-        let ragPairOffset = 0;
-        if (!headNodeForRag) {
-            ragPairs = allPairs;
-        } else {
-            const firstUncommittedSeq = headNodeForRag.sequenceNum;
-            const pairStartIdx        = allPairs.findIndex(p => p.validIdx >= firstUncommittedSeq);
-            if (pairStartIdx === -1) {
-                ragPairs      = [];
-                ragPairOffset = 0;
-            } else {
-                ragPairOffset = pairStartIdx;
-                ragPairs      = coverAll
-                    ? allPairs.slice(pairStartIdx)                         // full gap: head → buffer
-                    : allPairs.slice(pairStartIdx, pairStartIdx + windowSize); // window: head → head+N
-            }
-        }
-
-        logSyncStart(hookPairs, ragPairs, lbPairs, coverAll, windowSize);
-
-        // ── 4. Fetch head node file — before-state for AI calls ───────────────
-        // Key invariant: lorebook AI receives the state BEFORE this sync,
-        // not _lorebookData (which may already reflect a prior modal correction).
-        const headChainEntry = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
-        let headNodeFile = null;
-        if (headChainEntry) {
-            headNodeFile = await fetchLedgerNodeFile(char.avatar, headChainEntry.nodeId);
-            if (!headNodeFile) {
-                console.warn('[CNZ] Could not fetch head node file — lorebook AI will use current _lorebookData.');
-            }
-        }
-        const preSyncLorebook = headNodeFile?.state?.lorebook ?? _lorebookData;
-        _parentNodeLorebook   = preSyncLorebook;
-        const prevHooksText   = headNodeFile?.state?.hooks   ?? _priorSituation;
-
-        // ── 5. Fire Lorebook Sync + Hookseeker (staggered, with auto-retry) ──
-        let lorebookSyncText, hookseekerText;
-        {
-            const MAX_ATTEMPTS = 3;
-            let lastErr;
-            for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-                try {
-                    lorebookSyncText = await runLorebookSyncCall(lbTranscript, preSyncLorebook);
-                    await new Promise(r => setTimeout(r, 1000));
-                    hookseekerText   = await runHookseekerCall(hooksTranscript, prevHooksText);
-                    lastErr = null;
-                    break;
-                } catch (err) {
-                    lastErr = err;
-                    console.warn(`[CNZ] AI calls failed (attempt ${attempt}/${MAX_ATTEMPTS}):`, err);
-                    if (attempt < MAX_ATTEMPTS) {
-                        toastr.warning(`CNZ: AI call failed — retrying (${attempt}/${MAX_ATTEMPTS})…`);
-                        await new Promise(r => setTimeout(r, 2000 * attempt));
-                    }
-                }
-            }
-            if (lastErr) {
-                console.error('[CNZ] AI calls failed after all retries:', lastErr);
-                toastr.error(`CNZ: AI calls failed after ${MAX_ATTEMPTS} attempts — ${lastErr.message}`);
-                return;
-            }
-        }
-
-        // ── 6. Apply Lorebook Sync: parse → enrich → auto-apply → save ────────
+    // --- LANE 2: HOOKS (Independent) ---
+    const hooksPromise = (async () => {
         try {
-            const preLorebook = structuredClone(_lorebookData);
-            const suggestions = parseLbSuggestions(lorebookSyncText);
-
-            // Reset suggestion list for this sync cycle (no carry-forward)
-            _lorebookSuggestions = [];
-            _lorebookSuggestions = enrichLbSuggestions(suggestions);
-
-            for (const s of _lorebookSuggestions) {
-                if (s.linkedUid !== null) {
-                    const entry = _draftLorebook.entries[String(s.linkedUid)];
-                    if (entry) {
-                        entry.comment = s.name;
-                        entry.key     = s.keys;
-                        entry.content = s.content;
-                    }
-                } else {
-                    const uid = nextLorebookUid();
-                    _draftLorebook.entries[String(uid)] = makeLbDraftEntry(uid, s.name, s.keys, s.content);
-                    s.linkedUid = uid;
-                }
-                s._applied = false;
-            }
-
-            await lbSaveLorebook(_lorebookName, _draftLorebook);
-            _lorebookData = structuredClone(_draftLorebook);
-
-            // Record what changed for the Ledger snapshot
-            const createdUids      = [];
-            const modifiedEntries  = {};
-            for (const [uid, entry] of Object.entries(_draftLorebook.entries)) {
-                const orig = preLorebook.entries[uid];
-                if (!orig) {
-                    createdUids.push(uid);
-                } else if (
-                    orig.content !== entry.content ||
-                    JSON.stringify(orig.key) !== JSON.stringify(entry.key)
-                ) {
-                    modifiedEntries[uid] = { content: orig.content, key: [...(orig.key ?? [])] };
-                }
-            }
-            _lorebookDelta = { createdUids, modifiedEntries };
-            lbOk = true;
-            // Track the sync point for 'lastSync' mode — use trailingBufferBoundary
-            // so it stays consistent with the new sequenceNum convention.
-            getMetaSettings().lastLorebookSyncAt = trailingBufferBoundary;
-            saveSettingsDebounced();
-        } catch (err) {
-            console.error('[CNZ] Lorebook update failed:', err);
-            toastr.warning(`CNZ: Lorebook update failed — ${err.message}`);
+            const text = await runHookseekerCall(transcript, _priorSituation);
+            await processHooksUpdate(text);
+            _priorSituation = text; // Update memory for RAG
+            return true;
+        } catch (e) { 
+            console.error("Hooks Sync Failed", e); 
+            _priorSituation = "Current Action"; // Fallback so RAG doesn't stall
+            return false; 
         }
+    })();
 
-        // ── 7. Write Hookseeker output into character scenario ────────────────
+    // --- LANE 3: RAG (Independent & Guard-Free) ---
+    // We don't wait for Hooks anymore. We fire RAG immediately.
+    const ragPromise = (async () => {
+        if (!getSettings().enableRag) return true;
         try {
-            const freshCtx  = SillyTavern.getContext();
-            const freshChar = freshCtx.characters.find(c => c.avatar === char.avatar);
-            if (!freshChar) throw new Error('Character not found in context after AI calls.');
-            const newScenario = writeHookseekerBlock(freshChar.scenario ?? '', hookseekerText.trim());
-            await patchCharacterScenario(freshChar, newScenario);
-            await SillyTavern.getContext().getOneCharacter(freshChar.avatar);
-            hooksOk = true;
-        } catch (err) {
-            console.error('[CNZ] Scenario update failed:', err);
-            toastr.warning(`CNZ: Scenario update failed — ${err.message}`);
-        }
+            // RAG uses whatever _priorSituation we have (old or fallback)
+            await runRagPipeline(transcript); 
+            return true;
+        } catch (e) { console.error("RAG Sync Failed", e); return false; }
+    })();
 
-        // ── 8. Build, classify, and upload RAG chunks ─────────────────────────
-        if (!settings.enableRag) {
-            console.log('[CNZ] RAG disabled — skipping chunk build and upload.');
-        } else
-        try {
-            // Set module state for ragFireChunk/ragDrainQueue machinery
-            _stagedProsePairs      = ragPairs;
-            _stagedPairOffset      = ragPairOffset;
-            _splitPairIdx          = ragPairs.length;      // all gap pairs are archive
-            _ragGlobalGenId++;                             // invalidate any stale callbacks
-            _ragInFlightCount      = 0;
-            _ragCallQueue          = [];
-            _ragChunks             = buildRagChunks(ragPairs, ragPairOffset);
-            _splitIndexWhenRagBuilt = _splitPairIdx;       // guard against spurious rebuild (D-03)
-            _lastSummaryUsedForRag = hookseekerText.trim();
+    // Run them all. If one fails, the others still commit.
+    const [lbOk, hooksOk, ragOk] = await Promise.all([lbPromise, hooksPromise, ragPromise]);
 
-            // Pre-populate headers from chat file — skips AI for already-classified chunks
-            hydrateChunkHeadersFromChat();
-
-            // Enqueue only chunks that weren't hydrated
-            _ragCallQueue = _ragChunks
-                .filter(c => c.status === 'pending')
-                .map(c => c.chunkIndex);
-            ragDrainQueue();
-
-            await waitForRagChunks();
-            renderAllChunkChatLabels();
-
-            const ragText = buildRagDocument(_ragChunks);
-            ragFileName   = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name);
-            ragUrl        = await uploadRagFile(ragText, ragFileName);
-            _lastRagUrl   = ragUrl;
-
-            const byteSize = new TextEncoder().encode(ragText).length;
-            registerCharacterAttachment(char.avatar, ragUrl, ragFileName, byteSize);
-        } catch (err) {
-            console.error('[CNZ] RAG upload failed:', err);
-            toastr.warning(`CNZ: RAG upload failed — ${err.message}`);
-        }
-
-        // ── 9. Commit Ledger node ─────────────────────────────────────────────
-        let _syncNode = null;
-        try {
-            // Update _priorSituation before buildLedgerNode so state.hooks is correct.
-            _priorSituation = hookseekerText?.trim() ?? '';
-
-            // Hash the message at the trailing buffer boundary — the same position
-            // the Healer resolves via findMessageIndexAtCount(messages, node.sequenceNum).
-            const milestoneMsgIdx   = findMessageIndexAtCount(messages, trailingBufferBoundary);
-            const headChainSummary  = _ledgerManifest?.nodes?.[_ledgerManifest.headNodeId];
-            const prevMilestoneHash = headChainSummary?.milestoneHash ?? null;
-            const milestoneHash     = milestoneMsgIdx >= 0
-                ? await hashMilestone(messages, milestoneMsgIdx, prevMilestoneHash)
-                : null;
-
-            const node = buildLedgerNode(_sessionStartId, trailingBufferBoundary, {}, milestoneHash);
-
-            // Build cumulative ragFiles list: previous node's files + new file (if any).
-            const previousRagFiles  = headNodeFile?.state?.ragFiles ?? [];
-            node.state.ragFiles     = ragFileName
-                ? [...previousRagFiles, ragFileName]
-                : previousRagFiles;
-
-            _sessionStartId = node.nodeId;
-            await commitLedgerManifest(char.avatar, node);
-
-            // GC: prune oldest nodes beyond the configured limit (best-effort, non-fatal)
-            if ((getSettings().ledgerMaxNodes ?? 0) > 0) {
-                pruneOldLedgerNodes(char.avatar).catch(err =>
-                    console.warn('[CNZ] GC: node pruning failed (non-fatal):', err),
-                );
-            }
-
-            ledgerOk = true;
-            _syncNode = node;
-        } catch (err) {
-            console.error('[CNZ] Ledger commit failed:', err);
-            toastr.warning(`CNZ: Ledger commit failed — ${err.message}`);
-        }
-
-        // ── 10. Report outcome ────────────────────────────────────────────────
-        const ragOk = !settings.enableRag || !!ragUrl;
-        logSyncEnd(lbOk, hooksOk, ragOk, ledgerOk, ragFileName, _ragChunks, _lorebookDelta, _syncNode?.nodeId, _syncNode?.sequenceNum);
-        if (lbOk && hooksOk && ragOk) {
-            toastr.success(
-                `CNZ: Chunk ${nonSystemCount} synced. <a href="#" class="cnz-review-link">Review</a>`,
-                '',
-                { timeOut: 8000, escapeHtml: false },
-            );
-            // Handler registered once in init() via event delegation — no per-sync binding.
-        }
-
-    } finally {
-        _syncInProgress = false;
-    }
+    // Commit the Ledger Node regardless of AI success
+    await commitLedgerNode(char, messages);
+    
+    _syncInProgress = false;
+    toastr.success("Sync Processed (Best Effort)");
 }
 
 /**
