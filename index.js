@@ -58,6 +58,7 @@
  * RAG: buildRagChunks(), buildRagDocument(), ragFireChunk(), ragDrainQueue().
  * Lorebook: parseLbSuggestions(), serialiseSuggestionsToFreeform(), enrichLbSuggestions(), updateLbDiff(),
  *           deleteLbEntry(), revertLbSuggestion().
+ * DNA Chain: readDnaChain(), getLkgAnchor(), findLastAiMessageInPair().
  *
  * @contract
  *   assertions:
@@ -74,7 +75,7 @@
  *       _currentStep, _hooksGenId, _lorebookGenId, _targetedGenId,
  *       _hooksLoading, _lorebookLoading, _lbActiveIngesterIndex,
  *       _lbDebounceTimer,
- *       _ragRawDetached, _pendingOrphans,
+ *       _ragRawDetached, _pendingOrphans, _dnaChain,
  *       extension_settings.cnz]
  *     external_io: [
  *       generateRaw, ConnectionManagerRequestService,
@@ -358,6 +359,12 @@ let _parentNodeLorebook = null;  // lorebook snapshot from parent node — diff 
 // Orphan check state — set by checkOrphans(), read by openOrphanModal()
 let _pendingOrphans = [];
 
+let _dnaChain = null;
+// DnaChain | null
+// null = not yet loaded for this character
+// Populated by readDnaChain() on chat load and after each sync commit
+// Shape: { lkg: CnzAnchor | null, lkgMsgIdx: number, anchors: AnchorRef[] }
+
 // ─── Modal Session State ──────────────────────────────────────────────────────
 // Cleared by closeModal(). Kept separate from engine state so modal open/close
 // does not disrupt background sync cycles.
@@ -372,6 +379,48 @@ let _lbDebounceTimer         = null;
 let _ragRawDetached          = false;
 let _splitIndexWhenRagBuilt  = null;  // _splitPairIdx at last chunk build; null = not built
 let _targetedGenId           = 0;     // stale-callback guard for targeted generate calls
+
+/**
+ * @typedef {object} CnzAnchor
+ * @property {'anchor'} type
+ * @property {string}   uuid          - crypto.randomUUID() at commit time
+ * @property {number}   seq           - trailingBufferBoundary at commit time
+ * @property {string}   committedAt   - ISO timestamp
+ * @property {string}   hookSummary   - hooks text committed this cycle
+ * @property {object}   lorebookSnapshot - full lorebook object at commit time
+ * @property {string|null} ragSegment - active RAG segment filename, or null
+ * @property {RagHeaderEntry[]} ragHeaders - chunk headers committed this cycle
+ * @property {string|null} parentUuid - uuid of previous anchor, or null
+ */
+
+/**
+ * @typedef {object} CnzLink
+ * @property {'link'}  type
+ * @property {string}  uuid         - same uuid as the Anchor for this block
+ * @property {number}  seq          - this pair's non-system position
+ * @property {number}  anchorMsgIdx - index into messages[] of the Anchor message
+ */
+
+/**
+ * @typedef {object} RagHeaderEntry
+ * @property {number} chunkIndex
+ * @property {string} header
+ * @property {string} turnRange
+ */
+
+/**
+ * @typedef {object} AnchorRef
+ * @property {CnzAnchor} anchor
+ * @property {number}    msgIdx  - index of this anchor's message in messages[]
+ */
+
+/**
+ * @typedef {object} DnaChain
+ * @property {CnzAnchor|null} lkg         - most recent valid anchor
+ * @property {number}         lkgMsgIdx   - index of lkg in messages[], -1 if none
+ * @property {object|null}    lkgAnchorMsg - the full message object carrying lkg
+ * @property {AnchorRef[]}    anchors      - all anchors, chronological order
+ */
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
@@ -537,6 +586,61 @@ function writeHookseekerBlock(scenarioText, newContent) {
     }
     const sep = scenarioText.length > 0 ? '\n\n' : '';
     return scenarioText + sep + HOOKS_START + '\n' + newContent.trim() + '\n' + HOOKS_END;
+}
+
+// ─── DNA Chain ───────────────────────────────────────────────────────────────
+
+/**
+ * Returns the last AI (non-user, non-system) message in a prose pair.
+ * @param {{user: object, messages: object[], validIdx: number}} pair
+ * @returns {object|null}
+ */
+function findLastAiMessageInPair(pair) {
+    for (let i = pair.messages.length - 1; i >= 0; i--) {
+        const msg = pair.messages[i];
+        if (!msg.is_user && !msg.is_system) return msg;
+    }
+    return null;
+}
+
+/**
+ * Walks the full messages array and builds the DnaChain from embedded anchor data.
+ * @param {object[]} messages - SillyTavern.getContext().chat
+ * @returns {DnaChain}
+ */
+function readDnaChain(messages) {
+    const result = { lkg: null, lkgMsgIdx: -1, lkgAnchorMsg: null, anchors: [] };
+    for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+        if (!msg.extra) continue;
+        if (!msg.extra.cnz) continue;
+        const cnz = msg.extra.cnz;
+        if (!cnz.type) {
+            console.warn('[CNZ] readDnaChain: message at index', i, 'has malformed cnz object (missing type)');
+            continue;
+        }
+        if (cnz.type === 'anchor') {
+            result.anchors.push({ anchor: cnz, msgIdx: i });
+        }
+        // links are ignored — not needed by current consumers
+    }
+    if (result.anchors.length > 0) {
+        const last = result.anchors[result.anchors.length - 1];
+        result.lkg         = last.anchor;
+        result.lkgMsgIdx   = last.msgIdx;
+        result.lkgAnchorMsg = messages[last.msgIdx];
+    }
+    return result;
+}
+
+/**
+ * Convenience wrapper — returns { anchor, msgIdx } for the most recent anchor, or null.
+ * @param {object[]} messages
+ * @returns {{ anchor: CnzAnchor, msgIdx: number }|null}
+ */
+function getLkgAnchor(messages) {
+    const chain = readDnaChain(messages);
+    return chain.lkg ? { anchor: chain.lkg, msgIdx: chain.lkgMsgIdx } : null;
 }
 
 // ─── Transcript ───────────────────────────────────────────────────────────────
