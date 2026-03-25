@@ -43,18 +43,14 @@
  *    Older turns are replaced by the hookseeker summary and RAG chunks.
  * 
  * @docs
- *   Architecture overview:  docs/cnz_overview.md
- *   Context window spec:    docs/cnz_window_spec.md
- *   Modal spec:             docs/cnz_modal_spec.md
- *   Lorebook workshop spec: docs/cnz_lorebook_workshop_spec.md
- *   System spec:            docs/cnz_system_spec.md
+ *   cnz_principles.md
  *
  * @api-declaration
  * Entry points: onWandButtonClick() (manual), SYNC_TRIGGERED bus event (auto-sync).
  * Sync pipeline: runCnzSync(), runHealer().
  * Modal: openReviewModal(), onConfirmClick(), closeModal().
  * AI calls: _waitForRecipe() — routes all LLM calls through bus/executor.
- * RAG: buildRagChunks(), buildRagDocument(), ragFireChunk(), ragDrainQueue().
+ * RAG: buildRagChunks(), buildRagDocument(), waitForRagChunks().
  * Lorebook: parseLbSuggestions(), enrichLbSuggestions(), updateLbDiff(),
  *           deleteLbEntry(), revertLbSuggestion().
  * DNA Chain: readDnaChain(), getLkgAnchor(), findLastAiMessageInPair(),
@@ -72,9 +68,9 @@
  *       _lorebookName, _lorebookSuggestions, _lorebookDelta,
  *       _stagedProsePairs, _stagedPairOffset, _splitPairIdx,
  *       _ragChunks, _splitIndexWhenRagBuilt, _lastSummaryUsedForRag,
- *       _lastRagUrl, _ragGlobalGenId, _ragInFlightCount, _ragCallQueue,
+ *       _lastRagUrl,
  *       _cnzGenerating, _lastKnownAvatar,
- *       _currentStep, _hooksGenId, _lorebookGenId, _targetedGenId,
+ *       _currentStep, _modalOpenHeadUuid,
  *       _hooksLoading, _lorebookLoading, _lbActiveIngesterIndex,
  *       _lbDebounceTimer,
  *       _ragRawDetached, _pendingOrphans, _dnaChain,
@@ -196,19 +192,14 @@ let _lastKnownAvatar = null;
 let _lorebookName          = '';
 let _lorebookSuggestions   = [];
 let _ragChunks             = [];
-let _ragGlobalGenId        = 0;
-let _ragInFlightCount      = 0;
-let _ragCallQueue          = [];
 let _stagedProsePairs      = [];
 let _stagedPairOffset      = 0;   // pairs preceding _stagedProsePairs[0] in the full chat
 let _lastSummaryUsedForRag = null;
 let _splitPairIdx          = 0;
 
 // Ledger node fields — set each sync cycle
-let _chapterName   = '';
 let _lastRagUrl    = '';
 let _lorebookDelta = null;
-let _baseScenario   = '';
 let _priorSituation  = '';
 let _beforeSituation = '';  // hooks text from before the last sync
                              // read from parent node's state.hooks in openReviewModal
@@ -231,15 +222,12 @@ let _dnaChain = null;
 // does not disrupt background sync cycles.
 
 let _currentStep             = 1;    // active wizard step (1–4)
-let _hooksGenId              = 0;    // incremented each regen call; stale callbacks self-discard
 let _hooksLoading            = false;
-let _lorebookGenId           = 0;
 let _lorebookLoading         = false;
 let _lbActiveIngesterIndex   = 0;
 let _lbDebounceTimer         = null;
 let _ragRawDetached          = false;
 let _splitIndexWhenRagBuilt  = null;  // _splitPairIdx at last chunk build; null = not built
-let _targetedGenId           = 0;     // stale-callback guard for targeted generate calls
 let _modalOpenHeadUuid       = null;  // lkg anchor uuid captured at modal open; concurrent-sync guard
 
 /**
@@ -657,9 +645,9 @@ function buildProsePairs(messages) {
  * settled chunk state and hands it to the persistence layer.
  * @core-principles
  *   1. buildRagChunks is pure — no state mutation, no IO.
- *   2. Generation IDs gate every async callback; stale results are silently dropped.
+ *   2. Fan-out staleness is owned by cycleStore (_activeJobsByKey); stale results are discarded there.
  * @api-declaration
- *   buildRagChunks, buildRagDocument, ragFireChunk, ragDrainQueue,
+ *   buildRagChunks, resolveClassifierHistory, buildRagDocument,
  *   waitForRagChunks, renderChunkChatLabel, renderAllChunkChatLabels,
  *   hydrateChunkHeadersFromChat, writeChunkHeaderToChat
  * @contract
@@ -672,18 +660,18 @@ function buildProsePairs(messages) {
  * Builds the final RAG document from the workshop chunk state.
  * Each chunk is prefixed with the separator template (default '***').
  * ragContents controls whether summary header, full content, or both are emitted.
- * @param {Array} ragChunks
+ * Pure function — all inputs passed explicitly.
+ * @param {Array}  ragChunks
+ * @param {object} settings   Active profile settings (ragContents, ragSeparator).
+ * @param {string} charName   Character name for separator interpolation.
  * @returns {string}
  */
 const DEFAULT_SEPARATOR = 'Chunk {{chunk_number}} ({{turn_range}})';
 
-function buildRagDocument(ragChunks) {
+function buildRagDocument(ragChunks, settings, charName) {
     if (!ragChunks.length) return '';
-    const settings    = getSettings();
     const contents    = settings.ragContents    ?? 'summary+full';
     const sepTemplate = settings.ragSeparator?.trim() || DEFAULT_SEPARATOR;
-    const ctx         = SillyTavern.getContext();
-    const charName    = ctx?.characters?.[ctx?.characterId]?.name ?? '';
 
     const body = ragChunks.map(c => {
         const sep = interpolate(sepTemplate, {
@@ -704,10 +692,13 @@ function buildRagDocument(ragChunks) {
  * Builds the _ragChunks state array from the staged prose pairs.
  * Qvink mode: forced 1-pair windows, headers from qvink_memory metadata.
  * Defined mode: ragChunkSize-pair sliding windows, headers from AI classifier.
- * @param {Array} pairs
+ * Pure function — all inputs passed explicitly.
+ * @param {Array}  pairs
+ * @param {number} [pairOffset=0]
+ * @param {object} settings  Active profile settings (ragSummarySource, ragChunkSize, ragChunkOverlap).
  * @returns {Array}
  */
-function buildRagChunks(pairs, pairOffset = 0) {
+function buildRagChunks(pairs, pairOffset = 0, settings) {
     // Exclude user-only pairs (no AI response yet) — they produce empty RAG chunks
     // that confuse the classifier with a stimulus and no reply.
     // Note: filtering here shifts turn indices for any pair that follows a removed one,
@@ -716,7 +707,6 @@ function buildRagChunks(pairs, pairOffset = 0) {
     // mid-sequence), so no label misalignment occurs.
     pairs = pairs.filter(p => p.messages.length > 0);
     const chunks    = [];
-    const settings  = getSettings();
     const useQvink  = (settings.ragSummarySource ?? 'defined') === 'qvink';
     const chunkSize = useQvink ? 1 : Math.max(1, settings.ragChunkSize ?? 2);
     const overlap   = useQvink ? 0 : Math.max(0, settings.ragChunkOverlap ?? 0);
@@ -747,7 +737,6 @@ function buildRagChunks(pairs, pairOffset = 0) {
                 content,
                 header:  qvinkText || turnRange,
                 status:  (useQvink && qvinkText) ? 'complete' : 'pending',
-                genId:   0,
             });
         }
     } else {
@@ -777,7 +766,6 @@ function buildRagChunks(pairs, pairOffset = 0) {
                 content,
                 header:  turnRange,
                 status:  'pending',
-                genId:   0,
             });
         }
     }
@@ -919,15 +907,13 @@ function renderRagCard(chunkIndex) {
 
     const isInFlight = chunk.status === 'in-flight';
     const isPending  = chunk.status === 'pending';
-    const queuePos   = _ragCallQueue.indexOf(chunkIndex);
-    const queueText  = queuePos >= 0 ? `queued ${queuePos + 1}` : 'pending';
     const disabled   = isInFlight || _ragRawDetached;
 
     $card.attr('data-status', chunk.status);
     const $header = $card.find('.cnz-rag-card-header').val(chunk.header).prop('disabled', disabled);
     autoResizeRagCardHeader($header[0]);
     $card.find('.cnz-rag-card-spinner').toggleClass('cnz-hidden', !isInFlight);
-    $card.find('.cnz-rag-queue-label').toggleClass('cnz-hidden', !isPending).text(queueText);
+    $card.find('.cnz-rag-queue-label').toggleClass('cnz-hidden', !isPending).text('pending');
     $card.find('.cnz-rag-card-regen').prop('disabled', _ragRawDetached);
 }
 
@@ -948,11 +934,18 @@ function renderRagCard(chunkIndex) {
  * @param {object[]} fullPairs     buildProsePairs(messages) — full chat pair array
  * @returns {string}               formatted transcript, or '' if nothing to show
  */
-function resolveClassifierHistory(pairStart, historyN, fullPairs) {
+/**
+ * Pure utility — kept as reference for the logic inlined in rag_classifier.fanOut.
+ * @param {number} pairStart
+ * @param {number} historyN
+ * @param {Array}  fullPairs
+ * @param {number} stagedPairOffset
+ */
+function resolveClassifierHistory(pairStart, historyN, fullPairs, stagedPairOffset = 0) {
     if (historyN <= 0) return '';
 
     // Absolute index of chunk.pairStart in the full pair array
-    const absoluteStart = _stagedPairOffset + pairStart;
+    const absoluteStart = stagedPairOffset + pairStart;
 
     // Slice the history window — may reach into committed turns
     const historySliceStart = Math.max(0, absoluteStart - historyN);
@@ -969,137 +962,30 @@ function resolveClassifierHistory(pairStart, historyN, fullPairs) {
         .join('\n\n');
 }
 
-async function ragFireChunk(chunkIndex, delayMs = 0, fullPairs = null) {
-    const chunk = _ragChunks[chunkIndex];
-    if (!chunk) return;
-    const localGenId       = ++chunk.genId;
-    const globalGenId      = _ragGlobalGenId;
-    const summaryAtCall    = _lastSummaryUsedForRag;
-
-    chunk.status = 'in-flight';
-    _ragInFlightCount++;
-    renderRagCard(chunkIndex);
-
-    try {
-        if (delayMs > 0) {
-            await new Promise(r => setTimeout(r, delayMs));
-            if (_ragGlobalGenId !== globalGenId || chunk.genId !== localGenId) return;
-        }
-
-        const pairStart    = chunk.pairStart ?? chunkIndex;
-        const pairEnd      = chunk.pairEnd   ?? (pairStart + 1);
-        const targetPairs  = _stagedProsePairs.slice(pairStart, Math.min(pairEnd, _splitPairIdx));
-
-        if (targetPairs.length === 0) {
-            console.warn(`[CNZ] RAG chunk ${chunkIndex} (${chunk.turnRange}) — classifier received no turns (pairStart=${pairStart} pairEnd=${pairEnd} splitPairIdx=${_splitPairIdx}); aborting`);
-            chunk.status = 'pending';
-            return;
-        }
-
-        const historyN   = getSettings().ragClassifierHistory ?? 0;
-        const pairs      = fullPairs ?? buildProsePairs(SillyTavern.getContext().chat ?? []);
-        const historyStr = resolveClassifierHistory(pairStart, historyN, pairs);
-
-        const maxRetries = getSettings().ragMaxRetries ?? 1;
-        let header;
-        let lastErr;
-        for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            if (_ragGlobalGenId !== globalGenId || chunk.genId !== localGenId) return;
-            try {
-                header = await runRagClassifierCall(summaryAtCall, targetPairs, historyStr);
-                lastErr = null;
-                break;
-            } catch (err) {
-                lastErr = err;
-            }
-        }
-        if (lastErr) throw lastErr;
-
-        const globalStale = _ragGlobalGenId !== globalGenId;
-        const localStale  = chunk.genId !== localGenId;
-        if (globalStale || localStale) return;
-
-        if (_lastSummaryUsedForRag !== summaryAtCall) {
-            chunk.status = 'stale';
-        } else {
-            chunk.header = header.trim() || chunk.turnRange;
-            chunk.status = 'complete';
-            writeChunkHeaderToChat(chunkIndex).catch(err =>
-                console.error('[CNZ] writeChunkHeaderToChat error:', err),
-            );
-        }
-    } catch (err) {
-        const globalStale = _ragGlobalGenId !== globalGenId;
-        const localStale  = chunk.genId !== localGenId;
-        console.error(`[CNZ-DBG] ragFireChunk ERROR chunk=${chunkIndex} globalStale=${globalStale} localStale=${localStale} inFlight=${_ragInFlightCount}`, err);
-        if (err.cause) console.error(`[CNZ-DBG] ragFireChunk ERROR cause:`, err.cause);
-        if (globalStale || localStale) return;
-        chunk.status = 'pending';
-    } finally {
-        const globalStale = _ragGlobalGenId !== globalGenId;
-        if (!globalStale) {
-            _ragInFlightCount = Math.max(0, _ragInFlightCount - 1);
-            ragDrainQueue();
-        }
-    }
-
-    if (_ragGlobalGenId === globalGenId) {
-        renderRagCard(chunkIndex);
-        renderChunkChatLabel(chunkIndex);
-    }
-}
-
 /**
- * Fires queued chunks up to the maxConcurrentCalls limit.
- */
-function ragDrainQueue() {
-    const max       = getSettings().maxConcurrentCalls ?? DEFAULT_CONCURRENCY;
-    const messages  = SillyTavern.getContext().chat ?? [];
-    const fullPairs = buildProsePairs(messages);
-    let staggerIdx  = 0;
-    while (_ragInFlightCount < max && _ragCallQueue.length > 0) {
-        const idx = _ragCallQueue.shift();
-        ragFireChunk(idx, (staggerIdx + 1) * 500, fullPairs);
-        staggerIdx++;
-    }
-}
-
-/**
- * Polls until all _ragChunks have left the 'in-flight' state, or timeoutMs elapses.
- * Marks timed-out in-flight chunks as 'pending' so the next sync can retry them.
+ * Returns a Promise that resolves when the RAG fan-out emits CYCLE_STORE_UPDATED
+ * for 'rag_chunk_results', or when timeoutMs elapses.
+ * Timed-out in-flight chunks are marked 'pending' for retry.
  * @param {number} timeoutMs
  */
-async function waitForRagChunks(timeoutMs = 120_000) {
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-        if (_ragChunks.every(c => c.status !== 'in-flight')) return;
-        await new Promise(r => setTimeout(r, 300));
-    }
-    for (const c of _ragChunks) {
-        if (c.status === 'in-flight') c.status = 'pending';
-    }
-    console.warn(`[CNZ] RAG chunk wait timed out after ${timeoutMs}ms — some chunks may be incomplete`);
-}
+function waitForRagChunks(timeoutMs = 120_000) {
+    return new Promise(resolve => {
+        const timer = setTimeout(() => {
+            off('CYCLE_STORE_UPDATED', handler);
+            for (const c of _ragChunks) {
+                if (c.status === 'in-flight') c.status = 'pending';
+            }
+            console.warn(`[CNZ] RAG chunk wait timed out after ${timeoutMs}ms — some chunks may be incomplete`);
+            resolve();
+        }, timeoutMs);
 
-/**
- * Builds and fires the prompt for a single RAG classification call.
- * @param {string} summaryText
- * @param {Array}  targetPairs
- * @returns {Promise<string>}
- */
-function runRagClassifierCall(summaryText, targetPairs, historyText = '') {
-    const transcript = targetPairs
-        .map(p => {
-            const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
-            for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
-            return parts.join('\n\n');
-        })
-        .join('\n\n');
-
-    return _waitForRecipe('rag_classifier', {
-        transcript,
-        scenario_hooks: summaryText || _lastSummaryUsedForRag || '',
-        history:        historyText,
+        function handler({ key }) {
+            if (key !== 'rag_chunk_results') return;
+            clearTimeout(timer);
+            off('CYCLE_STORE_UPDATED', handler);
+            resolve();
+        }
+        on('CYCLE_STORE_UPDATED', handler);
     });
 }
 
@@ -1116,7 +1002,7 @@ function runRagClassifierCall(summaryText, targetPairs, historyText = '') {
  *   2. Profile routing is the only branching logic; prompt templates come from settings.
  * @api-declaration
  *   generateWithProfile, generateWithRagProfile, runLorebookSyncCall,
- *   runHookseekerCall, runRagClassifierCall, runTargetedLbCall
+ *   runHookseekerCall, runTargetedLbCall
  * @contract
  *   assertions:
  *     external_io: [generateRaw, ConnectionManagerRequestService]
@@ -1905,7 +1791,11 @@ async function restoreRagToNode(char, nodeFile) {
 // ─── Modal: RAG Workshop Helpers ──────────────────────────────────────────────
 
 /** Returns the compiled RAG document from current _ragChunks state. */
-function compileRagFromChunks() { return buildRagDocument(_ragChunks); }
+function compileRagFromChunks() {
+    const ctx      = SillyTavern.getContext();
+    const charName = ctx?.characters?.[ctx?.characterId]?.name ?? '';
+    return buildRagDocument(_ragChunks, getSettings(), charName);
+}
 
 function autoResizeRagRaw() {
     const el = document.getElementById('cnz-rag-raw');
@@ -1924,8 +1814,6 @@ function buildRagCardHTML(chunk) {
     const i          = chunk.chunkIndex;
     const isInFlight = chunk.status === 'in-flight';
     const isPending  = chunk.status === 'pending';
-    const queuePos   = _ragCallQueue.indexOf(i);
-    const queueText  = queuePos >= 0 ? `queued ${queuePos + 1}` : 'pending';
     return `
 <div class="cnz-rag-card" data-chunk-index="${i}" data-status="${chunk.status}">
   <div class="cnz-rag-card-header-row">
@@ -1933,7 +1821,7 @@ function buildRagCardHTML(chunk) {
               data-chunk-index="${i}"
               ${isInFlight || _ragRawDetached ? 'disabled' : ''}>${escapeHtml(chunk.header)}</textarea>
     <span class="cnz-rag-card-spinner fa-solid fa-spinner fa-spin${isInFlight ? '' : ' cnz-hidden'}"></span>
-    <span class="cnz-rag-queue-label${isPending ? '' : ' cnz-hidden'}">${queueText}</span>
+    <span class="cnz-rag-queue-label${isPending ? '' : ' cnz-hidden'}">pending</span>
     <button class="cnz-btn cnz-btn-secondary cnz-btn-sm cnz-rag-card-regen"
             data-chunk-index="${i}"
             title="Regenerate this chunk's semantic header"
@@ -1953,18 +1841,23 @@ function renderRagWorkshop() {
 
 function ragRegenCard(chunkIndex) {
     const chunk = _ragChunks[chunkIndex];
-    if (!chunk) return; // Removed the check for _lastSummaryUsedForRag
-    
-    if (chunk.status === 'in-flight') {
-        _ragInFlightCount = Math.max(0, _ragInFlightCount - 1);
-    }
-    _ragCallQueue = _ragCallQueue.filter(i => i !== chunkIndex);
-    chunk.status  = 'pending';
+    if (!chunk) return;
+
+    chunk.status = 'pending';
     renderRagCard(chunkIndex);
-    
+
     const messages  = SillyTavern.getContext().chat ?? [];
     const fullPairs = buildProsePairs(messages);
-    ragFireChunk(chunkIndex, 0, fullPairs);
+    const settings  = getSettings();
+    setCurrentSettings(settings);
+    dispatchContract('rag_classifier', {
+        ragChunks:        [chunk],
+        fullPairs,
+        stagedPairs:      _stagedProsePairs,
+        stagedPairOffset: _stagedPairOffset,
+        splitPairIdx:     _splitPairIdx,
+        scenario_hooks:   _lastSummaryUsedForRag || '',
+    }, settings);
 }
 
 function onRagTabSwitch(tabName) {
@@ -2021,60 +1914,6 @@ function getRagModeLabel() {
  * Called when the user enters Step 3 (RAG Workshop). Guards against disabled RAG,
  * then renders existing `_ragChunks` or rebuilds them if the split boundary changed.
  */
-/**
- * Reconstructs _stagedProsePairs, _stagedPairOffset, _splitPairIdx, _ragChunks,
- * and _splitIndexWhenRagBuilt from the ledger manifest and live chat.
- * Called when the RAG workshop is opened after a page reload with no prior sync
- * in the current session.
- *
- * Returns true if reconstruction succeeded and _ragChunks is populated.
- * Returns false if the ledger has no committed window or the chat no longer
- * contains the committed turns.
- *
- * @returns {boolean}
- */
-// REFACTOR-NOTE: ledger removed — this function always returns false; replace with DNA-based reconstruction
-function reconstructStagedPairsFromLedger() {
-    return false;
-
-    const headChainEntry   = _ledgerManifest.nodes[_ledgerManifest.headNodeId];
-    const parentChainEntry = headChainEntry?.parentId
-        ? _ledgerManifest.nodes[headChainEntry.parentId]
-        : null;
-
-    const windowStart = parentChainEntry?.sequenceNum ?? 0;  // inclusive
-    const windowEnd   = headChainEntry?.sequenceNum   ?? 0;  // exclusive
-
-    if (windowEnd <= windowStart) return false;
-
-    const messages = SillyTavern.getContext().chat ?? [];
-    const allPairs = buildProsePairs(messages);
-
-    const windowPairs = allPairs.filter(
-        p => p.validIdx >= windowStart && p.validIdx < windowEnd
-    );
-
-    if (!windowPairs.length) return false;
-
-    // Set module state
-    const pairStartIdx    = allPairs.findIndex(p => p.validIdx >= windowStart);
-    _stagedPairOffset     = pairStartIdx === -1 ? 0 : pairStartIdx;
-    _stagedProsePairs     = windowPairs;
-    _splitPairIdx         = windowPairs.length;  // all committed window pairs are archive
-
-    // Build chunk skeleton and hydrate from chat
-    _ragChunks              = buildRagChunks(windowPairs, _stagedPairOffset);
-    _splitIndexWhenRagBuilt = _splitPairIdx;
-    hydrateChunkHeadersFromChat();
-
-    console.log(
-        `[CNZ] RAG reconstruction: window=${windowStart}–${windowEnd} ` +
-        `pairs=${windowPairs.length} chunks=${_ragChunks.length} ` +
-        `complete=${_ragChunks.filter(c => c.status === 'complete').length}`,
-    );
-
-    return true;
-}
 
 function onEnterRagWorkshop() {
     if (!getSettings().enableRag) {
@@ -2101,16 +1940,13 @@ function onEnterRagWorkshop() {
         _lastSummaryUsedForRag = currentTextareaSummary;
     }
 
-    // Path: Attempt reconstruction if pairs are missing
-    if (_stagedProsePairs.length === 0) {
-        reconstructStagedPairsFromLedger();
-    }
+    // REFACTOR-NOTE: ledger reconstruction removed — DNA-based reconstruction pending
 
     // Path: Build chunks if they don't exist
     if (_ragChunks.length === 0) {
         const archivePairs = _stagedProsePairs.slice(0, _splitPairIdx);
         if (archivePairs.length > 0) {
-            _ragChunks = buildRagChunks(archivePairs, _stagedPairOffset);
+            _ragChunks = buildRagChunks(archivePairs, _stagedPairOffset, getSettings());
             _splitIndexWhenRagBuilt = _splitPairIdx;
             hydrateChunkHeadersFromChat();
         }
@@ -2128,19 +1964,28 @@ function onEnterRagWorkshop() {
         return; // Only bail if there truly is NO summary anywhere
     }
 
-    // If all chunks are done, stop. Otherwise, drain queue.
+    // If all chunks are done, stop. Otherwise dispatch pending/stale chunks.
     if (_ragChunks.every(c => c.status === 'complete' || c.status === 'manual')) return;
 
-    _ragCallQueue = [];
-    for (let i = 0; i < _ragChunks.length; i++) {
-        const s = _ragChunks[i].status;
-        if (s === 'pending' || s === 'stale') _ragCallQueue.push(i);
+    const pendingChunks = _ragChunks.filter(c => c.status === 'pending' || c.status === 'stale');
+    if (pendingChunks.length > 0) {
+        const workshopMessages  = SillyTavern.getContext()?.chat ?? [];
+        const workshopFullPairs = buildProsePairs(workshopMessages);
+        const workshopSettings  = getSettings();
+        setCurrentSettings(workshopSettings);
+        dispatchContract('rag_classifier', {
+            ragChunks:        pendingChunks,
+            fullPairs:        workshopFullPairs,
+            stagedPairs:      _stagedProsePairs,
+            stagedPairOffset: _stagedPairOffset,
+            splitPairIdx:     _splitPairIdx,
+            scenario_hooks:   _lastSummaryUsedForRag || '',
+        }, workshopSettings);
     }
-    ragDrainQueue();
 }
 
 function onLeaveRagWorkshop() {
-    _ragCallQueue = [];
+    // Fan-out jobs remain in-flight; invalidateAllJobs() handles cancellation on modal close.
 }
 
 /**
@@ -2192,12 +2037,12 @@ function buildModalTranscript(horizonTurns) {
  * Always enforces liveContextBuffer at read time — a no-op when _stagedProsePairs was
  * correctly pre-trimmed by runCnzSync, but prevents buffer leakage if that invariant
  * is ever violated by a future writer.
- * @param {number} horizonTurns  Number of trailing turns to include.
+ * @param {number}   horizonTurns  Number of trailing turns to include.
+ * @param {object[]} messages      Full chat message array.
+ * @param {object}   settings      Active profile settings (liveContextBuffer).
  * @returns {string}
  */
-function buildSyncWindowTranscript(horizonTurns) {
-    const settings = getSettings();
-    const messages = SillyTavern.getContext().chat ?? [];
+function buildSyncWindowTranscript(horizonTurns, messages, settings) {
     const allPairs = buildProsePairs(messages);
     
     // Window logic: Head -> (Total - Buffer)
@@ -2243,12 +2088,12 @@ function updateHooksDiff() {
 function onRegenHooksClick() {
     setHooksLoading(true);
     $('#cnz-error-1').addClass('cnz-hidden').text('');
-    const hooksId    = ++_hooksGenId;
-    const horizon    = getSettings().hookseekerHorizon ?? 70;
-    const transcript = buildSyncWindowTranscript(horizon);
+    const horizon       = getSettings().hookseekerHorizon ?? 70;
+    const regenMessages = SillyTavern.getContext().chat ?? [];
+    const regenSettings = getSettings();
+    const transcript    = buildSyncWindowTranscript(horizon, regenMessages, regenSettings);
     runHookseekerCall(transcript, _priorSituation)
         .then(text => {
-            if (_hooksGenId !== hooksId) return;
             const trimmed = text.trim();
             _priorSituation = trimmed;
             $('#cnz-situation-text').val(trimmed);
@@ -2258,7 +2103,6 @@ function onRegenHooksClick() {
             onHooksTabSwitch('workshop');
         })
         .catch(err => {
-            if (_hooksGenId !== hooksId) return;
             $('#cnz-error-1').text(`Hooks generation failed: ${err.message}`).removeClass('cnz-hidden');
             setHooksLoading(false);
         });
@@ -2328,13 +2172,13 @@ async function onLbRegenClick() {
         ? structuredClone(_parentNodeLorebook)
         : structuredClone(_lorebookData ?? { entries: {} });
 
-    const lbId       = ++_lorebookGenId;
-    const horizon    = getSettings().chunkEveryN ?? 20;
-    const upToLatest = $('#cnz-lb-up-to-latest').is(':checked');
-    const transcript = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon);
+    const horizon       = getSettings().chunkEveryN ?? 20;
+    const upToLatest    = $('#cnz-lb-up-to-latest').is(':checked');
+    const lbRegenMsgs   = SillyTavern.getContext().chat ?? [];
+    const lbRegenSet    = getSettings();
+    const transcript    = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon, lbRegenMsgs, lbRegenSet);
     runLorebookSyncCall(transcript, preSyncLorebook)
         .then(text => {
-            if (_lorebookGenId !== lbId) return;
 
             // Reset draft AND server-copy baseline to pre-sync state (captured before this
             // async call).  Both must share the same reference point so isDraftDirty only
@@ -2372,7 +2216,6 @@ async function onLbRegenClick() {
             syncFreeformFromSuggestions();
         })
         .catch(err => {
-            if (_lorebookGenId !== lbId) return;
             showLbError(`Regeneration failed: ${err.message}`);
         });
 }
@@ -2626,17 +2469,16 @@ function onLbIngesterRegenerate() {
     const keys    = entry ? (Array.isArray(entry.key) ? entry.key.join(', ') : '') : s.keys.join(', ');
     const content = entry?.content ?? s.content;
 
-    const horizon    = getSettings().hookseekerHorizon ?? 70;
-    const upToLatest = $('#cnz-lb-up-to-latest').is(':checked');
-    const transcript = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon);
+    const horizon        = getSettings().hookseekerHorizon ?? 70;
+    const upToLatest     = $('#cnz-lb-up-to-latest').is(':checked');
+    const regenIngMsgs   = SillyTavern.getContext().chat ?? [];
+    const regenIngSet    = getSettings();
+    const transcript     = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon, regenIngMsgs, regenIngSet);
 
-    const targetedId = ++_targetedGenId;
     $('#cnz-lb-btn-regen').prop('disabled', true);
 
     runTargetedLbCall(mode, s.name, keys, content, transcript)
         .then(rawText => {
-            if (_targetedGenId !== targetedId) return;
-
             const trimmed = rawText?.trim() ?? '';
             if (!trimmed || trimmed === 'NO CHANGES NEEDED' || trimmed === 'NO INFORMATION FOUND') {
                 toastr.info('CNZ: No changes suggested by AI.');
@@ -2661,11 +2503,9 @@ function onLbIngesterRegenerate() {
             toastr.success('CNZ: Regenerated — review in editor.');
         })
         .catch(err => {
-            if (_targetedGenId !== targetedId) return;
             toastr.error(`CNZ: Regenerate failed: ${err.message}`);
         })
         .finally(() => {
-            if (_targetedGenId !== targetedId) return;
             $('#cnz-lb-btn-regen').prop('disabled', false);
         });
 }
@@ -3028,7 +2868,9 @@ async function onConfirmClick() {
     const hasManualChunks = _ragChunks.some(c => c.status === 'manual');
     if (hasManualChunks || _ragRawDetached) {
         try {
-            const ragText = _ragRawDetached ? $('#cnz-rag-raw').val() : buildRagDocument(_ragChunks);
+            const _ragCtx      = SillyTavern.getContext();
+            const _ragCharName = _ragCtx?.characters?.[_ragCtx?.characterId]?.name ?? '';
+            const ragText = _ragRawDetached ? $('#cnz-rag-raw').val() : buildRagDocument(_ragChunks, getSettings(), _ragCharName);
             if (ragText.trim()) {
                 newRagFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name);
                 newRagUrl      = await uploadRagFile(ragText, newRagFileName);
@@ -3236,18 +3078,17 @@ function onTargetedGenerateClick() {
     }
     $('#cnz-targeted-error').addClass('cnz-hidden').text('');
 
-    const horizon    = getSettings().hookseekerHorizon ?? 70;
-    const upToLatest = $('#cnz-lb-up-to-latest').is(':checked');
-    const transcript = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon);
+    const horizon     = getSettings().hookseekerHorizon ?? 70;
+    const upToLatest  = $('#cnz-lb-up-to-latest').is(':checked');
+    const tgtMessages = SillyTavern.getContext().chat ?? [];
+    const tgtSettings = getSettings();
+    const transcript  = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon, tgtMessages, tgtSettings);
 
-    const targetedId = ++_targetedGenId;
     $('#cnz-targeted-spinner').removeClass('cnz-hidden');
     $('#cnz-targeted-generate').prop('disabled', true);
 
     runTargetedLbCall('new', keyword, '', '', transcript)
         .then(rawText => {
-            if (_targetedGenId !== targetedId) return;
-
             const trimmed = rawText?.trim() ?? '';
             if (!trimmed || trimmed === 'NO INFORMATION FOUND') {
                 $('#cnz-targeted-error')
@@ -3284,11 +3125,9 @@ function onTargetedGenerateClick() {
             toastr.success('CNZ: New entry generated — review in editor.');
         })
         .catch(err => {
-            if (_targetedGenId !== targetedId) return;
             $('#cnz-targeted-error').text(`Generate failed: ${err.message}`).removeClass('cnz-hidden');
         })
         .finally(() => {
-            if (_targetedGenId !== targetedId) return;
             $('#cnz-targeted-spinner').addClass('cnz-hidden');
             $('#cnz-targeted-generate').prop('disabled', false);
         });
@@ -3296,12 +3135,7 @@ function onTargetedGenerateClick() {
 
 function closeModal() {
     $('#cnz-overlay').addClass('cnz-hidden');
-    invalidateAllJobs();   // invalidates all in-flight bus jobs on modal close
-    // Kill all in-flight AI callbacks
-    _hooksGenId++;
-    _lorebookGenId++;
-    _ragGlobalGenId++;
-    _targetedGenId++;
+    invalidateAllJobs();   // invalidates all in-flight bus jobs (genId replacement)
     // Reset modal UI state only (engine state must not be cleared here)
     _hooksLoading               = false;
     _lorebookLoading            = false;
@@ -3309,8 +3143,6 @@ function closeModal() {
     clearTimeout(_lbDebounceTimer);
     _lbDebounceTimer            = null;
     _ragRawDetached             = false;
-    _ragInFlightCount           = 0;
-    _ragCallQueue               = [];
     _currentStep                = 1;
     _modalOpenHeadUuid          = null;
 }
@@ -3441,110 +3273,6 @@ function openLedgerInspector() {
         $overlay.removeClass('cnz-hidden');
         return;
     }
-
-    // Build chain: HEAD first
-    const chain    = buildNodeChain(_ledgerManifest);  // root → head
-    const reversed = chain.slice().reverse();           // head first
-    const headId   = _ledgerManifest.headNodeId;
-    const headNode = _ledgerManifest.nodes[headId];
-
-    $title.text(
-        `${escapeHtml(_ledgerManifest.charName || char.name)} \u2022 ${chain.length} node${chain.length !== 1 ? 's' : ''} \u2022 Head: Turn ${headNode?.sequenceNum ?? '?'}`
-    );
-
-    // Track which nodes have had their file fetched (nodeId → node file object)
-    const _fetchedNodes = {};
-
-    reversed.forEach((summaryNode, idx) => {
-        const isHead     = summaryNode.nodeId === headId;
-        const isOrphaned = summaryNode.status === 'orphaned';
-        const nodeNum    = reversed.length - idx;  // descending from N to 1
-        const orphanBadge = isOrphaned
-            ? ' <span class="cnz-li-orphan-badge">orphaned</span>'
-            : '';
-        const headLabel  = isHead ? ' (HEAD)' : '';
-
-        const $row = $(`
-<div class="cnz-li-node-row${isOrphaned ? ' cnz-li-orphaned' : ''}" data-node-id="${escapeHtml(summaryNode.nodeId)}">
-  <div class="cnz-li-node-header">
-    <span class="cnz-li-chevron">\u25B6</span>
-    <span class="cnz-li-node-label">Node ${nodeNum}${headLabel}  Turn ${summaryNode.sequenceNum}${orphanBadge}</span>
-  </div>
-  <div class="cnz-li-node-body"></div>
-</div>`);
-
-        $row.find('.cnz-li-node-header').on('click', async function () {
-            const $nodeRow  = $(this).closest('.cnz-li-node-row');
-            const $nodeBody = $nodeRow.find('.cnz-li-node-body');
-            const $chevron  = $(this).find('.cnz-li-chevron');
-            const isOpen    = $nodeBody.hasClass('cnz-li-expanded');
-
-            if (isOpen) {
-                $nodeBody.removeClass('cnz-li-expanded');
-                $chevron.text('\u25B6');
-                return;
-            }
-
-            // Expand — lazy-fetch if not yet loaded
-            $nodeBody.addClass('cnz-li-expanded');
-            $chevron.text('\u25BC');
-
-            if (!_fetchedNodes[summaryNode.nodeId]) {
-                $nodeBody.html('<span class="cnz-li-spinner">Loading\u2026</span>');
-                const nodeFile = await fetchLedgerNodeFile(char.avatar, summaryNode.nodeId);
-                _fetchedNodes[summaryNode.nodeId] = nodeFile ?? false;
-            }
-
-            const nodeFile = _fetchedNodes[summaryNode.nodeId];
-            if (!nodeFile) {
-                $nodeBody.html('<span class="cnz-li-spinner">Failed to load node file.</span>');
-                return;
-            }
-
-            // Format committedAt
-            const when = nodeFile.committedAt
-                ? new Date(nodeFile.committedAt).toLocaleString(undefined, {
-                      year: 'numeric', month: '2-digit', day: '2-digit',
-                      hour: '2-digit', minute: '2-digit',
-                  })
-                : '—';
-
-            // Hooks: first 100 chars collapsed, full on expand (already expanded here)
-            const hooksText  = nodeFile.state?.hooks ?? '';
-            const hooksHTML  = `<span class="cnz-li-hooks-preview">${escapeHtml(hooksText)}</span>`;
-
-            // Lorebook entries
-            const lbEntries = nodeFile.state?.lorebook?.entries ?? {};
-            const lbNames   = Object.values(lbEntries)
-                .map(e => e.comment || e.uid || '(unnamed)')
-                .join(', ');
-            const lbCount   = Object.keys(lbEntries).length;
-            const lbHTML    = lbCount > 0
-                ? `${escapeHtml(lbNames)} <em>(${lbCount} entries)</em>`
-                : '<em>(none)</em>';
-
-            // RAG files
-            const ragFiles  = nodeFile.state?.ragFiles ?? [];
-            const ragHTML   = ragFiles.length > 0
-                ? ragFiles.map(f => `  ${escapeHtml(String(f))}`).join('\n')
-                : '  (none)';
-
-            $nodeBody.html(`
-<div class="cnz-li-field"><span class="cnz-li-field-label">Committed:</span> ${escapeHtml(when)}</div>
-<div class="cnz-li-field"><span class="cnz-li-field-label">Hooks:</span><br>${hooksHTML}</div>
-<div class="cnz-li-field"><span class="cnz-li-field-label">Lorebook:</span> ${lbHTML}</div>
-<div class="cnz-li-field"><span class="cnz-li-field-label">RAG files:</span> (${ragFiles.length} file${ragFiles.length !== 1 ? 's' : ''})<br><span class="cnz-li-hooks-preview">${escapeHtml(ragHTML)}</span></div>`);
-        });
-
-        $body.append($row);
-    });
-
-    // Wire close handlers (scoped so they don't accumulate across opens)
-    $('#cnz-li-close').off('click.li').on('click.li', closeLedgerInspector);
-    $overlay.off('click.li').on('click.li', closeLedgerInspector);
-    $('#cnz-li-modal').off('click.li').on('click.li', e => e.stopPropagation());
-
-    $overlay.removeClass('cnz-hidden');
 }
 
 // ─── Storage Report ───────────────────────────────────────────────────────────
@@ -3565,124 +3293,19 @@ async function cnzStorageReport() {
     const entries = []; // REFACTOR-NOTE: ledgerPaths removed
 
     if (entries.length === 0) {
-        await callPopup('<p>No CNZ ledger files found. Run at least one sync to create ledger data.</p>', 'text');
-        return;
-    }
-
-    toastr.info(`CNZ: Measuring storage for ${entries.length} character(s)…`);
-
-    const rows         = [];
-    let grandTotal     = 0;
-
-    for (const [avatarKey, manifestPath] of entries) {
-        // ── Fetch manifest ────────────────────────────────────────────────────
-        let manifest;
+        // ── Fetch server memory report (requires cnz-diag plugin + enableServerPlugins: true) ──
+        let memHtml = '';
         try {
-            const res = await fetch(manifestPath);
-            if (!res.ok) {
-                rows.push({ name: avatarKey, error: `manifest fetch failed (HTTP ${res.status})` });
-                continue;
-            }
-            manifest = await res.json();
-        } catch (err) {
-            rows.push({ name: avatarKey, error: err.message });
-            continue;
-        }
-
-        const manifestBytes = JSON.stringify(manifest).length;
-        const nodeIds       = Object.keys(manifest.nodes ?? {});
-        const baseDir       = manifestPath.includes('/')
-            ? manifestPath.slice(0, manifestPath.lastIndexOf('/') + 1)
-            : '';
-
-        // ── Fetch node files ──────────────────────────────────────────────────
-        let nodeBytes   = 0;
-        let missingNodes = 0;
-        let headNode    = null;
-
-        for (const nodeId of nodeIds) {
-            const nodeFile = await fetchLedgerNodeFile(avatarKey, nodeId);
-            if (nodeFile) {
-                nodeBytes += JSON.stringify(nodeFile).length;
-                if (nodeId === manifest.headNodeId) headNode = nodeFile;
-            } else {
-                missingNodes++;
-            }
-        }
-
-        // ── Fetch RAG files (from head node's cumulative list) ────────────────
-        const ragFileNames = headNode?.state?.ragFiles ?? [];
-        let ragBytes       = 0;
-        let missingRag     = 0;
-
-        for (const ragName of ragFileNames) {
-            const ragPath = baseDir + ragName;
-            try {
-                const res = await fetch(ragPath);
-                if (res.ok) {
-                    const text = await res.text();
-                    ragBytes += text.length;
-                } else {
-                    missingRag++;
-                }
-            } catch {
-                missingRag++;
-            }
-        }
-
-        const charName  = manifest.charName ?? avatarKey;
-        const rowTotal  = manifestBytes + nodeBytes + ragBytes;
-        grandTotal     += rowTotal;
-
-        rows.push({
-            name: charName,
-            nodeCount:    nodeIds.length,
-            ragCount:     ragFileNames.length,
-            manifestBytes,
-            nodeBytes,
-            ragBytes,
-            rowTotal,
-            missingNodes,
-            missingRag,
-        });
-    }
-
-    // ── Render ────────────────────────────────────────────────────────────────
-    const rowsHtml = rows.map(r => {
-        if (r.error) {
-            return `<tr>
-  <td>${escapeHtml(r.name)}</td>
-  <td colspan="6" style="color:#f66">${escapeHtml(r.error)}</td>
-</tr>`;
-        }
-        const nodeSuffix = r.missingNodes > 0
-            ? ` <span style="color:#fa0">(${r.missingNodes} missing)</span>` : '';
-        const ragSuffix  = r.missingRag  > 0
-            ? ` <span style="color:#fa0">(${r.missingRag} missing)</span>`  : '';
-        return `<tr>
-  <td style="padding:0.2em 0.5em">${escapeHtml(r.name)}</td>
-  <td style="padding:0.2em 0.5em;text-align:right">${r.nodeCount}${nodeSuffix}</td>
-  <td style="padding:0.2em 0.5em;text-align:right">${r.ragCount}${ragSuffix}</td>
-  <td style="padding:0.2em 0.5em;text-align:right">${formatBytes(r.manifestBytes)}</td>
-  <td style="padding:0.2em 0.5em;text-align:right">${formatBytes(r.nodeBytes)}</td>
-  <td style="padding:0.2em 0.5em;text-align:right">${formatBytes(r.ragBytes)}</td>
-  <td style="padding:0.2em 0.5em;text-align:right"><strong>${formatBytes(r.rowTotal)}</strong></td>
-</tr>`;
-    }).join('');
-
-    // ── Fetch server memory report (requires cnz-diag plugin + enableServerPlugins: true) ──
-    let memHtml = '';
-    try {
-        const memRes = await fetch('/api/plugins/cnz-diag/memory', {
-            method:  'POST',
-            headers: getRequestHeaders(),
-        });
-        if (memRes.ok) {
-            const m = await memRes.json();
-            const p = m.process;
-            const o = m.os;
-            memHtml = `
-<h4 style="margin:1em 0 0.4em">Server Memory (logged to console)</h4>
+            const memRes = await fetch('/api/plugins/cnz-diag/memory', {
+                method:  'POST',
+                headers: getRequestHeaders(),
+            });
+            if (memRes.ok) {
+                const m = await memRes.json();
+                const p = m.process;
+                const o = m.os;
+                memHtml = `
+<h4 style="margin:1em 0 0.4em">Server Memory</h4>
 <table style="width:100%;border-collapse:collapse;font-size:0.9em">
   <tr><td style="padding:0.15em 0.5em;color:#aaa">Process RSS</td>       <td style="text-align:right;padding:0.15em 0.5em">${formatBytes(p.rss)}</td></tr>
   <tr><td style="padding:0.15em 0.5em;color:#aaa">Heap used / total</td> <td style="text-align:right;padding:0.15em 0.5em">${formatBytes(p.heapUsed)} / ${formatBytes(p.heapTotal)}</td></tr>
@@ -3690,40 +3313,15 @@ async function cnzStorageReport() {
   <tr><td style="padding:0.15em 0.5em;color:#aaa">OS free / total</td>   <td style="text-align:right;padding:0.15em 0.5em">${formatBytes(o.freeMem)} / ${formatBytes(o.totalMem)}</td></tr>
   <tr><td style="padding:0.15em 0.5em;color:#aaa">Load avg (1/5/15m)</td><td style="text-align:right;padding:0.15em 0.5em">${o.loadAvg1.toFixed(2)} / ${o.loadAvg5.toFixed(2)} / ${o.loadAvg15.toFixed(2)}</td></tr>
 </table>`;
-        } else if (memRes.status === 404) {
-            memHtml = `<p style="color:#888;font-size:0.85em;margin-top:0.75em">Server memory unavailable — enable the cnz-diag plugin (see README).</p>`;
+            } else if (memRes.status === 404) {
+                memHtml = `<p style="color:#888;font-size:0.85em;margin-top:0.75em">Server memory unavailable — enable the cnz-diag plugin (see README).</p>`;
+            }
+        } catch {
+            // Plugin not present or server plugins disabled — silent skip
         }
-    } catch {
-        // Plugin not present or server plugins disabled — silent skip
+        await callPopup(`<h3>CNZ Storage Report</h3><p style="color:#aaa;font-size:0.85em">No ledger files found.${memHtml ? '' : ' Run at least one sync to create ledger data.'}</p>${memHtml}`, 'text');
+        return;
     }
-
-    const html = `
-<h3>CNZ Storage Report</h3>
-<p style="color:#aaa;font-size:0.85em">Sizes are measured from fetched content (UTF-8 character count, not compressed disk bytes).</p>
-<table style="width:100%;border-collapse:collapse;font-size:0.9em">
-  <thead>
-    <tr style="border-bottom:1px solid #555">
-      <th style="text-align:left;padding:0.3em 0.5em">Character</th>
-      <th style="text-align:right;padding:0.3em 0.5em">Nodes</th>
-      <th style="text-align:right;padding:0.3em 0.5em">RAG files</th>
-      <th style="text-align:right;padding:0.3em 0.5em">Manifest</th>
-      <th style="text-align:right;padding:0.3em 0.5em">Nodes</th>
-      <th style="text-align:right;padding:0.3em 0.5em">RAG</th>
-      <th style="text-align:right;padding:0.3em 0.5em">Total</th>
-    </tr>
-  </thead>
-  <tbody>${rowsHtml}</tbody>
-  <tfoot>
-    <tr style="border-top:1px solid #555">
-      <td colspan="6" style="padding:0.3em 0.5em"><strong>Grand Total</strong></td>
-      <td style="padding:0.3em 0.5em;text-align:right"><strong>${formatBytes(grandTotal)}</strong></td>
-    </tr>
-  </tfoot>
-</table>
-<p style="color:#aaa;font-size:0.85em;margin-top:0.75em">Each sync appends a new node file (full snapshot). Use <em>Purge Ledger</em> to reclaim space.</p>
-${memHtml}`;
-
-    await callPopup(html, 'text');
 }
 
 /**
@@ -3990,21 +3588,26 @@ async function runRagPipeline(transcript) {
     _stagedPairOffset    = foundIdx === -1 ? 0 : foundIdx;
 
     _splitPairIdx           = _stagedProsePairs.length;
-    _ragGlobalGenId++;
-    _ragChunks              = buildRagChunks(_stagedProsePairs, _stagedPairOffset);
+    const ragSettings = getSettings();
+    _ragChunks              = buildRagChunks(_stagedProsePairs, _stagedPairOffset, ragSettings);
     _splitIndexWhenRagBuilt = _splitPairIdx;
 
     hydrateChunkHeadersFromChat();
     _lastSummaryUsedForRag = _priorSituation || '';
-
-    _ragCallQueue = _ragChunks
-        .map((c, i) => (c.status === 'pending' ? i : -1))
-        .filter(i => i !== -1);
-
-    ragDrainQueue();
+    setCurrentSettings(ragSettings);
+    dispatchContract('rag_classifier', {
+        ragChunks:        _ragChunks,
+        fullPairs:        allPairs,
+        stagedPairs:      _stagedProsePairs,
+        stagedPairOffset: _stagedPairOffset,
+        splitPairIdx:     _splitPairIdx,
+        scenario_hooks:   _lastSummaryUsedForRag,
+    }, ragSettings);
     await waitForRagChunks(120_000);
 
-    const ragText = buildRagDocument(_ragChunks);
+    const ctx2      = SillyTavern.getContext();
+    const charName2 = ctx2?.characters?.[ctx2?.characterId]?.name ?? '';
+    const ragText   = buildRagDocument(_ragChunks, getSettings(), charName2);
     if (!ragText.trim()) return;
 
     const charName   = char.name;
@@ -4074,7 +3677,7 @@ async function commitLedgerNode(char, messages) {
  */
 async function runCnzSync(char, messages, { coverAll = false } = {}) {
     setSyncInProgress(true);
-    const transcript = buildSyncWindowTranscript(70);
+    const transcript = buildSyncWindowTranscript(70, messages, getSettings());
 
     // --- LANE 1: LOREBOOK (Independent) ---
     const lbPromise = (async () => {
@@ -4695,12 +4298,7 @@ function bindSettingsHandlers() {
         }
 
         // 3. Reset staged pairs and chunks
-        _stagedProsePairs       = [];
-        _splitPairIdx           = 0;
-        _stagedPairOffset       = 0;
-        _ragChunks              = [];
-        _splitIndexWhenRagBuilt = null;
-        clearChunkChatLabels();
+        resetStagedState();
 
         // 4. Report
         toastr.success('CNZ: Ledger purged — next sync will treat this character as new.');
@@ -4763,6 +4361,20 @@ function checkOrphans() {
  * Called by onChatChanged when the character changes.
  * Never called by closeModal — modal state is separate.
  */
+/**
+ * Resets staged pair and chunk state without clearing lorebook, DNA chain,
+ * or other session fields. Called by the purge handler and (via resetSessionState)
+ * on character switch.
+ */
+function resetStagedState() {
+    _stagedProsePairs       = [];
+    _stagedPairOffset       = 0;
+    _splitPairIdx           = 0;
+    _ragChunks              = [];
+    _splitIndexWhenRagBuilt = null;
+    clearChunkChatLabels();
+}
+
 function resetSessionState() {
     invalidateAllJobs();
     resetScheduler();
@@ -4776,14 +4388,9 @@ function resetSessionState() {
     _parentNodeLorebook     = null;
     _priorSituation         = '';
     _beforeSituation        = '';
-    _stagedProsePairs       = [];
-    _stagedPairOffset       = 0;
-    _splitPairIdx           = 0;
-    _ragChunks              = [];
-    _splitIndexWhenRagBuilt = null;
     _lastSummaryUsedForRag  = null;
     _lastRagUrl             = '';
-    clearChunkChatLabels();
+    resetStagedState();
 }
 
 function onChatChanged() {
@@ -4966,6 +4573,35 @@ async function init() {
     });
 
     // ── Bus subscribers ───────────────────────────────────────────────────────
+
+    // RAG fan-out: mark chunk in-flight when its contract is dispatched
+    on('CONTRACT_DISPATCHED', ({ recipeId, inputs }) => {
+        if (recipeId !== 'rag_classifier') return;
+        const chunk = _ragChunks[inputs?.chunkIndex];
+        if (!chunk) return;
+        chunk.status = 'in-flight';
+        renderRagCard(inputs.chunkIndex);
+    });
+
+    // RAG fan-out: apply chunk results when all jobs settle
+    on('CYCLE_STORE_UPDATED', ({ key, value }) => {
+        if (key !== 'rag_chunk_results' || !value) return;
+        for (const { chunkIndex, header } of value) {
+            const chunk = _ragChunks[chunkIndex];
+            if (!chunk) continue;
+            if (header == null) {
+                // Failed chunk — leave as pending for retry
+                chunk.status = 'pending';
+            } else {
+                chunk.header = header.trim() || chunk.turnRange;
+                chunk.status = 'complete';
+                writeChunkHeaderToChat(chunkIndex).catch(err =>
+                    console.error('[CNZ] writeChunkHeaderToChat error:', err));
+            }
+            renderRagCard(chunkIndex);
+            renderChunkChatLabel(chunkIndex);
+        }
+    });
 
     // Auto-sync pump — fired by the auto_sync trigger in recipes.js
     on('SYNC_TRIGGERED', ({ char, messages, gap, every, trailingBoundary, largeGap }) => {

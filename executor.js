@@ -39,7 +39,7 @@ on('CONTRACT_DISPATCHED', async (payload) => {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
             const result = await _fireCall(payload);
-            emit('JOB_COMPLETED', { jobId, cycleId, recipeId, result });
+            emit('JOB_COMPLETED', { jobId, cycleId, recipeId, result, inputs: payload.inputs });
             return;
         } catch (err) {
             lastErr = err;
@@ -49,7 +49,7 @@ on('CONTRACT_DISPATCHED', async (payload) => {
         }
     }
 
-    emit('JOB_FAILED', { jobId, cycleId, recipeId, error: lastErr });
+    emit('JOB_FAILED', { jobId, cycleId, recipeId, error: lastErr, inputs: payload.inputs });
 });
 
 async function _fireCall({ recipeId, inputs, settings, maxTokens }) {

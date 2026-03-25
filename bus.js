@@ -58,8 +58,8 @@ export function enableDevMode() { _devMode = true; }
 //
 // CYCLE_STARTED               { cycleId, seeds }
 // CONTRACT_DISPATCHED         { jobId, cycleId, recipeId, inputs, settings, maxTokens, maxRetries }
-// JOB_COMPLETED               { jobId, cycleId, recipeId, result }
-// JOB_FAILED                  { jobId, cycleId, recipeId, error }
+// JOB_COMPLETED               { jobId, cycleId, recipeId, result, inputs }
+// JOB_FAILED                  { jobId, cycleId, recipeId, error, inputs }
 // CYCLE_STORE_UPDATED         { cycleId, key, value, error? }
 // SYNC_COMPLETED              { cycleId, outcomes }
 // MODAL_OPENED                { cycleId }

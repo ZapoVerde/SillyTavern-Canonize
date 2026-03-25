@@ -8,29 +8,36 @@
  * the bus architecture — and its intelligence is limited to graph resolution.
  *
  * Owns the cycle store (`_store`), the active job counter (`_jobCounter`),
- * and the staleness map (`_activeJobByKey`). All other CNZ modules that need
- * to track or read cycle values go through this module's public API.
+ * the staleness map (`_activeJobByKey`), and the fan-out tracking state
+ * (`_activeJobsByKey`, `_fanOutResults`, `_inFlightByKey`, `_fanOutQueue`).
  *
- * Dependency resolution is mechanical: when a job completes and writes a value
- * to the store, the resolver checks every recipe whose inputs include that key.
- * If all inputs are satisfied and the recipe is not already running or complete,
- * it dispatches a new contract automatically. No special cases.
+ * Fan-out recipes declare a `fanOut(inputs, settings)` function that returns
+ * an array of per-chunk input sets. `dispatchContract` detects this and
+ * delegates to `_dispatchFanOut`, which emits one `CONTRACT_DISPATCHED` per
+ * chunk (respecting `maxConcurrent`). When all chunk jobs settle, a single
+ * `CYCLE_STORE_UPDATED` fires for the recipe's `produces` key.
  *
- * Staleness is one counter and one lookup: `_activeJobByKey[stalenessKey]`
- * holds the jobId of the current authoritative job. Any result arriving with a
- * different jobId is discarded in O(1).
+ * Staleness for single-job recipes: `_activeJobByKey[stalenessKey]` holds the
+ * current authoritative jobId. Any result arriving with a different jobId is
+ * discarded in O(1).
+ *
+ * Staleness for fan-out recipes: `_activeJobsByKey[stalenessKey]` holds a Set
+ * of active jobIds. Any result with a jobId not in the set is discarded.
  *
  * @api-declaration
- * startCycle(cycleId, seeds)              — open a new cycle, seed initial values.
- * getCycleValue(cycleId, key)             — read a value from the current cycle store.
- * dispatchContract(recipeId, extra, settings) — assemble and emit a contract; returns jobId.
- * setCurrentSettings(settings)           — set settings used by dependency resolution.
- * invalidateAllJobs()                    — mark all in-flight jobs stale (modal close, char switch).
+ * startCycle(cycleId, seeds)                  — open a new cycle, seed initial values.
+ * getCycleValue(cycleId, key)                 — read a value from the current cycle store.
+ * dispatchContract(recipeId, extra, settings) — assemble and emit a contract; returns jobId(s).
+ * setCurrentSettings(settings)               — set settings used by dependency resolution.
+ * invalidateAllJobs()                        — mark all in-flight jobs stale (modal close, char switch).
  *
  * @contract
  *   assertions:
  *     purity: stateful
- *     state_ownership: [_store, _currentCycle, _jobCounter, _activeJobByKey, _currentSettings]
+ *     state_ownership: [_store, _currentCycle, _jobCounter,
+ *                       _activeJobByKey, _activeJobsByKey,
+ *                       _fanOutResults, _inFlightByKey, _fanOutQueue, _maxConcurrentByKey,
+ *                       _currentSettings]
  *     external_io: []
  */
 // ─── CNZ Cycle Store ──────────────────────────────────────────────────────────
@@ -41,13 +48,22 @@
 import { emit, on } from './bus.js';
 import { Recipes }  from './recipes.js';
 
+const DEFAULT_CONCURRENCY = 3;
+
 // ── Module State ──────────────────────────────────────────────────────────────
 
 const _store          = {};   // cycleId → { key: value }
 let   _currentCycle   = null; // active cycleId
 let   _jobCounter     = 0;    // global monotonic counter
-const _activeJobByKey = {};   // stalenessKey → current jobId
+const _activeJobByKey = {};   // stalenessKey → current jobId  (single-job recipes)
 let   _currentSettings = {};  // set once per cycle by the caller
+
+// Fan-out tracking
+const _activeJobsByKey   = {};  // stalenessKey → Set<jobId>
+const _fanOutResults     = {};  // cycleId → { stalenessKey → { results: [] } }
+const _inFlightByKey     = {};  // stalenessKey → number
+const _fanOutQueue       = {};  // stalenessKey → [contract]
+const _maxConcurrentByKey = {}; // stalenessKey → maxConcurrent (stored for drain)
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -73,9 +89,12 @@ export function getCycleValue(cycleId, key) {
 
 /**
  * Assembles a contract for the named recipe and emits CONTRACT_DISPATCHED.
+ * If the recipe declares `fanOut`, delegates to _dispatchFanOut and returns
+ * an array of jobIds. Otherwise returns a single jobId.
  * @param {string} recipeId
  * @param {Record<string,*>} extraInputs  Caller-supplied overrides for cycle store values.
  * @param {object} settings               Active profile settings.
+ * @returns {number|number[]}
  */
 export function dispatchContract(recipeId, extraInputs = {}, settings) {
     const recipe = Recipes[recipeId];
@@ -90,15 +109,21 @@ export function dispatchContract(recipeId, extraInputs = {}, settings) {
         inputs[key] = extraInputs[key] ?? stored[key] ?? null;
     }
 
-    // Build prompt — pure, no side effects
+    // Fan-out path — recipe provides a fanOut function
+    if (recipe.fanOut) {
+        const inputSets = recipe.fanOut(inputs, settings);
+        return _dispatchFanOut(inputSets, recipe, settings, cycleId);
+    }
+
+    // Single-job path
     inputs._prompt = recipe.buildPrompt(inputs, settings);
 
     const jobId = ++_jobCounter;
     _activeJobByKey[recipe.stalenessKey] = jobId;
 
     const maxTokens = typeof recipe.maxTokens === 'string'
-        ? settings[recipe.maxTokens]  // resolve settings key (e.g. 'ragMaxTokens')
-        : recipe.maxTokens;           // literal value or null
+        ? settings[recipe.maxTokens]
+        : recipe.maxTokens;
 
     emit('CONTRACT_DISPATCHED', {
         jobId,
@@ -129,28 +154,166 @@ export function invalidateAllJobs() {
     for (const key of Object.keys(_activeJobByKey)) {
         delete _activeJobByKey[key];
     }
+    for (const key of Object.keys(_activeJobsByKey)) {
+        delete _activeJobsByKey[key];
+    }
+    for (const key of Object.keys(_fanOutResults)) {
+        delete _fanOutResults[key];
+    }
+    for (const key of Object.keys(_inFlightByKey)) {
+        delete _inFlightByKey[key];
+    }
+    for (const key of Object.keys(_fanOutQueue)) {
+        delete _fanOutQueue[key];
+    }
+    for (const key of Object.keys(_maxConcurrentByKey)) {
+        delete _maxConcurrentByKey[key];
+    }
+}
+
+// ── Fan-out Internals ─────────────────────────────────────────────────────────
+
+/**
+ * Dispatches one CONTRACT_DISPATCHED per input set, respecting maxConcurrent.
+ * Returns an array of all jobIds (including queued ones).
+ * @param {object[]} inputSets  Per-chunk input objects from recipe.fanOut().
+ * @param {object}   recipe
+ * @param {object}   settings
+ * @param {*}        cycleId
+ * @returns {number[]}
+ */
+function _dispatchFanOut(inputSets, recipe, settings, cycleId) {
+    const key = recipe.stalenessKey;
+
+    const maxConcurrent = typeof recipe.maxConcurrent === 'string'
+        ? (settings[recipe.maxConcurrent] ?? DEFAULT_CONCURRENCY)
+        : (recipe.maxConcurrent ?? DEFAULT_CONCURRENCY);
+
+    const maxTokens = typeof recipe.maxTokens === 'string'
+        ? settings[recipe.maxTokens]
+        : recipe.maxTokens;
+
+    // Reset fan-out state for this key
+    _activeJobsByKey[key]    = new Set();
+    _inFlightByKey[key]      = 0;
+    _fanOutQueue[key]        = [];
+    _maxConcurrentByKey[key] = maxConcurrent;
+    if (!_fanOutResults[cycleId]) _fanOutResults[cycleId] = {};
+    _fanOutResults[cycleId][key] = { results: [] };
+
+    const jobIds = [];
+    for (const inputSet of inputSets) {
+        const jobId  = ++_jobCounter;
+        const inputs = { ...inputSet, _prompt: recipe.buildPrompt(inputSet, settings) };
+        const contract = {
+            jobId,
+            cycleId,
+            recipeId:   recipe.id,
+            inputs,
+            settings,
+            maxTokens,
+            maxRetries: settings.maxRetries ?? 1,
+        };
+
+        _activeJobsByKey[key].add(jobId);
+        jobIds.push(jobId);
+
+        if (_inFlightByKey[key] < maxConcurrent) {
+            _inFlightByKey[key]++;
+            emit('CONTRACT_DISPATCHED', contract);
+        } else {
+            _fanOutQueue[key].push(contract);
+        }
+    }
+    return jobIds;
+}
+
+/**
+ * Drains queued fan-out contracts up to maxConcurrent.
+ * @param {string} key  stalenessKey
+ */
+function _drainFanOutQueue(key) {
+    const queue         = _fanOutQueue[key];
+    const maxConcurrent = _maxConcurrentByKey[key] ?? DEFAULT_CONCURRENCY;
+    if (!queue?.length) return;
+    while (_inFlightByKey[key] < maxConcurrent && queue.length > 0) {
+        const contract = queue.shift();
+        _inFlightByKey[key]++;
+        emit('CONTRACT_DISPATCHED', contract);
+    }
 }
 
 // ── Result Routing ────────────────────────────────────────────────────────────
 
-on('JOB_COMPLETED', ({ jobId, cycleId, recipeId, result }) => {
+on('JOB_COMPLETED', ({ jobId, cycleId, recipeId, result, inputs }) => {
     const recipe = Recipes[recipeId];
     if (!recipe) return;
 
-    // Staleness check — one comparison
-    if (_activeJobByKey[recipe.stalenessKey] !== jobId) return;
+    // Fan-out path
+    if (recipe.fanOut) {
+        const key = recipe.stalenessKey;
+        if (!_activeJobsByKey[key]?.has(jobId)) return;  // stale
 
+        _activeJobsByKey[key].delete(jobId);
+        _inFlightByKey[key] = Math.max(0, (_inFlightByKey[key] ?? 0) - 1);
+
+        const fanOutState = _fanOutResults[cycleId]?.[key];
+        if (fanOutState) {
+            fanOutState.results.push({ chunkIndex: inputs?.chunkIndex, header: result });
+        }
+
+        _drainFanOutQueue(key);
+
+        // All jobs settled — write results and fire CYCLE_STORE_UPDATED
+        if (_activeJobsByKey[key].size === 0 && !_fanOutQueue[key]?.length) {
+            if (!_store[cycleId]) _store[cycleId] = {};
+            const results = fanOutState?.results ?? [];
+            _store[cycleId][recipe.produces] = results;
+            emit('CYCLE_STORE_UPDATED', { cycleId, key: recipe.produces, value: results });
+        }
+        return;
+    }
+
+    // Single-job path
+    if (_activeJobByKey[recipe.stalenessKey] !== jobId) return;
     if (!_store[cycleId]) return;
     _store[cycleId][recipe.produces] = result;
-
     emit('CYCLE_STORE_UPDATED', { cycleId, key: recipe.produces, value: result });
 });
 
-on('JOB_FAILED', ({ jobId, cycleId, recipeId, error }) => {
+on('JOB_FAILED', ({ jobId, cycleId, recipeId, error, inputs }) => {
     const recipe = Recipes[recipeId];
     if (!recipe) return;
-    if (_activeJobByKey[recipe.stalenessKey] !== jobId) return;
 
+    // Fan-out path
+    if (recipe.fanOut) {
+        const key = recipe.stalenessKey;
+        if (!_activeJobsByKey[key]?.has(jobId)) return;
+
+        _activeJobsByKey[key].delete(jobId);
+        _inFlightByKey[key] = Math.max(0, (_inFlightByKey[key] ?? 0) - 1);
+
+        console.error(`[CNZ] Fan-out job failed: ${recipeId} chunk ${inputs?.chunkIndex} (job ${jobId})`, error);
+
+        const fanOutState = _fanOutResults[cycleId]?.[key];
+        if (fanOutState) {
+            // null header marks a failed chunk — CYCLE_STORE_UPDATED handler skips it
+            fanOutState.results.push({ chunkIndex: inputs?.chunkIndex, header: null });
+        }
+
+        _drainFanOutQueue(key);
+
+        if (_activeJobsByKey[key].size === 0 && !_fanOutQueue[key]?.length) {
+            if (!_store[cycleId]) _store[cycleId] = {};
+            const results = fanOutState?.results ?? [];
+            _store[cycleId][recipe.produces] = results;
+            emit('CYCLE_STORE_UPDATED', { cycleId, key: recipe.produces, value: results, error: error?.message });
+        }
+        return;
+    }
+
+    // Single-job path
+    if (_activeJobByKey[recipe.stalenessKey] !== jobId) return;
     console.error(`[CNZ] Job failed: ${recipeId} (job ${jobId})`, error);
     emit('CYCLE_STORE_UPDATED', {
         cycleId,
@@ -168,6 +331,9 @@ on('CYCLE_STORE_UPDATED', ({ cycleId, key }) => {
     if (!stored) return;
 
     for (const recipe of Object.values(Recipes)) {
+        // Fan-out recipes are never auto-triggered by dependency resolution
+        if (recipe.fanOut) continue;
+
         // Only consider recipes that declare this key as an input
         if (!recipe.inputs.includes(key)) continue;
 

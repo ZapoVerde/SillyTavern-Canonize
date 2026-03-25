@@ -81,20 +81,75 @@ export const Recipes = {
     },
 
     rag_classifier: {
-        id:           'rag_classifier',
-        inputs:       ['transcript', 'scenario_hooks'],
-        buildPrompt:  (inputs, settings) => interpolate(
-                          settings.ragClassifierPrompt || DEFAULT_RAG_CLASSIFIER_PROMPT,
-                          {
-                              summary:      inputs.scenario_hooks,
-                              history:      inputs.history ?? '',
-                              target_turns: inputs.transcript,
-                          }
-                      ),
-        profileKey:   'ragProfileId',
-        maxTokens:    'ragMaxTokens',    // settings key, resolved at dispatch time
-        produces:     'rag_header',
-        stalenessKey: 'rag_classifier',  // session-level; per-chunk staleness handled by chunk genId
+        id:      'rag_classifier',
+        // Fan-out inputs (passed as extraInputs by runRagPipeline/ragRegenCard):
+        //   ragChunks, fullPairs, stagedPairs, stagedPairOffset, splitPairIdx, scenario_hooks
+        // Per-chunk inputs (produced by fanOut and passed to buildPrompt):
+        //   transcript, scenario_hooks, history, chunkIndex
+        inputs:  ['scenario_hooks', 'ragChunks', 'fullPairs', 'stagedPairs', 'stagedPairOffset', 'splitPairIdx'],
+        buildPrompt: (inputs, settings) => interpolate(
+                         settings.ragClassifierPrompt || DEFAULT_RAG_CLASSIFIER_PROMPT,
+                         {
+                             summary:      inputs.scenario_hooks,
+                             history:      inputs.history ?? '',
+                             target_turns: inputs.transcript,
+                         }
+                     ),
+        /**
+         * Pure fan-out function. Receives the assembled inputs and settings; returns
+         * one input-set object per chunk that needs classification. Each object is
+         * passed directly to buildPrompt for that chunk's contract.
+         *
+         * Implements the same logic as buildRagChunks (transcript assembly) and
+         * resolveClassifierHistory (history assembly), kept in index.js as pure
+         * utility references. Inlined here to avoid a circular import.
+         */
+        fanOut: (inputs, settings) => {
+            const { ragChunks, scenario_hooks, fullPairs, stagedPairs, stagedPairOffset, splitPairIdx } = inputs;
+            if (!ragChunks?.length) return [];
+            const historyN  = settings.ragClassifierHistory ?? 0;
+            const inputSets = [];
+
+            for (const chunk of ragChunks) {
+                if (chunk.status === 'complete') continue;  // skip qvink-prebuilt chunks
+
+                const pairStart   = chunk.pairStart ?? chunk.chunkIndex;
+                const pairEnd     = chunk.pairEnd   ?? (pairStart + 1);
+                const targetPairs = (stagedPairs ?? []).slice(pairStart, Math.min(pairEnd, splitPairIdx ?? Infinity));
+                if (targetPairs.length === 0) continue;
+
+                // Build transcript (mirrors buildRagChunks content assembly)
+                const transcript = targetPairs
+                    .map(p => {
+                        const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
+                        for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
+                        return parts.join('\n\n');
+                    })
+                    .join('\n\n');
+
+                // Build history (mirrors resolveClassifierHistory)
+                let history = '';
+                if (historyN > 0 && fullPairs?.length) {
+                    const absStart = (stagedPairOffset ?? 0) + pairStart;
+                    const fromIdx  = Math.max(0, absStart - historyN);
+                    history = fullPairs.slice(fromIdx, absStart)
+                        .map(p => {
+                            const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
+                            for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
+                            return parts.join('\n\n');
+                        })
+                        .join('\n\n');
+                }
+
+                inputSets.push({ chunkIndex: chunk.chunkIndex, transcript, scenario_hooks, history });
+            }
+            return inputSets;
+        },
+        profileKey:    'ragProfileId',
+        maxTokens:     'ragMaxTokens',      // settings key, resolved at dispatch time
+        maxConcurrent: 'maxConcurrentCalls', // settings key for fan-out concurrency cap
+        produces:      'rag_chunk_results',
+        stalenessKey:  'rag_classifier_fanout',
     },
 
     targeted_update: {
