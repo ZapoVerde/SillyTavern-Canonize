@@ -338,19 +338,19 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
         </div>
 
         <div class="cnz-settings-inline-row">
-          <label for="cnz-set-live-context-buffer">Live context buffer (turns) ${tip('Number of recent turns kept in full live context, counted back from the latest turn. These turns are excluded from sync.')}</label>
+          <label for="cnz-set-live-context-buffer">Live context buffer (pairs) ${tip('Number of recent turn pairs kept in full live context, counted back from the end of the chat. These pairs are excluded from sync.')}</label>
           <input id="cnz-set-live-context-buffer" type="number" min="0" step="1"
                  value="${escapeHtml(String(s.liveContextBuffer ?? 5))}">
         </div>
 
         <div class="cnz-settings-inline-row">
-          <label for="cnz-set-chunk-every-n">Turns between updates ${tip('How many new turns trigger an auto-sync. Also sets the rolling window size — each sync analyses this many of the most recent turns for lorebook and summary.')}</label>
+          <label for="cnz-set-chunk-every-n">Pairs between updates ${tip('How many new turn pairs trigger an auto-sync. Also sets the standard sync window size — each sync processes this many pairs from the current head forward.')}</label>
           <input id="cnz-set-chunk-every-n" type="number" min="1" step="1"
                  value="${escapeHtml(String(s.chunkEveryN ?? 20))}">
         </div>
 
         <div class="cnz-settings-inline-row">
-          <label for="cnz-set-gap-snooze">Gap snooze (turns) ${tip('When a large gap is detected and you dismiss the top-up offer, auto-sync will stay quiet for this many additional turns before asking again.')}</label>
+          <label for="cnz-set-gap-snooze">Gap snooze (pairs) ${tip('When a large gap is detected and you dismiss the top-up offer, auto-sync will stay quiet for this many additional pairs before asking again.')}</label>
           <input id="cnz-set-gap-snooze" type="number" min="1" step="1"
                  value="${escapeHtml(String(s.gapSnoozeTurns ?? 5))}">
         </div>

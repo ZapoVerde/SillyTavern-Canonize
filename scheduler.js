@@ -17,10 +17,10 @@
  * initScheduler(triggers, getSettings)  — register trigger listeners; must be called once at init.
  * setSyncInProgress(bool)               — set the sync-in-progress flag.
  * isSyncInProgress()                    — read the sync-in-progress flag.
- * snooze(turns, currentCount)           — advance snooze boundary by `turns` from `currentCount`.
+ * snooze(pairs, currentPairCount)       — advance snooze boundary by `pairs` from `currentPairCount`.
  * resetScheduler()                      — clear snooze and sync-in-progress (on char switch).
  * setDnaChain(chain)                    — update the scheduler's copy of the DNA chain.
- * getGap(settings)                      — compute uncommitted gap from current context + DNA chain.
+ * getGap(settings)                      — compute uncommitted gap in pairs from current context + DNA chain.
  *
  * @contract
  *   assertions:
@@ -81,13 +81,13 @@ export function isSyncInProgress() {
 
 /**
  * Advances the snooze boundary. The auto_sync trigger will not fire until
- * non-system message count exceeds the stored boundary.
- * @param {number} turns        Number of turns to snooze.
- * @param {number} currentCount Current non-system message count.
+ * the pair count exceeds the stored boundary.
+ * @param {number} pairs            Number of pairs to snooze.
+ * @param {number} currentPairCount Current pair count.
  */
-export function snooze(turns, currentCount) {
-    _snoozeUntilCount = currentCount + turns;
-    console.log(`[CNZ] Scheduler: snooze until turn ${_snoozeUntilCount}.`);
+export function snooze(pairs, currentPairCount) {
+    _snoozeUntilCount = currentPairCount + pairs;
+    console.log(`[CNZ] Scheduler: snooze until pair ${_snoozeUntilCount}.`);
 }
 
 /**
@@ -107,22 +107,22 @@ export function setDnaChain(chain) {
 }
 
 /**
- * Computes the uncommitted gap (turns past the committed boundary that fall
- * outside the live context buffer). Uses current SillyTavern context.
+ * Computes the uncommitted gap in pairs (pairs past the committed boundary
+ * that fall outside the live context buffer). Uses current SillyTavern context.
  * @param   {object} settings  Active profile settings.
- * @returns {number}           Gap in non-system message count.
+ * @returns {number}           Gap in prose pairs.
  */
 export function getGap(settings) {
     const context = SillyTavern.getContext();
     if (!context) return 0;
-    const messages = context.chat ?? [];
-    const count    = messages.filter(m => !m.is_system).length;
-    const lkgIdx   = _dnaChain?.lkgMsgIdx ?? -1;
-    const priorSeq = lkgIdx >= 0
-        ? messages.slice(0, lkgIdx + 1).filter(m => !m.is_system).length
+    const messages   = context.chat ?? [];
+    const pairCount  = messages.filter(m => !m.is_system && m.is_user).length;
+    const lkgIdx     = _dnaChain?.lkgMsgIdx ?? -1;
+    const priorPairs = lkgIdx >= 0
+        ? messages.slice(0, lkgIdx + 1).filter(m => !m.is_system && m.is_user).length
         : 0;
     const lcb = settings.liveContextBuffer ?? 5;
-    return Math.max(0, count - lcb) - priorSeq;
+    return Math.max(0, pairCount - lcb) - priorPairs;
 }
 
 // ── Internal ──────────────────────────────────────────────────────────────────
@@ -131,7 +131,8 @@ function _evaluate(trigger, eventData) {
     const context  = SillyTavern.getContext();
     const settings = _getSettings();
     const messages = context?.chat ?? [];
-    const count    = messages.filter(m => !m.is_system).length;
+    const count     = messages.filter(m => !m.is_system).length;
+    const pairCount = messages.filter(m => !m.is_system && m.is_user).length;
 
     const state = {
         dnaChain:         _dnaChain,
@@ -140,6 +141,7 @@ function _evaluate(trigger, eventData) {
         context,
         messages,
         count,
+        pairCount,
         eventData,
     };
 

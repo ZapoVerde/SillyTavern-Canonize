@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.1
+ * @version 1.0.2
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -2043,13 +2043,11 @@ function buildModalTranscript(horizonTurns) {
  */
 function buildSyncWindowTranscript(horizonTurns, messages, settings) {
     const allPairs = buildProsePairs(messages);
-    
-    // Window logic: Head -> (Total - Buffer)
-    const lcb = settings.liveContextBuffer ?? 5;
-    const totalNS = messages.filter(m => !m.is_system).length;
-    const tbb = Math.max(0, totalNS - lcb);
 
-    let windowPairs = allPairs.filter(p => p.validIdx < tbb);
+    const lcb = settings.liveContextBuffer ?? 5;
+    const tbb = Math.max(0, allPairs.length - lcb);   // trailing buffer boundary in pairs
+
+    let windowPairs = allPairs.filter((p, i) => i < tbb);
 
     // SURGICAL UNLOCK: If the buffer is larger than the chat,
     // don't send an empty transcript. Send the last available pair.
@@ -2156,10 +2154,19 @@ function showLbError(message) {
  * Asks for confirmation because it discards any corrections already made.
  */
 async function onLbRegenClick() {
-    const confirmed = await callPopup(
-        'This will run a fresh lorebook AI call and rebuild the suggestion list from scratch, resetting to the parent node baseline and discarding any corrections or previously committed lorebook changes made in this session. Continue?',
-        'confirm',
-    );
+    // Lower CNZ overlay z-index temporarily so callPopup renders above it.
+    const $overlay = $('#cnz-overlay');
+    const prevZ = $overlay.css('z-index');
+    $overlay.css('z-index', '');
+    let confirmed;
+    try {
+        confirmed = await callPopup(
+            'This will run a fresh lorebook AI call and rebuild the suggestion list from scratch, resetting to the parent node baseline and discarding any corrections or previously committed lorebook changes made in this session. Continue?',
+            'confirm',
+        );
+    } finally {
+        $overlay.css('z-index', prevZ);
+    }
     if (!confirmed) return;
 
     setLbLoading(true);
@@ -3496,22 +3503,6 @@ function logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN) {
     );
 }
 
-function logSyncEnd(lbOk, hooksOk, ragOk, ledgerOk, ragFileName, ragChunks, lorebookDelta, nodeId, seqNum) {
-    const lbDetail = lbOk
-        ? `${(lorebookDelta?.createdUids?.length ?? 0)} created, ${Object.keys(lorebookDelta?.modifiedEntries ?? {}).length} updated`
-        : 'FAILED';
-    const ragDetail = ragOk
-        ? `${ragChunks.length} chunks → ${ragFileName ?? '(disabled)'}`
-        : 'FAILED';
-    console.log(
-        `[CNZ] ── SYNC DONE ──\n` +
-        `  lorebook: ${lbDetail}\n` +
-        `  hooks:    ${hooksOk ? 'updated' : 'FAILED'}\n` +
-        `  rag:      ${ragDetail}\n` +
-        `  ledger:   ${ledgerOk ? `node ${nodeId} committed (seqNum=${seqNum})` : 'FAILED'}`
-    );
-}
-
 
 // ─── CNZ Core ────────────────────────────────────────────────────────────────
 
@@ -3675,10 +3666,9 @@ async function commitLedgerNode(char, messages) {
  * @returns {{ syncPairs: object[], syncPairOffset: number }}
  */
 function computeSyncWindow(allPairs, messages, settings, coverAll, dnaChain) {
-    const lcb     = settings.liveContextBuffer ?? 5;
-    const every   = settings.chunkEveryN ?? 20;
-    const totalNS = messages.filter(m => !m.is_system).length;
-    const tbb     = Math.max(0, totalNS - lcb);
+    const lcb   = settings.liveContextBuffer ?? 5;
+    const every = settings.chunkEveryN ?? 20;
+    const tbb   = Math.max(0, allPairs.length - lcb);   // trailing buffer boundary in pairs
 
     // Non-system turns committed up to and including the LKG anchor message.
     const lkgIdx   = dnaChain?.lkgMsgIdx ?? -1;
@@ -3686,8 +3676,8 @@ function computeSyncWindow(allPairs, messages, settings, coverAll, dnaChain) {
         ? messages.slice(0, lkgIdx + 1).filter(m => !m.is_system).length
         : 0;
 
-    // Pairs that lie in the uncommitted gap.
-    const uncommitted = allPairs.filter(p => p.validIdx >= priorSeq && p.validIdx < tbb);
+    // Pairs that lie in the uncommitted gap (after committed boundary, before live buffer).
+    const uncommitted = allPairs.filter((p, i) => p.validIdx >= priorSeq && i < tbb);
 
     const syncPairs = coverAll ? uncommitted : uncommitted.slice(0, every);
 
@@ -3757,8 +3747,12 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         try {
             const text = await runLorebookSyncCall(lbTranscript, _lorebookData);
             await processLorebookUpdate(text);
+            console.log('[CNZ] Lorebook: ok');
             return true;
-        } catch (e) { console.error('[CNZ] LB Sync Failed', e); return false; }
+        } catch (e) {
+            console.error('[CNZ] Lorebook: failed —', e.message ?? e);
+            return false;
+        }
     })();
 
     // --- LANE 2: HOOKS (Independent) ---
@@ -3767,9 +3761,10 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
             const text = await runHookseekerCall(hookTranscript, _priorSituation);
             await processHooksUpdate(text);
             _priorSituation = text;
+            console.log('[CNZ] Hooks: ok');
             return true;
         } catch (e) {
-            console.error('[CNZ] Hooks Sync Failed', e);
+            console.error('[CNZ] Hooks: failed —', e.message ?? e);
             _priorSituation = 'Current Action';
             return false;
         }
@@ -3780,17 +3775,39 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         if (!settings.enableRag) return true;
         try {
             await runRagPipeline();
+            console.log('[CNZ] RAG: ok');
             return true;
-        } catch (e) { console.error('[CNZ] RAG Sync Failed', e); return false; }
+        } catch (e) {
+            console.error('[CNZ] RAG: failed —', e.message ?? e);
+            return false;
+        }
     })();
 
     const [lbOk, hooksOk, ragOk] = await Promise.all([lbPromise, hooksPromise, ragPromise]);
 
     // Commit the DNA chain node regardless of individual lane success.
-    await commitLedgerNode(char, messages);
+    let ledgerOk = false;
+    try {
+        await commitLedgerNode(char, messages);
+        ledgerOk = true;
+    } catch (e) {
+        console.error('[CNZ] Ledger commit: failed —', e.message ?? e);
+    }
 
     setSyncInProgress(false);
-    toastr.success('Sync Processed (Best Effort)');
+
+    const failures = [
+        !lbOk    && 'lorebook',
+        !hooksOk && 'hooks',
+        !ragOk   && 'RAG',
+        !ledgerOk && 'ledger commit',
+    ].filter(Boolean);
+
+    if (failures.length === 0) {
+        toastr.success('Sync processed');
+    } else {
+        toastr.warning(`Sync processed — failed: ${failures.join(', ')}`);
+    }
 }
 
 /**
@@ -4630,11 +4647,11 @@ async function init() {
         e.preventDefault();
         toastr.clear();
         invalidateAllJobs();
-        const ctx         = SillyTavern.getContext();
-        const messages    = ctx?.chat ?? [];
-        const count       = messages.filter(m => !m.is_system).length;
-        const snoozeTurns = getSettings().gapSnoozeTurns ?? 5;
-        snooze(snoozeTurns, count);
+        const ctx          = SillyTavern.getContext();
+        const messages     = ctx?.chat ?? [];
+        const pairCount    = messages.filter(m => !m.is_system && m.is_user).length;
+        const snoozePairs  = getSettings().gapSnoozeTurns ?? 5;
+        snooze(snoozePairs, pairCount);
     });
 
     // ── Bus subscribers ───────────────────────────────────────────────────────
@@ -4692,16 +4709,16 @@ async function init() {
             const freshChain = readDnaChain(messages);
             const newLkgIdx  = freshChain.lkgMsgIdx;
             const newPrior   = newLkgIdx >= 0
-                ? messages.slice(0, newLkgIdx + 1).filter(m => !m.is_system).length
+                ? messages.slice(0, newLkgIdx + 1).filter(m => !m.is_system && m.is_user).length
                 : 0;
             const remaining  = trailingBoundary - newPrior;
             if (remaining < every) return;
 
-            const snoozeTurns = getSettings().gapSnoozeTurns ?? 5;
+            const snoozePairs = getSettings().gapSnoozeTurns ?? 5;
             toastr.warning(
-                `CNZ: ${remaining} uncaptured turn(s). ` +
+                `CNZ: ${remaining} uncaptured pair(s). ` +
                 `<a href="#" class="cnz-gap-sync-all">Sync all</a> &nbsp; ` +
-                `<a href="#" class="cnz-gap-snooze">Snooze ${snoozeTurns} turns</a>`,
+                `<a href="#" class="cnz-gap-snooze">Snooze ${snoozePairs} pairs</a>`,
                 '',
                 { timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false },
             );

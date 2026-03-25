@@ -201,20 +201,20 @@ export const Triggers = {
         source:     'st',
         watchEvent: event_types.MESSAGE_RECEIVED,
         condition:  (state, settings) => {
-            const { context, messages, count, dnaChain, snoozeUntilCount } = state;
+            const { context, messages, pairCount, dnaChain, snoozeUntilCount } = state;
             if (!context || context.groupId || context.characterId == null) return null;
             if (!settings.autoSync) return null;
             const every = settings.chunkEveryN ?? 20;
-            if (every <= 0 || count <= 0) return null;
-            if (count <= snoozeUntilCount) return null;
+            if (every <= 0 || pairCount <= 0) return null;
+            if (pairCount <= snoozeUntilCount) return null;
 
-            const lkgIdx = dnaChain?.lkgMsgIdx ?? -1;
-            const priorSeq = lkgIdx >= 0
-                ? messages.slice(0, lkgIdx + 1).filter(m => !m.is_system).length
+            const lkgIdx     = dnaChain?.lkgMsgIdx ?? -1;
+            const priorPairs = lkgIdx >= 0
+                ? messages.slice(0, lkgIdx + 1).filter(m => !m.is_system && m.is_user).length
                 : 0;
-            const lcb = settings.liveContextBuffer ?? 5;
-            const trailingBoundary = Math.max(0, count - lcb);
-            const gap = trailingBoundary - priorSeq;
+            const lcb              = settings.liveContextBuffer ?? 5;
+            const trailingBoundary = Math.max(0, pairCount - lcb);
+            const gap              = trailingBoundary - priorPairs;
             if (gap < every) return null;
 
             const char = context.characters[context.characterId];
