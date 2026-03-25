@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.3
+ * @version 1.0.4
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -3715,6 +3715,7 @@ function computeSyncWindow(allPairs, messages, settings, coverAll, dnaChain) {
  * @param {boolean} coverAll true = full gap, false = standard window.
  */
 async function runCnzSync(char, messages, { coverAll = false } = {}) {
+    console.log(`[CNZ] ══ SYNC START ══ char="${char?.name}" coverAll=${coverAll} msgs=${messages.length}`);
     setSyncInProgress(true);
     const settings  = getSettings();
     const allPairs  = buildProsePairs(messages);
@@ -3754,27 +3755,29 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
     // --- LANE 1: LOREBOOK (Independent) ---
     const lbPromise = (async () => {
+        console.log('[CNZ] Lane 1 (lorebook): starting');
         try {
             const text = await runLorebookSyncCall(lbTranscript, _lorebookData);
             await processLorebookUpdate(text);
-            console.log('[CNZ] Lorebook: ok');
+            console.log('[CNZ] Lane 1 (lorebook): ✓ ok');
             return true;
         } catch (e) {
-            console.error('[CNZ] Lorebook: failed —', e.message ?? e);
+            console.error('[CNZ] Lane 1 (lorebook): ✗ failed —', e.message ?? e, e);
             return false;
         }
     })();
 
     // --- LANE 2: HOOKS (Independent) ---
     const hooksPromise = (async () => {
+        console.log('[CNZ] Lane 2 (hooks): starting');
         try {
             const text = await runHookseekerCall(hookTranscript, _priorSituation);
             await processHooksUpdate(text);
             _priorSituation = text;
-            console.log('[CNZ] Hooks: ok');
+            console.log('[CNZ] Lane 2 (hooks): ✓ ok');
             return true;
         } catch (e) {
-            console.error('[CNZ] Hooks: failed —', e.message ?? e);
+            console.error('[CNZ] Lane 2 (hooks): ✗ failed —', e.message ?? e, e);
             _priorSituation = 'Current Action';
             return false;
         }
@@ -3782,13 +3785,14 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
     // --- LANE 3: RAG (Independent) ---
     const ragPromise = (async () => {
-        if (!settings.enableRag) return true;
+        if (!settings.enableRag) { console.log('[CNZ] Lane 3 (RAG): skipped (disabled)'); return true; }
+        console.log('[CNZ] Lane 3 (RAG): starting');
         try {
             await runRagPipeline();
-            console.log('[CNZ] RAG: ok');
+            console.log('[CNZ] Lane 3 (RAG): ✓ ok');
             return true;
         } catch (e) {
-            console.error('[CNZ] RAG: failed —', e.message ?? e);
+            console.error('[CNZ] Lane 3 (RAG): ✗ failed —', e.message ?? e, e);
             return false;
         }
     })();
@@ -3796,12 +3800,14 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     const [lbOk, hooksOk, ragOk] = await Promise.all([lbPromise, hooksPromise, ragPromise]);
 
     // Commit the DNA chain node regardless of individual lane success.
+    console.log('[CNZ] Ledger: committing node');
     let ledgerOk = false;
     try {
         await commitLedgerNode(char, messages);
         ledgerOk = true;
+        console.log('[CNZ] Ledger: ✓ ok');
     } catch (e) {
-        console.error('[CNZ] Ledger commit: failed —', e.message ?? e);
+        console.error('[CNZ] Ledger: ✗ failed —', e.message ?? e, e);
     }
 
     setSyncInProgress(false);
@@ -3814,8 +3820,10 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     ].filter(Boolean);
 
     if (failures.length === 0) {
+        console.log('[CNZ] ══ SYNC COMPLETE ══ all lanes ok');
         toastr.success('Sync processed');
     } else {
+        console.warn(`[CNZ] ══ SYNC COMPLETE ══ failed: ${failures.join(', ')}`);
         toastr.warning(`Sync processed — failed: ${failures.join(', ')}`);
     }
 }
@@ -4697,6 +4705,7 @@ async function init() {
 
     // Auto-sync pump — fired by the auto_sync trigger in recipes.js
     on('SYNC_TRIGGERED', ({ char, messages, gap, every, trailingBoundary, largeGap }) => {
+        console.log(`[CNZ] ══ SYNC TRIGGERED ══ gap=${gap}/${every} largeGap=${largeGap} char="${char?.name}"`);
         if (!largeGap) {
             runCnzSync(char, messages).catch(err =>
                 console.error('[CNZ] runCnzSync uncaught error:', err),
