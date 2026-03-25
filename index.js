@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.2
+ * @version 1.0.3
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -94,6 +94,7 @@ import { initScheduler, setSyncInProgress, isSyncInProgress,
          snooze, resetScheduler, setDnaChain, getGap } from './scheduler.js';
 import { Triggers } from './recipes.js';
 import './executor.js';   // self-registers its CONTRACT_DISPATCHED handler on import
+import './logger.js';    // console observer for LLM call lifecycle
 import { interpolate,
          DEFAULT_LOREBOOK_SYNC_PROMPT,
          DEFAULT_HOOKSEEKER_PROMPT,
@@ -2155,9 +2156,11 @@ function showLbError(message) {
  */
 async function onLbRegenClick() {
     // Lower CNZ overlay z-index temporarily so callPopup renders above it.
+    // Must use an explicit value — setting '' just removes the inline style and the
+    // stylesheet rule (.cnz-overlay { z-index: var(--cnz-z-modal) }) immediately
+    // snaps back to 9999, so the overlay never actually drops.
     const $overlay = $('#cnz-overlay');
-    const prevZ = $overlay.css('z-index');
-    $overlay.css('z-index', '');
+    $overlay.css('z-index', '1');
     let confirmed;
     try {
         confirmed = await callPopup(
@@ -2165,7 +2168,7 @@ async function onLbRegenClick() {
             'confirm',
         );
     } finally {
-        $overlay.css('z-index', prevZ);
+        $overlay.css('z-index', '');
     }
     if (!confirmed) return;
 
@@ -2662,10 +2665,17 @@ async function onLbApplyAllUnresolved() {
     const unresolved = _lorebookSuggestions.filter(s => !s._applied && !s._rejected);
     if (!unresolved.length) { toastr.info('No unresolved lorebook suggestions to apply.'); return; }
     const count     = unresolved.length;
-    const confirmed = await callPopup(
-        `This will apply all ${count} unreviewed suggestion${count !== 1 ? 's' : ''} to the Lorebook using the AI\'s current text. Continue?`,
-        'confirm',
-    );
+    const $overlay  = $('#cnz-overlay');
+    $overlay.css('z-index', '1');
+    let confirmed;
+    try {
+        confirmed = await callPopup(
+            `This will apply all ${count} unreviewed suggestion${count !== 1 ? 's' : ''} to the Lorebook using the AI\'s current text. Continue?`,
+            'confirm',
+        );
+    } finally {
+        $overlay.css('z-index', '');
+    }
     if (!confirmed) return;
     for (const s of unresolved) {
         const name = s.name.trim(), keys = [...s.keys], content = s.content.trim();

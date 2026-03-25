@@ -376,12 +376,6 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
           </label>
         </div>
 
-        <div class="cnz-settings-inline-row">
-          <label for="cnz-set-ledger-max-nodes">Ledger history (nodes) ${tip('Maximum sync snapshots kept per character. On each sync the oldest nodes beyond this limit are deleted from the Data Bank. 0 = keep all (no pruning). Reducing this limits how far back you can roll back.')}</label>
-          <input id="cnz-set-ledger-max-nodes" type="number" min="0" step="1"
-                 value="${escapeHtml(String(s.ledgerMaxNodes ?? 0))}">
-        </div>
-
         <div class="cnz-settings-row cnz-settings-prompt-row">
           <button id="cnz-edit-summary-prompt"  class="cnz-btn cnz-btn-secondary"
                   title="Edit the prompt template sent to the AI when generating the narrative hook / scenario summary.">Edit Summary Prompt</button>
