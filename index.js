@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
- * @stamp {"utc":"2026-03-22T00:00:00.000Z"}
- * @version 0.9.55
+ * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
+ * @version 1.0.0
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -50,38 +50,40 @@
  *   System spec:            docs/cnz_system_spec.md
  *
  * @api-declaration
- * Entry points: onWandButtonClick() (manual), onMessageReceived() (auto-sync).
+ * Entry points: onWandButtonClick() (manual), SYNC_TRIGGERED bus event (auto-sync).
  * Sync pipeline: runCnzSync(), runHealer().
  * Modal: openReviewModal(), onConfirmClick(), closeModal().
- * Ledger: fetchOrBootstrapLedger(), commitLedgerManifest(), fetchLedgerNodeFile().
- * AI calls: runLorebookSyncCall(), runHookseekerCall(), runRagClassifierCall().
+ * AI calls: _waitForRecipe() — routes all LLM calls through bus/executor.
  * RAG: buildRagChunks(), buildRagDocument(), ragFireChunk(), ragDrainQueue().
- * Lorebook: parseLbSuggestions(), serialiseSuggestionsToFreeform(), enrichLbSuggestions(), updateLbDiff(),
+ * Lorebook: parseLbSuggestions(), enrichLbSuggestions(), updateLbDiff(),
  *           deleteLbEntry(), revertLbSuggestion().
- * DNA Chain: readDnaChain(), getLkgAnchor(), findLastAiMessageInPair().
+ * DNA Chain: readDnaChain(), getLkgAnchor(), findLastAiMessageInPair(),
+ *            writeDnaAnchor(), writeDnaLinks(), buildAnchorPayload().
+ * Bus: emit(), on(), off() — see bus.js
+ * Recipes: Recipes{} — see recipes.js
+ * Cycle: startCycle(), dispatchContract() — see cycleStore.js
  *
  * @contract
  *   assertions:
  *     purity: mutates
  *     state_ownership: [
  *       _lorebookData, _draftLorebook, _parentNodeLorebook,
- *       _ledgerManifest, _sessionStartId,
  *       _priorSituation, _beforeSituation,
  *       _lorebookName, _lorebookSuggestions, _lorebookDelta,
  *       _stagedProsePairs, _stagedPairOffset, _splitPairIdx,
  *       _ragChunks, _splitIndexWhenRagBuilt, _lastSummaryUsedForRag,
  *       _lastRagUrl, _ragGlobalGenId, _ragInFlightCount, _ragCallQueue,
- *       _syncInProgress, _cnzGenerating, _snoozeUntilCount, _lastKnownAvatar,
+ *       _cnzGenerating, _lastKnownAvatar,
  *       _currentStep, _hooksGenId, _lorebookGenId, _targetedGenId,
  *       _hooksLoading, _lorebookLoading, _lbActiveIngesterIndex,
  *       _lbDebounceTimer,
  *       _ragRawDetached, _pendingOrphans, _dnaChain,
  *       extension_settings.cnz]
  *     external_io: [
- *       generateRaw, ConnectionManagerRequestService,
+ *       generateRaw (via executor.js), ConnectionManagerRequestService (via executor.js),
  *       /api/worldinfo/*, /api/characters/edit,
  *       /api/files/upload, /api/files/delete,
- *       /api/chats/saveChat] 
+ *       /api/chats/saveChat]
  */
 
 import { generateRaw, saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup, chat_metadata } from '../../../../script.js';
@@ -89,6 +91,19 @@ import { extension_settings, saveMetadataDebounced } from '../../../extensions.j
 import { updateWorldInfoList } from '../../../../scripts/world-info.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
 import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML, buildLedgerInspectorHTML, buildOrphanModalHTML } from './ui.js';
+import { emit, on, off, enableDevMode } from './bus.js';
+import { startCycle, dispatchContract, getCycleValue,
+         setCurrentSettings, invalidateAllJobs } from './cycleStore.js';
+import { initScheduler, setSyncInProgress, isSyncInProgress,
+         snooze, resetScheduler, setDnaChain, getGap } from './scheduler.js';
+import { Triggers } from './recipes.js';
+import './executor.js';   // self-registers its CONTRACT_DISPATCHED handler on import
+import { interpolate,
+         DEFAULT_LOREBOOK_SYNC_PROMPT,
+         DEFAULT_HOOKSEEKER_PROMPT,
+         DEFAULT_RAG_CLASSIFIER_PROMPT,
+         DEFAULT_TARGETED_UPDATE_PROMPT,
+         DEFAULT_TARGETED_NEW_PROMPT } from './defaults.js';
 
 // ─── Mobile Debug Panel ───────────────────────────────────────────────────────
 const MDP = false; // set true to enable on-screen console overlay for mobile debugging
@@ -118,6 +133,7 @@ if (MDP) (function() {
         };
     });
 })();
+if (MDP) enableDevMode();
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -126,152 +142,6 @@ const DEFAULT_CONCURRENCY = 3;
 const HOOKS_START         = '<!-- Current Scenario State -->';
 const HOOKS_END           = '<!--  -->';
 
-const DEFAULT_LOREBOOK_SYNC_PROMPT = `
-[SYSTEM: TASK — LOREBOOK CURATOR]
-You are reviewing a session transcript and the current lorebook entries for a character.
-Your job is to suggest targeted updates to existing entries and identify new concepts
-that warrant a lorebook entry.
-
-CURRENT LOREBOOK ENTRIES:
-{{lorebook_entries}}
-
-SESSION TRANSCRIPT:
-{{transcript}}
-
-INSTRUCTIONS:
-- For each existing entry whose information is now stale, incomplete, or contradicted by
-  the transcript, output an UPDATE block.
-- For each new person, place, faction, item, or recurring concept introduced in the
-  transcript that does NOT already have an entry, output a NEW block.
-- Keep entries concise (2–6 sentences). Write in third-person present tense.
-- Keys: the most natural words a reader would search for (lowercase, 2–5 keys per entry).
-- If no changes are needed, output exactly: NO CHANGES NEEDED
-
-### OUTPUT FORMAT — use exactly this structure for each suggestion:
-
-**UPDATE: [Exact Entry Name to Match]**
-Keys: keyword1, keyword2, keyword3
-[Full replacement content for this entry — write the complete entry, not just the changed part.]
-*Reason: One sentence explaining what changed and why.*
-
-**NEW: [Suggested Entry Name]**
-Keys: keyword1, keyword2
-[Full content for this new entry.]
-*Reason: One sentence explaining why this warrants a new entry.*
-`;
-
-const DEFAULT_HOOKSEEKER_PROMPT = `
-[SYSTEM: TASK — NARRATIVE CHRONICLER]
-Analyze the TRANSCRIPT below and write a concise (150–300 word) present-tense summary
-of: active plot threads, unresolved tensions, immediate threats or stakes, and current
-character emotional states and intentions.
-
-Constraints:
-- No preamble. No "This is a summary." No bullet points.
-- Write as flowing narrative prose in present tense.
-- Focus on what is actively unresolved or in motion — not what has been settled.
-
-TRANSCRIPT:
-{{transcript}}
-`;
-
-const DEFAULT_RAG_CLASSIFIER_PROMPT = `
-You are a precise Narrative Memory Classifier.
-
-Output rules — follow exactly, no exceptions:
-- Output ONLY the 2–3 sentence header text in present tense.
-- No quotes. No final punctuation. No explanations. No other text at all.
-- Capture ONLY the core dramatic event, revelation, confrontation, decision, or emotional shift in the TARGET TURNS.
-- Ignore any history and global summary except as loose context.
-
-Focus priority:
-- Most significant narrative moment only
-- Present tense, concise (2–3 sentences max)
-
-Example:
-TARGET TURNS: [character finds hidden letter] [reads it] [gasps] "It was you all along."
-Header: The protagonist discovers undeniable proof of betrayal in the hidden letter. Shock and realization hit as the truth becomes clear
-
-GLOBAL CHAPTER SUMMARY (context only — do NOT classify):
-{{summary}}
-
-{{#if history}}
-PRECEDING TURNS (context only — do NOT classify):
-{{history}}
-
-{{/if}}
-TARGET TURNS:
-{{target_turns}}
-`;
-
-const DEFAULT_TARGETED_UPDATE_PROMPT = `
-[SYSTEM: TASK — NARRATIVE FACT UPDATER]
-You are maintaining a persistent world knowledge base for an ongoing roleplay narrative.
-A knowledge record for the concept below already exists. Your job is to revise it to
-reflect new information revealed in the transcript, producing a single complete,
-up-to-date record.
-
-A knowledge record captures durable, referenceable facts about a person, place, object,
-faction, or recurring concept — the current state of the story world as understood at
-this point in the narrative. Write in third-person present tense. Be concise and
-specific: 2–6 sentences.
-
-CONCEPT: {{entry_name}}
-CURRENT KEYS: {{entry_keys}}
-
-CURRENT RECORD:
-{{entry_content}}
-
-SESSION TRANSCRIPT:
-{{transcript}}
-
-INSTRUCTIONS:
-- Write the record as a single complete replacement — not a patch or addendum.
-- Integrate old and new information into one coherent, present-tense account.
-- Where the transcript contradicts the existing record, trust the transcript.
-- Where the transcript adds new detail, incorporate it naturally.
-- Where the existing record covers things the transcript does not touch, preserve them.
-- Keep search keys unless the transcript clearly warrants adding or removing one.
-- If the transcript contains no new information relevant to this concept, output exactly:
-  NO CHANGES NEEDED
-
-### OUTPUT FORMAT:
-
-**UPDATE: {{entry_name}}**
-Keys: keyword1, keyword2, keyword3
-[Full replacement content for this record.]
-`;
-
-const DEFAULT_TARGETED_NEW_PROMPT = `
-[SYSTEM: TASK — NARRATIVE FACT EXTRACTOR]
-You are maintaining a persistent world knowledge base for an ongoing roleplay narrative.
-Your job is to write a single, focused knowledge record for the concept identified below,
-drawn entirely from what the transcript reveals.
-
-A knowledge record captures durable, referenceable facts about a person, place, object,
-faction, or recurring concept — things a reader would need to know to understand the
-current state of the story world. Write in third-person present tense. Be concise and
-specific: 2–6 sentences. Do not speculate beyond what the transcript supports.
-
-CONCEPT: {{entry_name}}
-
-SESSION TRANSCRIPT:
-{{transcript}}
-
-SEARCH KEYS: Choose 2–5 lowercase words or short phrases that a reader would naturally
-think of when looking for this concept. Prefer the most recognisable name or label for
-the thing, plus meaningful aliases or related terms. Avoid generic words that would match
-many entries (e.g. "character", "place", "important").
-
-If the transcript contains no meaningful information about this concept, output exactly:
-NO INFORMATION FOUND
-
-### OUTPUT FORMAT:
-
-**NEW: {{entry_name}}**
-Keys: keyword1, keyword2
-[Full content for this record.]
-`;
 
 // Profile-level configuration keys — saved per profile, loaded into activeState.
 // Meta-state keys (lastLorebookSyncAt, ledgerPaths, profiles, currentProfileName,
@@ -291,7 +161,6 @@ const PROFILE_DEFAULTS = Object.freeze({
     hookseekerTrailingPrompt: '',
     // Rolling trim
     autoAdvanceMask:          false,
-    ledgerMaxNodes:           0,    // 0 = keep all; >0 = prune to N most recent nodes on each sync
     // RAG
     enableRag:                false,
     ragSeparator:             'Chunk {{chunk_number}} ({{turn_range}})',
@@ -312,19 +181,10 @@ const PROFILE_DEFAULTS = Object.freeze({
 
 let _lorebookData   = null;  // {entries:{}} — server copy of the active lorebook
 let _draftLorebook  = null;  // working copy for staged changes
-let _ledgerManifest = null;  // in-memory manifest fetched/bootstrapped on demand
-let _sessionStartId = null;  // headNodeId captured at session start
-let _sessionHeadEditToken = null;  // editToken of head node file at lock-check time
-
-// Concurrency guard — prevents overlapping syncs
-let _syncInProgress = false;
 
 // Set to true while CNZ itself drives a generateWithProfile/generateRaw call so
-// the CHAT_COMPLETION_PROMPT_READY handler knows to skip the context mask.
+// the MASK_ADVANCE_TRIGGERED handler knows to skip the context mask.
 let _cnzGenerating = false;
-
-// Large-gap snooze — suppress the top-up offer until this non-system count is exceeded
-let _snoozeUntilCount = 0;
 
 // Healer tracking — updated on CHAT_CHANGED
 let _lastKnownAvatar = null;
@@ -357,6 +217,7 @@ let _parentNodeLorebook = null;  // lorebook snapshot from parent node — diff 
                                   // set in runCnzSync and openReviewModal, read by updateLbDiff
 
 // Orphan check state — set by checkOrphans(), read by openOrphanModal()
+// REFACTOR-NOTE: _pendingOrphans and checkOrphans() still referenced — remove with ledger infrastructure
 let _pendingOrphans = [];
 
 let _dnaChain = null;
@@ -379,6 +240,7 @@ let _lbDebounceTimer         = null;
 let _ragRawDetached          = false;
 let _splitIndexWhenRagBuilt  = null;  // _splitPairIdx at last chunk build; null = not built
 let _targetedGenId           = 0;     // stale-callback guard for targeted generate calls
+let _modalOpenHeadUuid       = null;  // lkg anchor uuid captured at modal open; concurrent-sync guard
 
 /**
  * @typedef {object} CnzAnchor
@@ -493,7 +355,6 @@ function initSettings() {
 
     // Ensure meta-state keys are always present at root.
     root.lastLorebookSyncAt ??= null;
-    root.ledgerPaths        ??= {};
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -507,21 +368,6 @@ function escapeHtml(str) {
 }
 
 
-/**
- * Computes a SHA-256 hash that chains a message's content, its index, and
- * the previous node's hash. Used by the Healer to detect timeline branches.
- * @param {object[]} messages    Full chat message array.
- * @param {number}   turnIndex   Index of the message to hash.
- * @param {string|null} prevHash Hash of the preceding Ledger node, or null.
- * @returns {Promise<string>}    Hex-encoded SHA-256 digest.
- */
-async function hashMilestone(messages, turnIndex, prevHash) {
-    const raw = messages[turnIndex]?.mes + String(turnIndex) + (prevHash ?? '');
-    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
-    return Array.from(new Uint8Array(buf))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-}
 
 /**
  * Returns the index in `messages` of the Nth non-system message (1-based),
@@ -539,16 +385,6 @@ function findMessageIndexAtCount(messages, nonSystemCount) {
     return -1;
 }
 
-function interpolate(template, vars) {
-    // Process {{#if key}}...{{/if}} blocks first
-    let result = template.replace(
-        /\{\{#if (\w+)\}\}([\s\S]*?)\{\{\/if\}\}/g,
-        (_, key, inner) => (vars[key] ? inner : ''),
-    );
-    // Then substitute {{variable}} tokens
-    result = result.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? '');
-    return result;
-}
 
 // ─── Scenario Anchor Management ───────────────────────────────────────────────
 
@@ -641,6 +477,132 @@ function readDnaChain(messages) {
 function getLkgAnchor(messages) {
     const chain = readDnaChain(messages);
     return chain.lkg ? { anchor: chain.lkg, msgIdx: chain.lkgMsgIdx } : null;
+}
+
+/**
+ * Builds the CnzAnchor payload for embedding in message.extra.cnz.
+ * Pure function — all inputs passed explicitly.
+ * @param {object} params
+ * @param {string}            params.uuid         - crypto.randomUUID() from the caller
+ * @param {string}            params.hooks        - hookseeker text committed this cycle
+ * @param {object}            params.lorebook     - full lorebook snapshot { name, entries }
+ * @param {string|null}       params.ragUrl       - uploaded RAG file URL, or null
+ * @param {RagHeaderEntry[]}  params.ragHeaders   - chunk headers committed this cycle
+ * @param {string|null}       params.parentUuid   - uuid of previous anchor, or null
+ * @returns {CnzAnchor}
+ */
+function buildAnchorPayload({ uuid, hooks, lorebook, ragUrl, ragHeaders, parentUuid }) {
+    return {
+        type:       'anchor',
+        uuid,
+        hooks,
+        lorebook:   structuredClone(lorebook),
+        ragUrl:     ragUrl ?? null,
+        ragHeaders: ragHeaders ?? [],
+        parentUuid: parentUuid ?? null,
+    };
+}
+
+/**
+ * Writes a CnzAnchor payload into the last AI message of the given pair,
+ * then saves the chat. The message becomes the Anchor for this sync cycle.
+ *
+ * If the pair has no AI message, logs a warning and returns without writing.
+ *
+ * @param {object} pair       - prose pair object (from buildProsePairs)
+ * @param {CnzAnchor} anchor  - payload from buildAnchorPayload
+ * @returns {Promise<void>}
+ */
+async function writeDnaAnchor(pair, anchor) {
+    const msg = findLastAiMessageInPair(pair);
+    if (!msg) {
+        console.warn('[CNZ] writeDnaAnchor: no AI message in pair — skipping');
+        return;
+    }
+    msg.extra ??= {};
+    msg.extra.cnz = anchor;
+    try {
+        await SillyTavern.getContext().saveChat();
+    } catch (err) {
+        console.error('[CNZ] writeDnaAnchor: saveChat failed:', err);
+    }
+}
+
+/**
+ * Writes a CnzLink back-pointer into the last AI message of each pair in
+ * the given range, then saves the chat once. Skips the anchor pair itself
+ * (it already carries the full CnzAnchor). Skips pairs with no AI message.
+ *
+ * @param {object[]} pairs      - all prose pairs in the sync block
+ * @param {number}   anchorIdx  - index of the anchor pair within `pairs`; that pair is skipped
+ * @param {string}   uuid       - the sync block's uuid (same as the anchor's uuid)
+ * @param {number}   pairOffset - absolute pair index of pairs[0] in the full chat
+ * @returns {Promise<void>}
+ */
+async function writeDnaLinks(pairs, anchorIdx, uuid, pairOffset) {
+    let wrote = false;
+    for (let i = 0; i < pairs.length; i++) {
+        if (i === anchorIdx) continue;
+        const msg = findLastAiMessageInPair(pairs[i]);
+        if (!msg) continue;
+        msg.extra ??= {};
+        msg.extra.cnz = {
+            type: 'link',
+            uuid,
+            seq: pairOffset + i,
+            anchorMsgIdx: -1, // REFACTOR-NOTE: anchorMsgIdx left as -1 — resolve in Session 3 if needed
+        };
+        wrote = true;
+    }
+    if (!wrote) return;
+    try {
+        await SillyTavern.getContext().saveChat();
+    } catch (err) {
+        console.error('[CNZ] writeDnaLinks: saveChat failed:', err);
+    }
+}
+
+/**
+ * Builds a nodeFile-shaped object from a CnzAnchor so the existing restore
+ * functions (restoreLorebookToNode, restoreHooksToNode, restoreRagToNode) can
+ * consume DNA-chain anchors without modification.
+ * Pure function — no state reads, no IO.
+ * @param {CnzAnchor} anchor
+ * @returns {{ state: { hooks: string, lorebook: object, ragFiles: string[] } }}
+ */
+function buildNodeFileFromAnchor(anchor) {
+    let ragFiles = [];
+    if (anchor.ragUrl) {
+        const fileName = anchor.ragUrl.split('/').pop();
+        if (fileName) ragFiles = [fileName];
+    }
+    return {
+        state: {
+            hooks:    anchor.hooks ?? '',
+            lorebook: anchor.lorebook ?? { entries: {} },
+            ragFiles,
+        },
+    };
+}
+
+/**
+ * Walks anchors newest-first and returns the first AnchorRef whose message
+ * still sits at its original index in the current chat with the same UUID.
+ * This is the branch-detection primitive — an anchor is valid if the chat
+ * has not been modified at or after that point.
+ * Pure function — no state reads, no IO.
+ * @param {{ anchor: CnzAnchor, msgIdx: number }[]} anchors  From _dnaChain.anchors (chronological).
+ * @param {object[]} messages  Current chat array.
+ * @returns {{ anchor: CnzAnchor, msgIdx: number }|null}
+ */
+function findLkgAnchorByPosition(anchors, messages) {
+    for (let i = anchors.length - 1; i >= 0; i--) {
+        const ref = anchors[i];
+        if (messages[ref.msgIdx]?.extra?.cnz?.uuid === ref.anchor.uuid) {
+            return ref;
+        }
+    }
+    return null;
 }
 
 // ─── Transcript ───────────────────────────────────────────────────────────────
@@ -1125,26 +1087,20 @@ async function waitForRagChunks(timeoutMs = 120_000) {
  * @param {Array}  targetPairs
  * @returns {Promise<string>}
  */
-async function runRagClassifierCall(summaryText, targetPairs) {
-    // PULL LIVE: Even if the caller passed a stale variable, check the UI one last time
-    const uiSummary = $('#cnz-situation-text').val()?.trim();
-    const finalSummary = uiSummary || summaryText || "The current scene continues.";
+function runRagClassifierCall(summaryText, targetPairs, historyText = '') {
+    const transcript = targetPairs
+        .map(p => {
+            const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
+            for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
+            return parts.join('\n\n');
+        })
+        .join('\n\n');
 
-    const promptTemplate = getSettings().ragClassifierPrompt || DEFAULT_RAG_CLASSIFIER_PROMPT;
-    
-    const formattedTurns = targetPairs.map(p => {
-        const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
-        for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
-        return parts.join('\n\n');
-    }).join('\n\n');
-
-    const prompt = interpolate(promptTemplate, {
-        summary:      finalSummary,
-        history:      "", 
-        target_turns: formattedTurns,
+    return _waitForRecipe('rag_classifier', {
+        transcript,
+        scenario_hooks: summaryText || _lastSummaryUsedForRag || '',
+        history:        historyText,
     });
-
-    return await generateWithRagProfile(prompt);
 }
 
 /**
@@ -1227,66 +1183,81 @@ function registerCharacterAttachment(avatarKey, url, fileName, byteSize) {
 
 // ─── LLM Calls ────────────────────────────────────────────────────────────────
 
-async function generateWithProfile(prompt, maxTokens = null) {
-    _cnzGenerating = true;
-    try {
-        const profileId = getSettings().profileId;
-        if (profileId) {
-            const result = await ConnectionManagerRequestService.sendRequest(profileId, prompt, maxTokens);
-            return result.content;
-        }
-        return generateRaw({ prompt, trimNames: false, responseLength: maxTokens });
-    } finally {
-        _cnzGenerating = false;
-    }
-}
+// REFACTOR-NOTE: removed — replaced by executor.js via bus
+// generateWithProfile
+// generateWithRagProfile
 
 /**
- * Like generateWithProfile but uses the RAG-specific connection profile.
- * Capped at ragMaxTokens to prevent runaway outputs.
+ * Dispatches a named recipe onto the bus and returns a Promise that resolves
+ * when the job completes or rejects when it fails. Bridges the bus back to
+ * the Promise-based call sites in runCnzSync and the modal.
+ *
+ * Sets _cnzGenerating = true for the duration so the CHAT_COMPLETION_PROMPT_READY
+ * handler skips the context mask during CNZ's own AI calls.
+ *
+ * @param {string} recipeId
+ * @param {Record<string,*>} extraInputs  Resolved inputs to pass alongside cycle store values.
+ * @returns {Promise<string>}
  */
-async function generateWithRagProfile(prompt) {
-    const ragMaxTokens = getSettings().ragMaxTokens ?? 100;
-    const ragProfileId = getSettings().ragProfileId;
-    if (ragProfileId) {
-        const result = await ConnectionManagerRequestService.sendRequest(ragProfileId, prompt, ragMaxTokens);
-        return result.content;
-    }
-    return generateWithProfile(prompt, ragMaxTokens);
+function _waitForRecipe(recipeId, extraInputs = {}) {
+    return new Promise((resolve, reject) => {
+        const settings = getSettings();
+        setCurrentSettings(settings);
+
+        _cnzGenerating = true;
+        const jobId = dispatchContract(recipeId, extraInputs, settings);
+
+        function onCompleted({ jobId: j, recipeId: r, result }) {
+            if (j !== jobId || r !== recipeId) return;
+            cleanup();
+            resolve(result);
+        }
+
+        function onFailed({ jobId: j, recipeId: r, error }) {
+            if (j !== jobId || r !== recipeId) return;
+            cleanup();
+            reject(new Error(error?.message ?? `Recipe ${recipeId} failed`));
+        }
+
+        function cleanup() {
+            off('JOB_COMPLETED', onCompleted);
+            off('JOB_FAILED',    onFailed);
+            _cnzGenerating = false;
+        }
+
+        on('JOB_COMPLETED', onCompleted);
+        on('JOB_FAILED',    onFailed);
+    });
 }
 
 /**
- * Fires the Lorebook Sync AI call.
+ * Fires the Lorebook Sync AI call via the bus.
  * @param {string}      transcript  Prose transcript to analyse.
  * @param {object|null} lorebook    Lorebook state to use as context. Defaults to `_lorebookData` if null.
  * @returns {Promise<string>}
  */
-async function runLorebookSyncCall(transcript, lorebook = null) {
-    const prompt = interpolate(getSettings().lorebookSyncPrompt || DEFAULT_LOREBOOK_SYNC_PROMPT, {
-        lorebook_entries: formatLorebookEntries(lorebook ?? _lorebookData),
+function runLorebookSyncCall(transcript, lorebook = null) {
+    return _waitForRecipe('lorebook', {
         transcript,
+        lorebook_entries: formatLorebookEntries(lorebook ?? _lorebookData),
     });
-    return generateWithProfile(prompt);
 }
 
 /**
- * Fires the Hookseeker AI call.
+ * Fires the Hookseeker AI call via the bus.
  * @param {string} transcript
+ * @param {string} prevSummary
  * @returns {Promise<string>}
  */
-async function runHookseekerCall(transcript, prevSummary = '') {
-    const s = getSettings();
-    let prompt = interpolate(s.hookseekerPrompt || DEFAULT_HOOKSEEKER_PROMPT, {
+function runHookseekerCall(transcript, prevSummary = '') {
+    return _waitForRecipe('hookseeker', {
         transcript,
         prev_summary: prevSummary,
     });
-    const trailing = (s.hookseekerTrailingPrompt ?? '').trim();
-    if (trailing) prompt = prompt + '\n\n' + trailing;
-    return generateWithProfile(prompt);
 }
 
 /**
- * Fires a targeted lorebook AI call for a single entry (update or new).
+ * Fires a targeted lorebook AI call for a single entry (update or new) via the bus.
  * @param {'update'|'new'} mode
  * @param {string} entryName     Entry name or freeform keyword.
  * @param {string} entryKeys     Comma-separated existing keys (empty string for new).
@@ -1294,18 +1265,14 @@ async function runHookseekerCall(transcript, prevSummary = '') {
  * @param {string} transcript    Sync-window transcript.
  * @returns {Promise<string>}    Raw AI output block.
  */
-async function runTargetedLbCall(mode, entryName, entryKeys, entryContent, transcript) {
-    const s = getSettings();
-    const template = mode === 'update'
-        ? (s.targetedUpdatePrompt || DEFAULT_TARGETED_UPDATE_PROMPT)
-        : (s.targetedNewPrompt    || DEFAULT_TARGETED_NEW_PROMPT);
-    const prompt = interpolate(template, {
+function runTargetedLbCall(mode, entryName, entryKeys, entryContent, transcript) {
+    const recipeId = mode === 'update' ? 'targeted_update' : 'targeted_new';
+    return _waitForRecipe(recipeId, {
         entry_name:    entryName,
         entry_keys:    entryKeys,
         entry_content: entryContent,
         transcript,
     });
-    return generateWithProfile(prompt);
 }
 
 /**
@@ -1832,312 +1799,22 @@ async function cnzDeleteFile(path) {
 }
 
 /**
- * Derives the fetch URL for a CNZ node file given the manifest's stored path.
- * All CNZ files share the same directory; only the filename differs.
- * @param {string} manifestPath  Path stored in ledgerPaths[avatarKey], e.g. "user_data/files/cnz_x_manifest.json"
- * @param {string} avatarKey     Raw avatar filename (will be sanitised internally).
- * @param {string} nodeId        UUID of the target node.
- * @returns {string}             Derived fetch URL for the node file.
- */
-function cnzNodeFilePath(manifestPath, avatarKey, nodeId) {
-    const lastSlash = manifestPath.lastIndexOf('/');
-    const baseDir   = lastSlash >= 0 ? manifestPath.slice(0, lastSlash + 1) : '';
-    return baseDir + cnzFileName(cnzAvatarKey(avatarKey), 'node', nodeId);
-}
-
-/**
- * @section Narrative Ledger Engine
- * @architectural-role Manifest and Node Lifecycle
- * @description
- * Owns the manifest and node file lifecycle. Fetches and bootstraps the
- * chain index on first use, commits updated manifests after each sync,
- * and fetches individual node files by hash for modal diff and Healer
- * restoration. The manifest is a small chain index with no state data;
- * node files are full world-state snapshots written once per sync.
- * @core-principles
- *   1. Node files are write-once — never mutated after the sync that created them.
- *   2. The manifest is the only mutable ledger artifact; it is patched in place by Finalize.
- * @api-declaration
- *   fetchOrBootstrapLedger, verifyFreshnessLock, buildLedgerNode,
- *   commitLedgerManifest, fetchLedgerNodeFile
- * @contract
- *   assertions:
- *     external_io: [/api/files/upload, /api/files/delete]
- */
-// ─── Narrative Ledger Engine ──────────────────────────────────────────────────
-
-/**
- * Returns the sanitized Data Bank filename for a given character avatar key.
- * @param {string} avatarKey  e.g. "seraphina.png"
- * @returns {string}          e.g. "cnz_ledger_seraphina.png.json"
- */
-function ledgerFileName(avatarKey) {
-    const safe = avatarKey.replace(/[^A-Za-z0-9_\-.]/g, '_');
-    return `cnz_ledger_${safe}.json`;
-}
-
-/**
- * Fetches the ledger manifest for `avatarKey` or bootstraps a fresh empty one.
- * Detects and purges the old monolithic format (nodes with snapshot.lorebookDelta).
- * Sets `_ledgerManifest` and `_sessionStartId`.
- * @param {string} avatarKey  Raw avatar filename (e.g. "seraphina.png").
- */
-async function fetchOrBootstrapLedger(avatarKey) {
-    const storedPath = (getMetaSettings().ledgerPaths ?? {})[avatarKey];
-    if (storedPath) {
-        try {
-            const res = await fetch(storedPath);
-            if (res.ok) {
-                const manifest = await res.json();
-
-                // ── Old-format detection: nodes embedded snapshot.lorebookDelta ──
-                // Delta data cannot be promoted to full snapshots without the
-                // baseline lorebook at each historical commit — purge and restart.
-                const isOldFormat = manifest.nodes &&
-                    Object.values(manifest.nodes).some(n => n.snapshot?.lorebookDelta !== undefined);
-                if (isOldFormat) {
-                    console.warn('[CNZ] Old ledger format detected (lorebookDelta) — purging and restarting.');
-                    await cnzDeleteFile(storedPath);
-                    delete getMetaSettings().ledgerPaths[avatarKey];
-                    saveSettingsDebounced();
-                    // fall through to bootstrap below
-                } else {
-                    _ledgerManifest = manifest;
-                    _sessionStartId = manifest.headNodeId;
-                    return;
-                }
-            }
-        } catch (_) { /* fall through to bootstrap */ }
-    }
-    _ledgerManifest = {
-        storyId:   crypto.randomUUID(),
-        headNodeId: null,
-        avatarKey:  cnzAvatarKey(avatarKey),
-        charName:   '',
-        nodes:      {},
-    };
-    _sessionStartId = null;
-}
-
-/**
- * Re-fetches the ledger and compares its `headNodeId` against `_sessionStartId`.
- * Returns null on success, or a human-readable error string on failure.
- * @param {string} avatarKey
- * @returns {Promise<null|string>}
- */
-async function verifyFreshnessLock(avatarKey) {
-    const storedPath = (getMetaSettings().ledgerPaths ?? {})[avatarKey];
-    if (!storedPath) {
-        return _sessionStartId === null
-            ? null
-            : 'Ledger path is missing but a session ID exists — state is inconsistent. Try reloading the page.';
-    }
-    try {
-        const res = await fetch(storedPath);
-        if (!res.ok) return `Ledger manifest file not found (HTTP ${res.status}). The Data Bank file may have been deleted. Try Settings → Canonize → Reset Ledger.`;
-        const freshManifest = await res.json();
-        if (freshManifest.headNodeId !== _sessionStartId) return 'A sync committed while this modal was open. Close and re-open to retry.';
-        _ledgerManifest = freshManifest;
-        // Also capture the head node's editToken so step 4 can detect
-        // concurrent in-place writes that don't change headNodeId.
-        if (freshManifest.headNodeId) {
-            const headNode = await fetchLedgerNodeFile(avatarKey, freshManifest.headNodeId);
-            if (!headNode) return 'Head ledger node file not found. The Data Bank may be incomplete. Try Settings → Canonize → Reset Ledger.';
-            _sessionHeadEditToken = headNode.editToken ?? null;
-        } else {
-            _sessionHeadEditToken = null;
-        }
-        return null;
-    } catch (err) {
-        return `Could not read the ledger manifest: ${err.message}`;
-    }
-}
-
-/**
- * Constructs a new LedgerNode with the full world-state snapshot for this sync.
- * The node is written to its own file by commitLedgerManifest; it is NOT embedded
- * in the manifest. node.state.ragFiles is initialised to [] and must be set by
- * the caller (runCnzSync) after the RAG file is uploaded.
- * @param {string|null} parentNodeId
- * @param {number}      sequenceNum   trailingBufferBoundary at commit time.
- * @param {object}      _unused       Reserved for backward compat (ignored).
- * @param {string|null} milestoneHash SHA-256 chain hash, or null.
- * @returns {object}
- */
-function buildLedgerNode(parentNodeId, sequenceNum, _unused, milestoneHash = null) {
-    const ctx  = SillyTavern.getContext();
-    const char = ctx.characters[ctx.characterId];
-    return {
-        nodeId:        crypto.randomUUID(),
-        editToken:     crypto.randomUUID(),
-        parentId:      parentNodeId,
-        sequenceNum,
-        milestoneHash: milestoneHash,
-        committedAt:   new Date().toISOString(),
-        charName:      char.name,
-        chatFile:      char.chat ?? '',
-        state: {
-            hooks:    _priorSituation,
-            lorebook: Object.assign(
-                { name: _lorebookName },
-                structuredClone(_draftLorebook ?? { entries: {} })
-            ),
-            ragFiles: [],   // populated by runCnzSync after RAG upload
-        },
-    };
-}
-
-/**
- * Uploads the current `_ledgerManifest` as JSON (upload-first, then deletes old).
- * When `node` is provided, also uploads the node as a separate file and adds
- * its chain summary (nodeId, parentId, sequenceNum, milestoneHash) to the
- * manifest before uploading. The caller must NOT pre-insert the node into
- * `_ledgerManifest.nodes` when passing `node` here.
- *
- * Pass `node = null` for manifest-only re-uploads (e.g. Healer rollback).
- *
- * @param {string}      avatarKey  Raw avatar filename (e.g. "seraphina.png").
- * @param {object|null} node       Full node object from buildLedgerNode, or null.
- */
-async function commitLedgerManifest(avatarKey, node = null) {
-    const safeKey = cnzAvatarKey(avatarKey);
-
-    if (node) {
-        // 1. Upload the node file (full state snapshot).
-        const nodeFileName = cnzFileName(safeKey, 'node', node.nodeId);
-        await cnzUploadFile(nodeFileName, node);
-
-        // 2. Add only the chain summary to the manifest (no state data).
-        if (!_ledgerManifest.nodes) _ledgerManifest.nodes = {};
-        _ledgerManifest.nodes[node.nodeId] = {
-            nodeId:        node.nodeId,
-            parentId:      node.parentId,
-            sequenceNum:   node.sequenceNum,
-            milestoneHash: node.milestoneHash,
-        };
-        _ledgerManifest.headNodeId = node.nodeId;
-        _ledgerManifest.charName   = node.charName;
-    }
-
-    // 3. Upload the updated manifest first — old file still exists if this throws.
-    const manifestFileName = cnzFileName(safeKey, 'manifest');
-    const newPath = await cnzUploadFile(manifestFileName, _ledgerManifest);
-
-    // 4. Persist the new path before deleting old, so a crash here leaves two
-    //    copies rather than zero.
-    if (!getMetaSettings().ledgerPaths) getMetaSettings().ledgerPaths = {};
-    const oldPath = (getMetaSettings().ledgerPaths ?? {})[avatarKey];
-    getMetaSettings().ledgerPaths[avatarKey] = newPath;
-    saveSettingsDebounced();
-
-    // 5. Delete the old manifest (best-effort — safe to lose now that new is live).
-    await cnzDeleteFile(oldPath);
-}
-
-/**
- * Prunes node files older than the `ledgerMaxNodes` limit.
- * Walks the chain from HEAD, keeps the newest N nodes, deletes the rest from the
- * Data Bank, removes them from the in-memory manifest, and re-uploads the manifest.
- * The oldest surviving node becomes the new chain root (parentId set to null).
- * No-op when ledgerMaxNodes is 0 or the chain is already within the limit.
- * @param {string} avatarKey  Raw avatar filename (e.g. "seraphina.png").
- * @returns {Promise<number>} Number of nodes pruned.
- */
-async function pruneOldLedgerNodes(avatarKey) {
-    const maxNodes = getSettings().ledgerMaxNodes ?? 0;
-    if (maxNodes <= 0 || !_ledgerManifest?.nodes) return 0;
-
-    const chain = buildNodeChain(_ledgerManifest);
-    if (chain.length <= maxNodes) return 0;
-
-    const toPrune = chain.slice(0, chain.length - maxNodes);
-    const toKeep  = chain.slice(chain.length - maxNodes);
-
-    const manifestPath = getMetaSettings().ledgerPaths?.[avatarKey];
-    if (!manifestPath) return 0;
-    const lastSlash = manifestPath.lastIndexOf('/');
-    const baseDir   = lastSlash >= 0 ? manifestPath.slice(0, lastSlash + 1) : '';
-    const safeKey   = cnzAvatarKey(avatarKey);
-
-    for (const node of toPrune) {
-        const nodePath = baseDir + cnzFileName(safeKey, 'node', node.nodeId);
-        await cnzDeleteFile(nodePath);
-        delete _ledgerManifest.nodes[node.nodeId];
-    }
-
-    // Sever the chain at the new root so buildNodeChain stays consistent.
-    const newRootId = toKeep[0]?.nodeId;
-    if (newRootId && _ledgerManifest.nodes[newRootId]) {
-        _ledgerManifest.nodes[newRootId] = Object.assign(
-            {}, _ledgerManifest.nodes[newRootId], { parentId: null },
-        );
-    }
-
-    await commitLedgerManifest(avatarKey, null);
-    console.log(`[CNZ] GC: pruned ${toPrune.length} node(s) (limit ${maxNodes}), ${toKeep.length} retained.`);
-    return toPrune.length;
-}
-
-/**
- * Fetches the full node file for a given nodeId from the ST Data Bank.
- * Derives the file path from the stored manifest path + naming convention.
- * Returns null if the file cannot be fetched (missing, network error, etc.).
- * @param {string} avatarKey  Raw avatar filename (e.g. "seraphina.png").
- * @param {string} nodeId     UUID of the node to fetch.
- * @returns {Promise<object|null>}
- */
-async function fetchLedgerNodeFile(avatarKey, nodeId) {
-    const manifestPath = getMetaSettings().ledgerPaths?.[avatarKey];
-    if (!manifestPath || !nodeId) return null;
-    const nodePath = cnzNodeFilePath(manifestPath, avatarKey, nodeId);
-    try {
-        const res = await fetch(nodePath);
-        if (!res.ok) return null;
-        return await res.json();
-    } catch (_) {
-        return null;
-    }
-}
-
-/**
  * @section Healer
  * @architectural-role Branch Detection and State Restoration
  * @description
- * Owns branch detection and state restoration. Walks the ledger hash chain
- * against the current chat to find the divergence point, then restores
- * lorebook and hooks from the last valid node and rolls the ledger head
- * back to that node. Runs automatically during onChatChanged when a
- * mismatch is detected.
+ * Owns branch detection and state restoration. Walks the DNA chain embedded
+ * in the chat to find the deepest still-valid anchor, then restores
+ * lorebook and hooks from that anchor's payload.
  * @core-principles
- *   1. Healer never writes a new ledger node — it only rolls the head back.
- *   2. Restoration targets are always fetched from ledger node files, never from memory.
+ *   1. Healer never writes a new anchor — it only reads existing ones.
+ *   2. Restoration reads from the anchor payload; no network fetches needed.
  * @api-declaration
- *   runHealer, buildNodeChain, restoreLorebookToNode, restoreHooksToNode
+ *   runHealer, restoreLorebookToNode, restoreHooksToNode, restoreRagToNode
  * @contract
  *   assertions:
- *     external_io: [/api/worldinfo/*, /api/characters/edit, /api/files/upload, /api/files/delete]
+ *     external_io: [/api/worldinfo/*, /api/characters/edit, /api/files/delete, /api/chats/saveChat]
  */
 // ─── Healer Utilities ─────────────────────────────────────────────────────────
-
-/**
- * Walks the Ledger manifest's parentId chain from head to root and returns
- * an ordered array of node objects (index 0 = root, last = head).
- * @param {object} manifest  _ledgerManifest
- * @returns {object[]}
- */
-function buildNodeChain(manifest) {
-    const headId = manifest.headNodeId;
-    if (!headId || !manifest.nodes[headId]) return [];
-    const chain = [];
-    let nodeId = headId;
-    while (nodeId) {
-        const node = manifest.nodes[nodeId];
-        if (!node) break;
-        chain.unshift(node);
-        nodeId = node.parentId;
-    }
-    return chain;
-}
 
 /**
  * Restores the lorebook to the full snapshot stored in `node.state.lorebook`.
@@ -2146,7 +1823,7 @@ function buildNodeChain(manifest) {
  * @param {object} node  Chain summary entry from the ledger manifest.
  */
 async function restoreLorebookToNode(char, node, nodeFile = null) {
-    const nodeFile_ = nodeFile ?? await fetchLedgerNodeFile(char.avatar, node.nodeId);
+    const nodeFile_ = nodeFile;
     if (!nodeFile_?.state?.lorebook) throw new Error(`[CNZ] No lorebook state in node ${node.nodeId}`);
     const lbData = nodeFile_.state.lorebook;
     const lbName = lbData.name || _lorebookName;
@@ -2163,7 +1840,7 @@ async function restoreLorebookToNode(char, node, nodeFile = null) {
  * @param {object} node  Chain summary entry from the ledger manifest.
  */
 async function restoreHooksToNode(char, node, nodeFile = null) {
-    const nodeFile_ = nodeFile ?? await fetchLedgerNodeFile(char.avatar, node.nodeId);
+    const nodeFile_ = nodeFile;
     const hooksText = nodeFile_?.state?.hooks ?? '';
     const freshCtx  = SillyTavern.getContext();
     const freshChar = freshCtx.characters.find(c => c.avatar === char.avatar);
@@ -2356,8 +2033,9 @@ function getRagModeLabel() {
  *
  * @returns {boolean}
  */
+// REFACTOR-NOTE: ledger removed — this function always returns false; replace with DNA-based reconstruction
 function reconstructStagedPairsFromLedger() {
-    if (!_ledgerManifest?.headNodeId) return false;
+    return false;
 
     const headChainEntry   = _ledgerManifest.nodes[_ledgerManifest.headNodeId];
     const parentChainEntry = headChainEntry?.parentId
@@ -2644,28 +2322,11 @@ async function onLbRegenClick() {
     setLbLoading(true);
     $('#cnz-lb-error').addClass('cnz-hidden').text('');
 
-    // preSyncLorebook = parent node's lorebook (the baseline the AI ran against).
-    // Fetch from ledger — stable across modal opens, no ephemeral delta needed.
-    let preSyncLorebook = null;
-    try {
-        const ctx              = SillyTavern.getContext();
-        const char             = ctx?.characters?.[ctx?.characterId];
-        const headChainEntry   = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
-        if (headChainEntry && char) {
-            const headNodeFile = await fetchLedgerNodeFile(char.avatar, headChainEntry.nodeId);
-            const parentId     = headNodeFile?.parentId ?? null;
-            if (parentId) {
-                const parentNodeFile = await fetchLedgerNodeFile(char.avatar, parentId);
-                preSyncLorebook      = parentNodeFile?.state?.lorebook ?? null;
-            }
-        }
-    } catch (err) {
-        console.warn('[CNZ] onLbRegenClick: could not fetch parent node for baseline:', err);
-        showLbError('Lorebook baseline fetch failed — regenerating against cached pre-sync state. Results may be inaccurate.');
-    }
-    // Prefer _parentNodeLorebook (set by openReviewModal from the same ledger chain) over
-    // _lorebookData, which already reflects the post-sync head and is the wrong baseline.
-    preSyncLorebook ??= _parentNodeLorebook ? structuredClone(_parentNodeLorebook) : structuredClone(_lorebookData ?? { entries: {} });
+    // preSyncLorebook = parent anchor's lorebook — set by openReviewModal from DNA chain.
+    // Falls back to _lorebookData if no parent anchor exists (first sync).
+    const preSyncLorebook = _parentNodeLorebook
+        ? structuredClone(_parentNodeLorebook)
+        : structuredClone(_lorebookData ?? { entries: {} });
 
     const lbId       = ++_lorebookGenId;
     const horizon    = getSettings().chunkEveryN ?? 20;
@@ -3288,10 +2949,10 @@ async function onConfirmClick() {
     $('#cnz-error-4').addClass('cnz-hidden').text('');
     showReceiptsPanel();
 
-    // Freshness lock — abort if another sync committed since modal opened
-    const freshnessError = await verifyFreshnessLock(char.avatar);
-    if (freshnessError) {
-        abortCommitWithError(freshnessError);
+    // Freshness check — abort if a sync committed while this modal was open
+    const liveChainNow = readDnaChain(SillyTavern.getContext().chat ?? []);
+    if ((liveChainNow.lkg?.uuid ?? null) !== _modalOpenHeadUuid) {
+        abortCommitWithError('A sync committed while this modal was open. Close and re-open to retry.');
         return;
     }
 
@@ -3384,30 +3045,41 @@ async function onConfirmClick() {
         }
     }
 
-    // ── Step 4: Update head node file in place (no new ledger node) ──────────
+    // ── Step 4: Patch DNA anchor in chat ─────────────────────────────────────
     if (hooksChanged || lorebookChanged || ragChanged) {
         try {
-            const headChainEntry = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
-            if (headChainEntry) {
-                const headNodeFile = await fetchLedgerNodeFile(char.avatar, headChainEntry.nodeId);
-                if (headNodeFile) {
-                    if ((headNodeFile.editToken ?? null) !== _sessionHeadEditToken) {
-                        abortCommitWithError('Ledger node was modified by another session. Close and re-open to retry.');
-                        return;
+            const liveChain = readDnaChain(SillyTavern.getContext().chat ?? []);
+            const lkgRef    = liveChain.lkg ? { anchor: liveChain.lkg, msgIdx: liveChain.lkgMsgIdx } : null;
+            if (!lkgRef) {
+                console.warn('[CNZ] onConfirmClick: no lkg anchor to patch — skipping DNA update');
+            } else {
+                const chatMsgs  = SillyTavern.getContext().chat ?? [];
+                const anchorMsg = chatMsgs[lkgRef.msgIdx];
+                if (!anchorMsg) {
+                    console.warn('[CNZ] onConfirmClick: anchor message not found at index', lkgRef.msgIdx);
+                } else {
+                    const existing      = lkgRef.anchor;
+                    const ragHeadersNew = _ragChunks
+                        .filter(c => c.status === 'complete' || c.status === 'manual')
+                        .map(c => ({ chunkIndex: c.chunkIndex, header: c.header, turnRange: c.turnRange }));
+                    anchorMsg.extra.cnz = Object.assign({}, existing, {
+                        hooks:      hooksChanged    ? _priorSituation                                                          : existing.hooks,
+                        lorebook:   lorebookChanged ? Object.assign({ name: _lorebookName }, structuredClone(_draftLorebook)) : existing.lorebook,
+                        ragUrl:     ragChanged      ? newRagUrl     : existing.ragUrl,
+                        ragHeaders: ragChanged      ? ragHeadersNew : existing.ragHeaders,
+                    });
+                    try {
+                        await SillyTavern.getContext().saveChat();
+                        upsertReceiptItem('cnz-receipt-ledger', receiptSuccess('DNA anchor updated'));
+                    } catch (saveErr) {
+                        console.error('[CNZ] onConfirmClick: saveChat failed:', saveErr);
+                        upsertReceiptItem('cnz-receipt-ledger', receiptFailure(`DNA anchor save failed: ${saveErr.message} (content saved)`));
                     }
-                    if (hooksChanged)    headNodeFile.state.hooks    = _priorSituation;
-                    if (lorebookChanged) headNodeFile.state.lorebook = Object.assign({ name: _lorebookName }, structuredClone(_draftLorebook));
-                    if (ragChanged)      headNodeFile.state.ragFiles  = [...(headNodeFile.state.ragFiles ?? []), newRagFileName];
-                    headNodeFile.editToken = crypto.randomUUID();
-                    const safeKey      = cnzAvatarKey(char.avatar);
-                    const nodeFileName = cnzFileName(safeKey, 'node', headNodeFile.nodeId);
-                    await cnzUploadFile(nodeFileName, headNodeFile);
-                    upsertReceiptItem('cnz-receipt-ledger', receiptSuccess('Narrative Ledger updated'));
                 }
             }
         } catch (err) {
-            console.error('[CNZ] Ledger node update failed:', err);
-            upsertReceiptItem('cnz-receipt-ledger', receiptFailure(`Ledger update failed: ${err.message} (content saved)`));
+            console.error('[CNZ] DNA anchor update failed:', err);
+            upsertReceiptItem('cnz-receipt-ledger', receiptFailure(`DNA anchor update failed: ${err.message} (content saved)`));
             // Non-fatal
         }
     }
@@ -3624,6 +3296,7 @@ function onTargetedGenerateClick() {
 
 function closeModal() {
     $('#cnz-overlay').addClass('cnz-hidden');
+    invalidateAllJobs();   // invalidates all in-flight bus jobs on modal close
     // Kill all in-flight AI callbacks
     _hooksGenId++;
     _lorebookGenId++;
@@ -3639,6 +3312,7 @@ function closeModal() {
     _ragInFlightCount           = 0;
     _ragCallQueue               = [];
     _currentStep                = 1;
+    _modalOpenHeadUuid          = null;
 }
 
 // ─── Ledger Inspector ─────────────────────────────────────────────────────────
@@ -3748,6 +3422,7 @@ function openOrphanModal(orphans) {
  * Populates the header and renders a collapsed row per node (HEAD first).
  * Node bodies are loaded lazily on first expand.
  */
+// REFACTOR-NOTE: ledger inspector is now inoperative — replace with DNA chain inspector in a future session
 function openLedgerInspector() {
     const ctx  = SillyTavern.getContext();
     const char = ctx?.characters?.[ctx?.characterId];
@@ -3758,10 +3433,11 @@ function openLedgerInspector() {
 
     $body.empty();
 
-    if (!char || !_ledgerManifest?.nodes || !_ledgerManifest.headNodeId) {
+    // REFACTOR-NOTE: ledger inspector is inoperative — always shows empty state
+    {
         const charName = char?.name ?? 'Unknown';
         $title.text(`Ledger Inspector — ${charName}`);
-        $body.append(`<div class="cnz-li-empty">No ledger found for this character.</div>`);
+        $body.append(`<div class="cnz-li-empty">Ledger inspector is no longer available. DNA chain inspector coming in a future session.</div>`);
         $overlay.removeClass('cnz-hidden');
         return;
     }
@@ -3880,14 +3556,13 @@ function formatBytes(n) {
 }
 
 /**
- * Fetches all CNZ files for every character with a ledger path and reports
- * their approximate sizes (measured from JSON/text content length).
- * Covers: manifest, node files, RAG .txt files (from head node's state.ragFiles).
+ * REFACTOR-NOTE: ledgerPaths removed — ledger section of this report is gone.
+ * Replace with DNA-chain-aware storage report in a future session.
  */
 async function cnzStorageReport() {
-    const meta         = getMetaSettings();
-    const ledgerPaths  = meta.ledgerPaths ?? {};
-    const entries      = Object.entries(ledgerPaths);
+    // Ledger file enumeration removed with ledger infrastructure.
+    // Only server memory report survives.
+    const entries = []; // REFACTOR-NOTE: ledgerPaths removed
 
     if (entries.length === 0) {
         await callPopup('<p>No CNZ ledger files found. Run at least one sync to create ledger data.</p>', 'text');
@@ -3902,20 +3577,16 @@ async function cnzStorageReport() {
     for (const [avatarKey, manifestPath] of entries) {
         // ── Fetch manifest ────────────────────────────────────────────────────
         let manifest;
-        if (avatarKey === SillyTavern.getContext()?.characters?.[SillyTavern.getContext()?.characterId]?.avatar && _ledgerManifest) {
-            manifest = _ledgerManifest;
-        } else {
-            try {
-                const res = await fetch(manifestPath);
-                if (!res.ok) {
-                    rows.push({ name: avatarKey, error: `manifest fetch failed (HTTP ${res.status})` });
-                    continue;
-                }
-                manifest = await res.json();
-            } catch (err) {
-                rows.push({ name: avatarKey, error: err.message });
+        try {
+            const res = await fetch(manifestPath);
+            if (!res.ok) {
+                rows.push({ name: avatarKey, error: `manifest fetch failed (HTTP ${res.status})` });
                 continue;
             }
+            manifest = await res.json();
+        } catch (err) {
+            rows.push({ name: avatarKey, error: err.message });
+            continue;
         }
 
         const manifestBytes = JSON.stringify(manifest).length;
@@ -4154,65 +3825,36 @@ async function openReviewModal() {
         }
     }
 
-    // Ensure ledger is bootstrapped
-    if (!_ledgerManifest) {
-        await fetchOrBootstrapLedger(char.avatar).catch(err =>
-            console.error('[CNZ] openReviewModal: ledger bootstrap failed:', err),
-        );
-    }
-
-    checkRagGaps();
-
-    // Derive before/after states from ledger and current character.
     // Re-fetch character to pick up any scenario patch written during a
     // background sync that may not yet be reflected in the original char ref.
     const freshChar = SillyTavern.getContext().characters.find(c => c.avatar === char.avatar);
     _priorSituation = extractHookseekerBlock((freshChar ?? char).scenario ?? '') ?? '';
 
-    // Derive before/after states from ledger nodes — stable across any number of modal opens.
-    // head node  = post-sync state (what's on disk now)
-    // parent node = pre-sync state (manual-edit-inclusive baseline the AI ran against)
-    const headChainEntry = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
-    _beforeSituation = '';
-    let preSyncLorebookForDiff = null;   // parent node's lorebook — diff baseline
+    // Derive before/after states from DNA chain — no network fetches needed.
+    _dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
+    setDnaChain(_dnaChain);
+    const headRef   = _dnaChain.lkg ? { anchor: _dnaChain.lkg, msgIdx: _dnaChain.lkgMsgIdx } : null;
+    const parentRef = headRef ? (_dnaChain.anchors[_dnaChain.anchors.length - 2] ?? null) : null;
 
-    if (headChainEntry) {
-        try {
-            const headNodeFile = await fetchLedgerNodeFile(char.avatar, headChainEntry.nodeId);
-            const parentId     = headNodeFile?.parentId ?? null;
-
-            // hooks: parent node's state.hooks is what existed before this sync
-            if (parentId) {
-                const parentNodeFile   = await fetchLedgerNodeFile(char.avatar, parentId);
-                _beforeSituation       = parentNodeFile?.state?.hooks    ?? '';
-                preSyncLorebookForDiff = parentNodeFile?.state?.lorebook ?? null;
-                _parentNodeLorebook    = preSyncLorebookForDiff;
-            }
-
-            // head node lorebook = current committed state; use as _draftLorebook baseline
-            if (headNodeFile?.state?.lorebook) {
-                _lorebookData  = structuredClone(headNodeFile.state.lorebook);
-                _draftLorebook = structuredClone(headNodeFile.state.lorebook);
-                _lorebookName  = headNodeFile.state.lorebook.name || _lorebookName;
-            }
-
-            // Seed RAG summary from ledger head if not already set by current session
-            if (!_lastSummaryUsedForRag && headNodeFile?.state?.hooks) {
-                _lastSummaryUsedForRag = headNodeFile.state.hooks;
-            }
-        } catch (err) {
-            console.warn('[CNZ] openReviewModal: could not fetch ledger nodes:', err);
+    if (headRef) {
+        _lorebookData  = structuredClone(headRef.anchor.lorebook ?? { entries: {} });
+        _draftLorebook = structuredClone(_lorebookData);
+        _lorebookName  = headRef.anchor.lorebook?.name || _lorebookName;
+        if (!_lastSummaryUsedForRag && headRef.anchor.hooks) {
+            _lastSummaryUsedForRag = headRef.anchor.hooks;
         }
     }
 
-    // Derive _lorebookSuggestions from the node diff — no ephemeral sync-cycle data needed.
-    // This is stable: head lorebook vs parent lorebook, derived fresh on every modal open.
-    // Only diff when a head node exists — without one, no sync has run and every pre-existing
-    // lorebook entry would be incorrectly surfaced as a NEW suggestion.
-    const ledgerSuggestions = headChainEntry
-        ? deriveSuggestionsFromLedgerDiff(preSyncLorebookForDiff, _draftLorebook)
-        : [];
-    _lorebookSuggestions = ledgerSuggestions;
+    if (parentRef) {
+        _beforeSituation    = parentRef.anchor.hooks ?? '';
+        _parentNodeLorebook = parentRef.anchor.lorebook ?? null;
+    } else {
+        _beforeSituation    = '';
+        _parentNodeLorebook = null;
+    }
+
+    _lorebookSuggestions = headRef ? deriveSuggestionsFromLedgerDiff(_parentNodeLorebook, _draftLorebook) : [];
+    _modalOpenHeadUuid   = headRef?.anchor?.uuid ?? null;
 
     initWizardSession(true);
 
@@ -4275,49 +3917,144 @@ function logSyncEnd(lbOk, hooksOk, ragOk, ledgerOk, ragFileName, ragChunks, lore
     );
 }
 
-function checkRagGaps() {
-    if (!_ledgerManifest?.headNodeId) return;
-    const ctx      = SillyTavern.getContext();
-    const messages = ctx?.chat ?? [];
-    if (!messages.length) return;
-
-    const headChainEntry = _ledgerManifest.nodes[_ledgerManifest.headNodeId];
-    const parentEntry    = headChainEntry?.parentId
-        ? _ledgerManifest.nodes[headChainEntry.parentId]
-        : null;
-
-    const windowStart = parentEntry?.sequenceNum ?? 0;
-    const windowEnd   = headChainEntry?.sequenceNum ?? 0;
-    if (windowEnd <= windowStart) return;
-
-    const settings    = getSettings();
-    const chunkSize   = Math.max(1, settings.ragChunkSize ?? 2);
-    const allPairs    = buildProsePairs(messages);
-    const windowPairs = allPairs.filter(p => p.validIdx >= windowStart && p.validIdx < windowEnd);
-
-    if (!windowPairs.length) return;
-
-    // Expected chunk boundaries: last pair of each chunk window
-    const gaps = [];
-    for (let i = chunkSize - 1; i < windowPairs.length; i += chunkSize) {
-        const pair    = windowPairs[i];
-        const lastMsg = pair.messages?.[pair.messages.length - 1];
-        if (!lastMsg) continue;
-        if (!lastMsg.extra?.cnz_chunk_header) {
-            const turnNum = pair.validIdx + 1;
-            gaps.push(turnNum);
-        }
-    }
-
-    if (gaps.length === 0) {
-        console.log(`[CNZ] RAG gap check: all ${Math.floor(windowPairs.length / chunkSize)} chunk(s) have stored headers`);
-    } else {
-        console.warn(`[CNZ] RAG gap check: ${gaps.length} chunk(s) missing stored headers at turns ${gaps.join(', ')}`);
-        toastr.warning(`CNZ: ${gaps.length} RAG chunk(s) missing classification headers — open RAG workshop to reclassify`);
-    }
-}
 
 // ─── CNZ Core ────────────────────────────────────────────────────────────────
+
+/**
+ * Parses raw lorebook AI output and applies all suggestions to _draftLorebook,
+ * then saves to disk. Silent — no modal interaction.
+ * @param {string} rawText  Raw AI output from runLorebookSyncCall.
+ * @returns {Promise<void>}
+ */
+async function processLorebookUpdate(rawText) {
+    if (!rawText.trim() || rawText.trim() === 'NO CHANGES NEEDED') return;
+    const suggestions = parseLbSuggestions(rawText);
+    _lorebookSuggestions = enrichLbSuggestions(suggestions);
+    for (const s of _lorebookSuggestions) {
+        if (s.linkedUid !== null) {
+            const entry = _draftLorebook?.entries?.[String(s.linkedUid)];
+            if (entry) {
+                if (s.comment  !== undefined) entry.comment = s.comment;
+                if (s.keys     !== undefined) entry.key     = s.keys;
+                if (s.content  !== undefined) entry.content = s.content;
+            }
+        } else {
+            const uid = nextLorebookUid();
+            _draftLorebook.entries[String(uid)] = makeLbDraftEntry(uid, s.name, s.keys, s.content);
+            s.linkedUid = uid;
+        }
+        s._applied = false;
+    }
+    await lbSaveLorebook(_lorebookName, _draftLorebook);
+    _lorebookData = structuredClone(_draftLorebook);
+}
+
+/**
+ * Writes new hookseeker text into the character scenario anchor block.
+ * @param {string} hooksText  Raw hookseeker output.
+ * @returns {Promise<void>}
+ */
+async function processHooksUpdate(hooksText) {
+    const ctx  = SillyTavern.getContext();
+    const char = ctx.characters[ctx.characterId];
+    if (!char) throw new Error('No character selected');
+    const newScenario = writeHookseekerBlock(char.scenario ?? '', hooksText.trim());
+    await patchCharacterScenario(char, newScenario);
+}
+
+/**
+ * Builds RAG chunks for the current sync window, classifies them, uploads the
+ * RAG document, and registers it as a character attachment.
+ * @param {string} transcript  Sync-window transcript (used only for logging context).
+ * @returns {Promise<void>}
+ */
+async function runRagPipeline(transcript) {
+    const ctx  = SillyTavern.getContext();
+    const char = ctx.characters[ctx.characterId];
+    if (!char) throw new Error('No character selected');
+
+    const messages = ctx.chat ?? [];
+    const allPairs = buildProsePairs(messages);
+
+    const lcb      = getSettings().liveContextBuffer ?? 5;
+    const totalNS  = messages.filter(m => !m.is_system).length;
+    const tbb      = Math.max(0, totalNS - lcb);
+
+    _stagedProsePairs = allPairs.filter(p => p.validIdx < tbb);
+    if (_stagedProsePairs.length === 0 && allPairs.length > 0) {
+        _stagedProsePairs = [allPairs[allPairs.length - 1]];
+    }
+
+    const firstValidIdx  = _stagedProsePairs[0]?.validIdx ?? 0;
+    const foundIdx       = allPairs.findIndex(p => p.validIdx >= firstValidIdx);
+    _stagedPairOffset    = foundIdx === -1 ? 0 : foundIdx;
+
+    _splitPairIdx           = _stagedProsePairs.length;
+    _ragGlobalGenId++;
+    _ragChunks              = buildRagChunks(_stagedProsePairs, _stagedPairOffset);
+    _splitIndexWhenRagBuilt = _splitPairIdx;
+
+    hydrateChunkHeadersFromChat();
+    _lastSummaryUsedForRag = _priorSituation || '';
+
+    _ragCallQueue = _ragChunks
+        .map((c, i) => (c.status === 'pending' ? i : -1))
+        .filter(i => i !== -1);
+
+    ragDrainQueue();
+    await waitForRagChunks(120_000);
+
+    const ragText = buildRagDocument(_ragChunks);
+    if (!ragText.trim()) return;
+
+    const charName   = char.name;
+    const ragFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), charName);
+    _lastRagUrl      = await uploadRagFile(ragText, ragFileName);
+
+    const byteSize = new TextEncoder().encode(ragText).length;
+    registerCharacterAttachment(char.avatar, _lastRagUrl, ragFileName, byteSize);
+}
+
+/**
+ * Commits the current sync cycle to the DNA chain by writing a CnzAnchor
+ * onto the last pair of the sync window.
+ * @param {object}   char      Character object from ST context.
+ * @param {object[]} messages  Full chat message array.
+ * @returns {Promise<void>}
+ */
+async function commitLedgerNode(char, messages) {
+    if (_stagedProsePairs.length === 0) {
+        console.warn('[CNZ] commitLedgerNode: no staged pairs — skipping anchor write');
+        return;
+    }
+
+    const allPairs     = buildProsePairs(messages);
+    const anchorPairIdx = _stagedProsePairs.length - 1;
+    const anchorPair   = _stagedProsePairs[anchorPairIdx];
+
+    const lkg        = getLkgAnchor(messages);
+    const parentUuid = lkg?.anchor?.uuid ?? null;
+
+    const ragHeaders = _ragChunks
+        .filter(c => c.status === 'complete' || c.status === 'manual')
+        .map(c => ({ chunkIndex: c.chunkIndex, header: c.header, turnRange: c.turnRange }));
+
+    const anchor = buildAnchorPayload({
+        uuid:       crypto.randomUUID(),
+        hooks:      _priorSituation,
+        lorebook:   Object.assign({ name: _lorebookName }, structuredClone(_draftLorebook ?? { entries: {} })),
+        ragUrl:     _lastRagUrl || null,
+        ragHeaders,
+        parentUuid,
+    });
+
+    await writeDnaAnchor(anchorPair, anchor);
+    await writeDnaLinks(_stagedProsePairs, anchorPairIdx, anchor.uuid, _stagedPairOffset);
+
+    _dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
+    setDnaChain(_dnaChain);
+    console.log('[CNZ] commitLedgerNode: anchor written uuid=' + anchor.uuid + ' pairs=' + _stagedProsePairs.length);
+}
 
 /**
  * Fires every chunkEveryN turns (MESSAGE_RECEIVED handler).
@@ -4336,7 +4073,7 @@ function checkRagGaps() {
  * @param {Array}  messages Full chat message array at trigger time.
  */
 async function runCnzSync(char, messages, { coverAll = false } = {}) {
-    _syncInProgress = true;
+    setSyncInProgress(true);
     const transcript = buildSyncWindowTranscript(70);
 
     // --- LANE 1: LOREBOOK (Independent) ---
@@ -4378,8 +4115,8 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
     // Commit the Ledger Node regardless of AI success
     await commitLedgerNode(char, messages);
-    
-    _syncInProgress = false;
+
+    setSyncInProgress(false);
     toastr.success("Sync Processed (Best Effort)");
 }
 
@@ -4399,54 +4136,29 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
  * @param {string} chatFileName Current chat filename (unused directly; kept for signature parity).
  */
 async function runHealer(char, _chatFileName) {
-    // Ensure ledger is loaded for this character
-    if (!_ledgerManifest) {
-        await fetchOrBootstrapLedger(char.avatar);
-    }
-    if (!_ledgerManifest?.nodes || !_ledgerManifest.headNodeId) return;
-
     const context  = SillyTavern.getContext();
     const messages = context.chat ?? [];
     if (!messages.length) return;
 
-    const chain = buildNodeChain(_ledgerManifest);
-    if (!chain.length) return;
+    _dnaChain = readDnaChain(messages);
+    setDnaChain(_dnaChain);
+    if (_dnaChain.anchors.length === 0) return;
 
-    // Walk root→head: find the deepest node whose hash still matches current messages.
-    let lastValidNodeIdx = -1;
-    for (let i = 0; i < chain.length; i++) {
-        const node     = chain[i];
-        const prevHash = i > 0 ? chain[i - 1].milestoneHash : null;
-        const msgIdx   = findMessageIndexAtCount(messages, node.sequenceNum);
+    // ── Head check — same timeline? ───────────────────────────────────────────
+    const headRef = _dnaChain.anchors[_dnaChain.anchors.length - 1];
+    if (messages[headRef.msgIdx]?.extra?.cnz?.uuid === headRef.anchor.uuid) return;
 
-        if (msgIdx === -1) break;  // current chat shorter than this milestone
-
-        // Nodes written before Phase 3 have no milestoneHash — treat as unverifiable.
-        if (!node.milestoneHash) break;
-
-        const computedHash = await hashMilestone(messages, msgIdx, prevHash);
-        if (computedHash === node.milestoneHash) {
-            lastValidNodeIdx = i;
-        } else {
-            break;  // first mismatch — all deeper nodes are also invalid
-        }
-    }
-
-    // Head matches — same timeline, nothing to do.
-    if (lastValidNodeIdx === chain.length - 1) return;
-
-    // No node matched — chat predates CNZ or is unrelated.
-    if (lastValidNodeIdx === -1) return;
+    // ── Find deepest still-valid anchor ──────────────────────────────────────
+    const lkgRef = findLkgAnchorByPosition(_dnaChain.anchors, messages);
+    if (!lkgRef) return; // chat predates CNZ or is unrelated
 
     // ── Branch detected ───────────────────────────────────────────────────────
-    const targetNode = chain[lastValidNodeIdx];
-    const turnNum    = targetNode.sequenceNum;
+    const restorePoint = lkgRef.msgIdx + 1;
 
-    // ── Confirm before touching anything ─────────────────────────────────────
     const confirmed = await callPopup(
         `<h3>CNZ: Timeline Branch Detected</h3>
         <p>The current chat diverges from the last committed sync point at
-        <strong>Turn ${turnNum}</strong>.</p>
+        <strong>message ${restorePoint}</strong>.</p>
         <p>CNZ will restore world state to that point:</p>
         <ul>
             <li>Lorebook entries rolled back</li>
@@ -4469,31 +4181,23 @@ async function runHealer(char, _chatFileName) {
     }
 
     try {
-        const targetNodeFile = await fetchLedgerNodeFile(char.avatar, targetNode.nodeId);
-        if (!targetNodeFile) throw new Error(`Could not fetch node file for ${targetNode.nodeId}`);
+        const nodeFile   = buildNodeFileFromAnchor(lkgRef.anchor);
+        const nodeDummy  = { nodeId: lkgRef.anchor.uuid }; // safe dummy for error messages in restore fns
 
-        await restoreLorebookToNode(char, targetNode, targetNodeFile);
-        await restoreHooksToNode(char, targetNode, targetNodeFile);
+        await restoreLorebookToNode(char, nodeDummy, nodeFile);
+        await restoreHooksToNode(char, nodeDummy, nodeFile);
 
         try {
-            await restoreRagToNode(char, targetNodeFile);
+            await restoreRagToNode(char, nodeFile);
         } catch (err) {
             console.error('[CNZ] Healer: RAG reconciliation failed:', err);
             toastr.warning('CNZ: Branch healed but RAG reconciliation failed — vector index may be inconsistent.');
         }
 
-        // Orphan all nodes that descended past the branch point
-        for (let i = lastValidNodeIdx + 1; i < chain.length; i++) {
-            chain[i].status = 'orphaned';
-        }
+        _dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
+        setDnaChain(_dnaChain);
 
-        // Roll back the Ledger head
-        _ledgerManifest.headNodeId = targetNode.nodeId;
-        _sessionStartId            = targetNode.nodeId;
-
-        await commitLedgerManifest(char.avatar);
-
-        toastr.warning(`CNZ: Branch detected — restored to Turn ${turnNum}. Vector index rebuilt.`);
+        toastr.warning(`CNZ: Branch detected — restored to message ${restorePoint}. Vector index rebuilt.`);
     } catch (err) {
         console.error('[CNZ] Healer: restoration failed:', err);
         toastr.error('CNZ: Branch detected but restoration failed — lorebook may be inconsistent.');
@@ -4627,7 +4331,6 @@ function refreshSettingsUI() {
     $('#cnz-set-hookseeker-horizon').val(s.hookseekerHorizon ?? 70);
     $('#cnz-set-lorebook-sync-start').val(s.lorebookSyncStart ?? 'syncTurn');
     $('#cnz-set-auto-advance-mask').prop('checked', s.autoAdvanceMask ?? false);
-    $('#cnz-set-ledger-max-nodes').val(s.ledgerMaxNodes ?? 0);
     $('#cnz-set-enable-rag').prop('checked', s.enableRag ?? false);
     $('#cnz-rag-settings-body').toggleClass('cnz-disabled', !(s.enableRag ?? false));
     $('#cnz-set-rag-separator').val(s.ragSeparator ?? DEFAULT_SEPARATOR);
@@ -4710,11 +4413,6 @@ function bindSettingsHandlers() {
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
-    $('#cnz-set-ledger-max-nodes').on('input', function () {
-        const val = Math.max(0, parseInt($(this).val()) || 0);
-        getSettings().ledgerMaxNodes = val;
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
 
     $('#cnz-edit-summary-prompt').on('click', () =>
         openPromptModal('hookseekerPrompt', 'Edit Summary Prompt', DEFAULT_HOOKSEEKER_PROMPT,
@@ -4942,7 +4640,7 @@ function bindSettingsHandlers() {
 
     $('#cnz-purge-ledger').on('click', async function () {
         // Guard conditions
-        if (_syncInProgress) {
+        if (isSyncInProgress()) {
             toastr.warning('CNZ: Sync in progress — wait for it to complete before purging.');
             return;
         }
@@ -4975,34 +4673,12 @@ function bindSettingsHandlers() {
 
         const clearHeaders = document.getElementById('cnz-purge-clear-headers')?.checked ?? true;
 
-        // 1. Delete the ledger file from the Data Bank
-        const meta       = getMetaSettings();
-        const ledgerPath = meta.ledgerPaths?.[char.avatar];
-        if (ledgerPath) {
-            try {
-                await fetch('/api/files/delete', {
-                    method:  'POST',
-                    headers: getRequestHeaders(),
-                    body:    JSON.stringify({ path: ledgerPath }),
-                });
-            } catch (err) {
-                console.warn('[CNZ] Purge: ledger file delete failed (continuing):', err);
-            }
-        }
-
-        // 2. Clear the ledger path from settings
-        delete meta.ledgerPaths[char.avatar];
-        saveSettingsDebounced();
-
-        // 3. Reset in-memory ledger state
-        _ledgerManifest = null;
-        _sessionStartId = null;
-
-        // 4. Reset lastLorebookSyncAt
+        // 1. Reset lastLorebookSyncAt
+        const meta = getMetaSettings();
         meta.lastLorebookSyncAt = null;
         saveSettingsDebounced();
 
-        // 5. Optionally clear chunk headers from chat messages
+        // 2. Optionally clear chunk headers from chat messages
         if (clearHeaders) {
             const chat = ctx.chat ?? [];
             let modified = false;
@@ -5018,7 +4694,7 @@ function bindSettingsHandlers() {
             }
         }
 
-        // 6. Reset staged pairs and chunks
+        // 3. Reset staged pairs and chunks
         _stagedProsePairs       = [];
         _splitPairIdx           = 0;
         _stagedPairOffset       = 0;
@@ -5026,7 +4702,7 @@ function bindSettingsHandlers() {
         _splitIndexWhenRagBuilt = null;
         clearChunkChatLabels();
 
-        // 7. Report
+        // 4. Report
         toastr.success('CNZ: Ledger purged — next sync will treat this character as new.');
     });
 }
@@ -5058,15 +4734,15 @@ function injectSettingsPanel() {
  * @architectural-role ST Event Bindings and Extension Entry Point
  * @description
  * Owns the ST event bindings, the wand button, and the extension entry point.
- * The pump trigger (onMessageReceived) fires after each AI message and decides
- * whether to run a sync cycle. onChatChanged resets session state and triggers
+ * The SYNC_TRIGGERED bus event fires after each AI message (via scheduler) and
+ * drives sync cycles. onChatChanged resets session state and triggers
  * the Healer on character switch. Delegated click handlers dispatch wand menu
  * actions. `init` registers all event listeners and injects persistent UI.
  * @core-principles
  *   1. No business logic here — handlers delegate immediately to engine functions.
  *   2. checkOrphans runs once on init and on chat change; it never blocks the event loop.
  * @api-declaration
- *   onMessageReceived, onChatChanged, onWandButtonClick, injectWandButton,
+ *   onChatChanged, onWandButtonClick, injectWandButton,
  *   checkOrphans, init
  * @contract
  *   assertions:
@@ -5074,123 +4750,40 @@ function injectSettingsPanel() {
  */
 // ─── Event Handlers ───────────────────────────────────────────────────────────
 
-async function onMessageReceived() {
-    const context = SillyTavern.getContext();
-    if (!context || context.groupId || context.characterId == null) return;
-    if (!getSettings().autoSync) return;
-
-    const messages = context.chat ?? [];
-    const count    = messages.filter(m => !m.is_system).length;
-    const every    = getSettings().chunkEveryN ?? 20;
-    if (every <= 0 || count <= 0) return;
-
-    // ── Snooze check ──────────────────────────────────────────────────────────
-    if (count <= _snoozeUntilCount) return;
-
-    // ── Gap detection ─────────────────────────────────────────────────────────
-    // Ledger not loaded yet — bootstrap it in the background and skip this
-    // trigger. The next MESSAGE_RECEIVED will find the manifest ready.
-    if (!_ledgerManifest) {
-        const char = context.characters[context.characterId];
-        fetchOrBootstrapLedger(char.avatar).catch(err =>
-            console.error('[CNZ] onMessageReceived: ledger bootstrap failed:', err),
-        );
-        return;
-    }
-
-    // headNode.sequenceNum is the trailingBufferBoundary at the last commit.
-    // Compute the current trailing boundary and compare against it to find
-    // how many new turns are ready to be canonized.
-    const headNode            = _ledgerManifest.nodes?.[_ledgerManifest.headNodeId];
-    const priorSequenceNum    = headNode?.sequenceNum ?? 0;
-    const liveContextBuffer   = getSettings().liveContextBuffer ?? 5;
-    const trailingBoundary    = Math.max(0, count - liveContextBuffer);
-    const gap                 = trailingBoundary - priorSequenceNum;
-
-    logTurnReport(count, liveContextBuffer, trailingBoundary, priorSequenceNum, every);
-
-    if (gap < every) return;  // not enough new turns yet
-
-    const char = context.characters[context.characterId];
-
-    if (gap < every * 2) {
-        // Standard case — one window's worth of new turns, run silently.
-        runCnzSync(char, messages).catch(err =>
-            console.error('[CNZ] runCnzSync uncaught error:', err),
-        );
-        return;
-    }
-
-    // ── Large-gap path ────────────────────────────────────────────────────────
-    // Auto-run the standard window sync first so the user gets fast feedback,
-    // then offer to also canonize the remaining older turns.
-    if (_syncInProgress) return;  // already running from a prior trigger
-
-    try {
-        await runCnzSync(char, messages);
-    } catch (err) {
-        console.error('[CNZ] runCnzSync uncaught error:', err);
-        return;
-    }
-
-    // Re-read the head after the window sync — it may have covered the gap.
-    const newHead      = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
-    const newPrior     = newHead?.sequenceNum ?? 0;
-    const remaining    = trailingBoundary - newPrior;  // use same trailingBoundary
-    const snoozeTurns  = getSettings().gapSnoozeTurns ?? 5;
-
-    if (remaining < every) return;  // window sync was enough
-
-    // Show a persistent (non-blocking) toast — user clicks Sync all or Snooze
-    toastr.warning(
-        `CNZ: ${remaining} uncaptured turn(s). ` +
-        `<a href="#" class="cnz-gap-sync-all">Sync all</a> &nbsp; ` +
-        `<a href="#" class="cnz-gap-snooze">Snooze ${snoozeTurns} turns</a>`,
-        '',
-        { timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false },
-    );
+/**
+ * REFACTOR-NOTE: ledgerPaths removed — checkOrphans is now a no-op.
+ * Replace with a DNA-chain-aware orphan check in a future session.
+ */
+function checkOrphans() {
+    // no-op: ledger infrastructure removed
 }
 
 /**
- * Checks whether any files tracked in knownFiles are no longer referenced by
- * any ledger manifest. Shows a persistent dismissible toast if orphans are found.
- * Uses only in-memory manifests + ledgerPaths; does not fetch additional files.
+ * Resets all session-level state on character switch.
+ * Called by onChatChanged when the character changes.
+ * Never called by closeModal — modal state is separate.
  */
-function checkOrphans() {
-    const meta      = getMetaSettings();
-    const knownFiles = meta.knownFiles ?? [];
-    if (!knownFiles.length) return;
-
-    const ledgerPaths = meta.ledgerPaths ?? {};
-    const expectedPaths = new Set(Object.values(ledgerPaths));
-
-    // Add node file paths derivable from the currently-loaded manifest
-    if (_ledgerManifest?.nodes) {
-        const manifestPath = ledgerPaths[_ledgerManifest.avatarKey]
-            ?? Object.entries(ledgerPaths).find(
-                   ([k]) => cnzAvatarKey(k) === _ledgerManifest.avatarKey
-               )?.[1]
-            ?? null;
-
-        if (manifestPath) {
-            const lastSlash = manifestPath.lastIndexOf('/');
-            const baseDir   = lastSlash >= 0 ? manifestPath.slice(0, lastSlash + 1) : '';
-            for (const nodeId of Object.keys(_ledgerManifest.nodes)) {
-                expectedPaths.add(baseDir + cnzFileName(_ledgerManifest.avatarKey, 'node', nodeId));
-            }
-        }
-    }
-
-    const orphans = knownFiles.filter(p => !expectedPaths.has(p));
-    if (!orphans.length) return;
-
-    _pendingOrphans = orphans;
-    console.warn('[CNZ] Orphan check: found', orphans.length, 'unreferenced file(s):', orphans);
-    toastr.warning(
-        `CNZ: ${orphans.length} unreferenced file${orphans.length !== 1 ? 's' : ''} detected in Data Bank. <a href="#" class="cnz-orphan-review">Review</a> <a href="#" class="cnz-orphan-dismiss">Dismiss</a>`,
-        '',
-        { timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false },
-    );
+function resetSessionState() {
+    invalidateAllJobs();
+    resetScheduler();
+    _dnaChain               = null;
+    setDnaChain(null);
+    _lorebookData           = null;
+    _draftLorebook          = null;
+    _lorebookName           = '';
+    _lorebookSuggestions    = [];
+    _lorebookDelta          = null;
+    _parentNodeLorebook     = null;
+    _priorSituation         = '';
+    _beforeSituation        = '';
+    _stagedProsePairs       = [];
+    _stagedPairOffset       = 0;
+    _splitPairIdx           = 0;
+    _ragChunks              = [];
+    _splitIndexWhenRagBuilt = null;
+    _lastSummaryUsedForRag  = null;
+    _lastRagUrl             = '';
+    clearChunkChatLabels();
 }
 
 function onChatChanged() {
@@ -5203,28 +4796,17 @@ function onChatChanged() {
     const char         = context.characters[context.characterId];
     const chatFileName = char?.chat ?? null;
 
-    // Character switched — reset cached ledger (it belongs to the old character),
-    // then bootstrap the new character's ledger and run the Healer.
+    // Character switched — reset all session state, then heal.
     if (!char || char.avatar !== _lastKnownAvatar) {
-        _ledgerManifest      = null;
-        _lastKnownAvatar     = char?.avatar ?? null;
-        _stagedProsePairs    = [];
-        _stagedPairOffset    = 0;
-        _splitPairIdx        = 0;
-        _ragChunks           = [];
-        _splitIndexWhenRagBuilt  = null;
-        _parentNodeLorebook  = null;
-        _lorebookSuggestions = [];
-        _lorebookData        = null;
-        _draftLorebook       = null;
-        clearChunkChatLabels();
+        _lastKnownAvatar = char?.avatar ?? null;
+        resetSessionState();
+        const chatMessages = SillyTavern.getContext().chat ?? [];
+        _dnaChain = readDnaChain(chatMessages);
+        setDnaChain(_dnaChain);
         if (char) {
-            fetchOrBootstrapLedger(char.avatar)
-                .then(() => {
-                    checkOrphans();
-                    return runHealer(char, char.chat);
-                })
-                .catch(err => console.error('[CNZ] onChatChanged: bootstrap/healer failed:', err));
+            runHealer(char, char.chat).catch(err =>
+                console.error('[CNZ] onChatChanged: healer failed:', err),
+            );
         }
         return;
     }
@@ -5279,19 +4861,15 @@ async function onWandButtonClick() {
         toastr.error('CNZ: No character selected.');
         return;
     }
-    if (_syncInProgress) {
+    if (isSyncInProgress()) {
         toastr.warning('CNZ: Sync already in progress — please wait.');
         return;
     }
 
-    const char         = ctx.characters[ctx.characterId];
-    const messages     = ctx.chat ?? [];
-    const currentCount = messages.filter(m => !m.is_system).length;
-    const settings     = getSettings();
-    const lcb          = settings.liveContextBuffer ?? 5;
-    const tbb          = Math.max(0, currentCount - lcb);
-    const ledgerHead   = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
-    const gap          = ledgerHead != null ? tbb - ledgerHead.sequenceNum : tbb;
+    const char     = ctx.characters[ctx.characterId];
+    const messages = ctx.chat ?? [];
+    const settings = getSettings();
+    const gap      = getGap(settings);
 
     // Nothing new to sync yet (everything committed, or gap below threshold) — open modal directly.
     if (gap < (settings.chunkEveryN ?? 20)) {
@@ -5343,11 +4921,12 @@ function injectWandButton() {
 
 async function init() {
     initSettings();
+    initScheduler(Triggers, getSettings);
     injectModal();
     injectSettingsPanel();
     injectWandButton();
-    eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
-    eventSource.on(event_types.CHAT_CHANGED,     onChatChanged);
+    eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
+
     // Delegated click handler for the review toast link (registered once — not per-sync)
     $(document).on('click', '.cnz-review-link', (e) => {
         e.preventDefault();
@@ -5363,7 +4942,7 @@ async function init() {
         e.preventDefault();
         toastr.clear();
     });
-    // Delegated handlers for the large-gap toast (Step 15)
+    // Delegated handlers for the large-gap toast
     $(document).on('click', '.cnz-gap-sync-all', (e) => {
         e.preventDefault();
         toastr.clear();
@@ -5378,20 +4957,59 @@ async function init() {
     $(document).on('click', '.cnz-gap-snooze', (e) => {
         e.preventDefault();
         toastr.clear();
-        const ctx      = SillyTavern.getContext();
-        const messages = ctx?.chat ?? [];
-        const count    = messages.filter(m => !m.is_system).length;
+        invalidateAllJobs();
+        const ctx         = SillyTavern.getContext();
+        const messages    = ctx?.chat ?? [];
+        const count       = messages.filter(m => !m.is_system).length;
         const snoozeTurns = getSettings().gapSnoozeTurns ?? 5;
-        _snoozeUntilCount = count + snoozeTurns;
-        console.log(`[CNZ] Large-gap offer snoozed until turn ${_snoozeUntilCount}.`);
+        snooze(snoozeTurns, count);
     });
-    eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, (data) => {
-        if (_cnzGenerating) return;  // skip mask for CNZ's own internal AI calls
-        const ledgerHead = _ledgerManifest?.nodes?.[_ledgerManifest?.headNodeId];
-        if (!ledgerHead) return;  // no ledger head — apply no mask
-        const maskBoundary = ledgerHead.sequenceNum;
-        if (maskBoundary <= 0) return;
 
+    // ── Bus subscribers ───────────────────────────────────────────────────────
+
+    // Auto-sync pump — fired by the auto_sync trigger in recipes.js
+    on('SYNC_TRIGGERED', ({ char, messages, gap, every, trailingBoundary, largeGap }) => {
+        if (!largeGap) {
+            runCnzSync(char, messages).catch(err =>
+                console.error('[CNZ] runCnzSync uncaught error:', err),
+            );
+            return;
+        }
+
+        // Large-gap path — run window sync first, then offer to cover the rest
+        if (isSyncInProgress()) return;
+
+        (async () => {
+            try {
+                await runCnzSync(char, messages);
+            } catch (err) {
+                console.error('[CNZ] runCnzSync uncaught error:', err);
+                return;
+            }
+
+            // Re-read DNA chain after the window sync — it may have closed the gap.
+            const freshChain = readDnaChain(messages);
+            const newLkgIdx  = freshChain.lkgMsgIdx;
+            const newPrior   = newLkgIdx >= 0
+                ? messages.slice(0, newLkgIdx + 1).filter(m => !m.is_system).length
+                : 0;
+            const remaining  = trailingBoundary - newPrior;
+            if (remaining < every) return;
+
+            const snoozeTurns = getSettings().gapSnoozeTurns ?? 5;
+            toastr.warning(
+                `CNZ: ${remaining} uncaptured turn(s). ` +
+                `<a href="#" class="cnz-gap-sync-all">Sync all</a> &nbsp; ` +
+                `<a href="#" class="cnz-gap-snooze">Snooze ${snoozeTurns} turns</a>`,
+                '',
+                { timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false },
+            );
+        })();
+    });
+
+    // Context mask — fired by the mask_advance trigger on CHAT_COMPLETION_PROMPT_READY
+    on('MASK_ADVANCE_TRIGGERED', ({ data, maskBoundary }) => {
+        if (_cnzGenerating) return;  // skip mask during CNZ's own AI calls
         let nsCount = 0;
         const filtered = data.chat.filter((msg) => {
             if (msg.role === 'system') return true;

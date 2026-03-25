@@ -1,6 +1,8 @@
 # OS junk
 .DS_Store
 Thumbs.db
+slicer
+slicer-config.yaml
 
 # SillyTavern User Data (CRITICAL: Do not push your chat history)
 vault/
