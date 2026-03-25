@@ -3753,6 +3753,15 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
     logSyncStart(hookPairs, lbPairsForLog, syncPairs, coverAll, settings.chunkEveryN ?? 20);
 
+    // Ensure lorebook is loaded before lanes start — auto-sync may run before openReviewModal.
+    if (!_draftLorebook) {
+        const lbName   = settings.lorebookName || char.name;
+        _lorebookName  = lbName;
+        _lorebookData  = await lbEnsureLorebook(_lorebookName);
+        _draftLorebook = structuredClone(_lorebookData);
+        console.log(`[CNZ] Lorebook lazy-loaded: "${_lorebookName}" (${Object.keys(_lorebookData.entries ?? {}).length} entries)`);
+    }
+
     // --- LANE 1: LOREBOOK (Independent) ---
     const lbPromise = (async () => {
         console.log('[CNZ] Lane 1 (lorebook): starting');
