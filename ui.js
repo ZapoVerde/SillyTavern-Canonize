@@ -331,6 +331,7 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
         </div>
 
         <!-- ── Summary / Lorebook ── -->
+        <div class="cnz-settings-note">All numeric settings use <strong>turn pairs</strong> (one user message + one AI reply = 1 pair).</div>
         <div class="cnz-settings-row">
           <label for="cnz-set-profile">Summary Connection Profile ${tip('AI connection used for narrative hook (summary) and lorebook sync calls. Leave blank to use the global connection.')}</label>
           <select id="cnz-set-profile" class="text_pole"></select>
@@ -355,9 +356,17 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
         </div>
 
         <div class="cnz-settings-inline-row">
-          <label for="cnz-set-hookseeker-horizon">Summary horizon (turns) ${tip('How many of the most recent turns are fed to the narrative hook / summary generator. Higher values give richer context at the cost of more tokens. Typically 50–100.')}</label>
+          <label for="cnz-set-hookseeker-horizon">Summary horizon (pairs) ${tip('How many of the most recent turn pairs are fed to the narrative hook / summary generator. Higher values give richer context at the cost of more tokens. Typically 20–60.')}</label>
           <input id="cnz-set-hookseeker-horizon" type="number" min="1" step="1"
-                 value="${escapeHtml(String(s.hookseekerHorizon ?? 70))}">
+                 value="${escapeHtml(String(s.hookseekerHorizon ?? 40))}">
+        </div>
+
+        <div class="cnz-settings-inline-row">
+          <label for="cnz-set-lorebook-sync-start">Lorebook sync start ${tip('Which turns the background lorebook sync reads. "From sync point": only the gap turns being synced this cycle (efficient, no re-analysis of committed turns). "From latest turn": the full hookseeker window, same as the summary generator.')}</label>
+          <select id="cnz-set-lorebook-sync-start">
+            <option value="syncPoint"  ${(s.lorebookSyncStart ?? 'syncPoint') === 'syncPoint'  ? 'selected' : ''}>From sync point</option>
+            <option value="latestTurn" ${(s.lorebookSyncStart ?? 'syncPoint') === 'latestTurn' ? 'selected' : ''}>From latest turn</option>
+          </select>
         </div>
 
         <div class="cnz-settings-row">
@@ -371,14 +380,6 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
           <label for="cnz-set-ledger-max-nodes">Ledger history (nodes) ${tip('Maximum sync snapshots kept per character. On each sync the oldest nodes beyond this limit are deleted from the Data Bank. 0 = keep all (no pruning). Reducing this limits how far back you can roll back.')}</label>
           <input id="cnz-set-ledger-max-nodes" type="number" min="0" step="1"
                  value="${escapeHtml(String(s.ledgerMaxNodes ?? 0))}">
-        </div>
-
-        <div class="cnz-settings-inline-row">
-          <label for="cnz-set-lorebook-sync-start">Lorebook sync start ${tip('"From latest turn": each sync processes from the Begin sync turn value. "From sync point": only new turns since the last successful lorebook sync are processed — avoids re-analysing old content.')}</label>
-          <select id="cnz-set-lorebook-sync-start" class="cnz-select cnz-settings-select-sm">
-            <option value="syncTurn"  ${(s.lorebookSyncStart ?? 'syncTurn') === 'syncTurn'  ? 'selected' : ''}>From latest turn</option>
-            <option value="lastSync"  ${(s.lorebookSyncStart ?? 'syncTurn') === 'lastSync'  ? 'selected' : ''}>From sync point</option>
-          </select>
         </div>
 
         <div class="cnz-settings-row cnz-settings-prompt-row">

@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.0
+ * @version 1.0.1
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -140,18 +140,18 @@ const HOOKS_END           = '<!--  -->';
 
 
 // Profile-level configuration keys — saved per profile, loaded into activeState.
-// Meta-state keys (lastLorebookSyncAt, ledgerPaths, profiles, currentProfileName,
+// Meta-state keys (ledgerPaths, profiles, currentProfileName,
 // activeState) live at the root of extension_settings[EXT_NAME] and are never
 // included in a profile object.
 const PROFILE_DEFAULTS = Object.freeze({
     chunkEveryN:              20,
     gapSnoozeTurns:           5,
-    hookseekerHorizon:        70,
+    hookseekerHorizon:        40,
     autoSync:                 true,
     profileId:                null,
     // Summary / Lorebook
     liveContextBuffer:        5,
-    lorebookSyncStart:        'syncTurn',   // 'syncTurn' | 'lastSync'
+    lorebookSyncStart:        'syncPoint',   // 'syncPoint' | 'latestTurn'
     lorebookSyncPrompt:       DEFAULT_LOREBOOK_SYNC_PROMPT,
     hookseekerPrompt:         DEFAULT_HOOKSEEKER_PROMPT,
     hookseekerTrailingPrompt: '',
@@ -341,8 +341,7 @@ function initSettings() {
         root.activeState = Object.assign({}, PROFILE_DEFAULTS, root.activeState);
     }
 
-    // Ensure meta-state keys are always present at root.
-    root.lastLorebookSyncAt ??= null;
+    // (no meta-state keys require initialisation at this time)
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -2088,7 +2087,7 @@ function updateHooksDiff() {
 function onRegenHooksClick() {
     setHooksLoading(true);
     $('#cnz-error-1').addClass('cnz-hidden').text('');
-    const horizon       = getSettings().hookseekerHorizon ?? 70;
+    const horizon       = getSettings().hookseekerHorizon ?? 40;
     const regenMessages = SillyTavern.getContext().chat ?? [];
     const regenSettings = getSettings();
     const transcript    = buildSyncWindowTranscript(horizon, regenMessages, regenSettings);
@@ -2469,7 +2468,7 @@ function onLbIngesterRegenerate() {
     const keys    = entry ? (Array.isArray(entry.key) ? entry.key.join(', ') : '') : s.keys.join(', ');
     const content = entry?.content ?? s.content;
 
-    const horizon        = getSettings().hookseekerHorizon ?? 70;
+    const horizon        = getSettings().hookseekerHorizon ?? 40;
     const upToLatest     = $('#cnz-lb-up-to-latest').is(':checked');
     const regenIngMsgs   = SillyTavern.getContext().chat ?? [];
     const regenIngSet    = getSettings();
@@ -3078,7 +3077,7 @@ function onTargetedGenerateClick() {
     }
     $('#cnz-targeted-error').addClass('cnz-hidden').text('');
 
-    const horizon     = getSettings().hookseekerHorizon ?? 70;
+    const horizon     = getSettings().hookseekerHorizon ?? 40;
     const upToLatest  = $('#cnz-lb-up-to-latest').is(':checked');
     const tgtMessages = SillyTavern.getContext().chat ?? [];
     const tgtSettings = getSettings();
@@ -3484,13 +3483,11 @@ function logTurnReport(count, liveContextBuffer, trailingBoundary, priorSequence
     );
 }
 
-function logSyncStart(hookPairs, ragPairs, lbPairs, coverAll, chunkEveryN) {
+function logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN) {
     const fmt = pairs => pairs.length > 0
         ? `turns ${pairs[0].validIdx + 1}–${pairs[pairs.length - 1].validIdx + 1} (${pairs.length} pairs)`
         : '(none)';
-    const lbLabel = lbPairs
-        ? `${fmt(lbPairs)} [lastSync mode]`
-        : `${fmt(hookPairs)} [same as hookseeker]`;
+    const lbLabel = lbPairs === hookPairs ? `${fmt(lbPairs)} [same as hookseeker]` : fmt(lbPairs);
     console.log(
         `[CNZ] ── SYNC START ── coverAll=${coverAll} window=${chunkEveryN}\n` +
         `  hookseeker: ${fmt(hookPairs)}\n` +
@@ -3563,10 +3560,14 @@ async function processHooksUpdate(hooksText) {
 /**
  * Builds RAG chunks for the current sync window, classifies them, uploads the
  * RAG document, and registers it as a character attachment.
- * @param {string} transcript  Sync-window transcript (used only for logging context).
+ *
+ * Expects _stagedProsePairs and _stagedPairOffset to have been set by the caller
+ * (runCnzSync) before this function is invoked. The surgical-unlock fallback below
+ * guards against direct calls outside that context only.
+ *
  * @returns {Promise<void>}
  */
-async function runRagPipeline(transcript) {
+async function runRagPipeline() {
     const ctx  = SillyTavern.getContext();
     const char = ctx.characters[ctx.characterId];
     if (!char) throw new Error('No character selected');
@@ -3574,18 +3575,13 @@ async function runRagPipeline(transcript) {
     const messages = ctx.chat ?? [];
     const allPairs = buildProsePairs(messages);
 
-    const lcb      = getSettings().liveContextBuffer ?? 5;
-    const totalNS  = messages.filter(m => !m.is_system).length;
-    const tbb      = Math.max(0, totalNS - lcb);
-
-    _stagedProsePairs = allPairs.filter(p => p.validIdx < tbb);
+    // Surgical unlock: guard against direct calls where staged pairs were not set.
     if (_stagedProsePairs.length === 0 && allPairs.length > 0) {
         _stagedProsePairs = [allPairs[allPairs.length - 1]];
+        const firstValidIdx = _stagedProsePairs[0].validIdx;
+        const foundIdx      = allPairs.findIndex(p => p.validIdx >= firstValidIdx);
+        _stagedPairOffset   = foundIdx === -1 ? 0 : foundIdx;
     }
-
-    const firstValidIdx  = _stagedProsePairs[0]?.validIdx ?? 0;
-    const foundIdx       = allPairs.findIndex(p => p.validIdx >= firstValidIdx);
-    _stagedPairOffset    = foundIdx === -1 ? 0 : foundIdx;
 
     _splitPairIdx           = _stagedProsePairs.length;
     const ragSettings = getSettings();
@@ -3660,67 +3656,141 @@ async function commitLedgerNode(char, messages) {
 }
 
 /**
+ * Computes the pair slice for a sync cycle, anchored to the DNA chain head.
+ *
+ * Standard mode: first chunkEveryN uncommitted pairs after the LKG anchor.
+ * CoverAll mode: all uncommitted pairs from the LKG anchor to the live context
+ *                buffer boundary.
+ *
+ * "Uncommitted" means validIdx >= priorSeq (after the LKG anchor) AND
+ * validIdx < tbb (before the live context buffer).
+ *
+ * Pure function — all inputs passed explicitly. No module state reads.
+ *
+ * @param {object[]} allPairs   Full pair array from buildProsePairs(messages).
+ * @param {object[]} messages   Full chat message array.
+ * @param {object}   settings   Active profile settings.
+ * @param {boolean}  coverAll   true = full gap, false = standard window.
+ * @param {object}   dnaChain   Current _dnaChain value (may be null).
+ * @returns {{ syncPairs: object[], syncPairOffset: number }}
+ */
+function computeSyncWindow(allPairs, messages, settings, coverAll, dnaChain) {
+    const lcb     = settings.liveContextBuffer ?? 5;
+    const every   = settings.chunkEveryN ?? 20;
+    const totalNS = messages.filter(m => !m.is_system).length;
+    const tbb     = Math.max(0, totalNS - lcb);
+
+    // Non-system turns committed up to and including the LKG anchor message.
+    const lkgIdx   = dnaChain?.lkgMsgIdx ?? -1;
+    const priorSeq = lkgIdx >= 0
+        ? messages.slice(0, lkgIdx + 1).filter(m => !m.is_system).length
+        : 0;
+
+    // Pairs that lie in the uncommitted gap.
+    const uncommitted = allPairs.filter(p => p.validIdx >= priorSeq && p.validIdx < tbb);
+
+    const syncPairs = coverAll ? uncommitted : uncommitted.slice(0, every);
+
+    const firstPair      = syncPairs[0];
+    const syncPairOffset = firstPair ? allPairs.indexOf(firstPair) : 0;
+
+    return { syncPairs, syncPairOffset };
+}
+
+/**
  * Fires every chunkEveryN turns (MESSAGE_RECEIVED handler).
  * Executes the full background sync pipeline:
- *   1. Derive the current turn window (last chunkEveryN pairs)
- *   2. Fire Fact-Finder + Hookseeker in parallel
- *   3. Apply lorebook updates silently
- *   4. Write Hookseeker output into the character scenario anchor block
- *   5. Build, classify, and upload RAG chunks as a chat attachment
- *   6. Commit a Ledger node recording this milestone
+ *   1. Compute the sync window anchored to the DNA chain head.
+ *   2. Fire Lorebook + Hookseeker in parallel (each with its own transcript).
+ *   3. Apply lorebook updates silently.
+ *   4. Write Hookseeker output into the character scenario anchor block.
+ *   5. Build, classify, and upload RAG chunks as a character attachment.
+ *   6. Commit a DNA chain node recording this milestone.
  *
  * Each step is guarded individually; a failure emits a warning toast but
  * does not abort subsequent steps or throw to the caller.
  *
  * @param {object} char     Character object from ST context at trigger time.
  * @param {Array}  messages Full chat message array at trigger time.
+ * @param {boolean} coverAll true = full gap, false = standard window.
  */
 async function runCnzSync(char, messages, { coverAll = false } = {}) {
     setSyncInProgress(true);
-    const transcript = buildSyncWindowTranscript(70, messages, getSettings());
+    const settings  = getSettings();
+    const allPairs  = buildProsePairs(messages);
+    const { syncPairs, syncPairOffset } = computeSyncWindow(allPairs, messages, settings, coverAll, _dnaChain);
+
+    if (syncPairs.length === 0) {
+        console.warn('[CNZ] runCnzSync: no uncommitted pairs in window — aborting');
+        setSyncInProgress(false);
+        return;
+    }
+
+    // Stage pairs so commitLedgerNode and runRagPipeline both land on the right range.
+    _stagedProsePairs = syncPairs;
+    _stagedPairOffset = syncPairOffset;
+
+    // Hookseeker transcript: sync pairs plus lookback into committed turns for continuity.
+    const horizon       = settings.hookseekerHorizon ?? 40;
+    const lookbackStart = Math.max(0, syncPairOffset - (horizon - syncPairs.length));
+    const hookPairs     = allPairs.slice(lookbackStart, syncPairOffset + syncPairs.length);
+    const hookMsgs      = hookPairs.flatMap(p => [p.user, ...p.messages]);
+    const hookTranscript = buildTranscript(hookMsgs);
+
+    // Lorebook transcript: sync pairs only (syncPoint), or rolling horizon (latestTurn).
+    const lbSyncStart   = settings.lorebookSyncStart ?? 'syncPoint';
+    let lbPairsForLog;
+    let lbTranscript;
+    if (lbSyncStart === 'latestTurn') {
+        lbPairsForLog = hookPairs;   // same window as hookseeker
+        lbTranscript  = hookTranscript;
+    } else {
+        lbPairsForLog = syncPairs;
+        const lbMsgs  = syncPairs.flatMap(p => [p.user, ...p.messages]);
+        lbTranscript  = buildTranscript(lbMsgs);
+    }
+
+    logSyncStart(hookPairs, lbPairsForLog, syncPairs, coverAll, settings.chunkEveryN ?? 20);
 
     // --- LANE 1: LOREBOOK (Independent) ---
     const lbPromise = (async () => {
         try {
-            const text = await runLorebookSyncCall(transcript, _lorebookData);
-            await processLorebookUpdate(text); // Silently apply
+            const text = await runLorebookSyncCall(lbTranscript, _lorebookData);
+            await processLorebookUpdate(text);
             return true;
-        } catch (e) { console.error("LB Sync Failed", e); return false; }
+        } catch (e) { console.error('[CNZ] LB Sync Failed', e); return false; }
     })();
 
     // --- LANE 2: HOOKS (Independent) ---
     const hooksPromise = (async () => {
         try {
-            const text = await runHookseekerCall(transcript, _priorSituation);
+            const text = await runHookseekerCall(hookTranscript, _priorSituation);
             await processHooksUpdate(text);
-            _priorSituation = text; // Update memory for RAG
+            _priorSituation = text;
             return true;
-        } catch (e) { 
-            console.error("Hooks Sync Failed", e); 
-            _priorSituation = "Current Action"; // Fallback so RAG doesn't stall
-            return false; 
+        } catch (e) {
+            console.error('[CNZ] Hooks Sync Failed', e);
+            _priorSituation = 'Current Action';
+            return false;
         }
     })();
 
-    // --- LANE 3: RAG (Independent & Guard-Free) ---
-    // We don't wait for Hooks anymore. We fire RAG immediately.
+    // --- LANE 3: RAG (Independent) ---
     const ragPromise = (async () => {
-        if (!getSettings().enableRag) return true;
+        if (!settings.enableRag) return true;
         try {
-            // RAG uses whatever _priorSituation we have (old or fallback)
-            await runRagPipeline(transcript); 
+            await runRagPipeline();
             return true;
-        } catch (e) { console.error("RAG Sync Failed", e); return false; }
+        } catch (e) { console.error('[CNZ] RAG Sync Failed', e); return false; }
     })();
 
-    // Run them all. If one fails, the others still commit.
     const [lbOk, hooksOk, ragOk] = await Promise.all([lbPromise, hooksPromise, ragPromise]);
 
-    // Commit the Ledger Node regardless of AI success
+    // Commit the DNA chain node regardless of individual lane success.
     await commitLedgerNode(char, messages);
 
     setSyncInProgress(false);
-    toastr.success("Sync Processed (Best Effort)");
+    toastr.success('Sync Processed (Best Effort)');
 }
 
 /**
@@ -3931,8 +4001,8 @@ function refreshSettingsUI() {
     $('#cnz-set-live-context-buffer').val(s.liveContextBuffer ?? 5);
     $('#cnz-set-chunk-every-n').val(s.chunkEveryN ?? 20);
     $('#cnz-set-gap-snooze').val(s.gapSnoozeTurns ?? 5);
-    $('#cnz-set-hookseeker-horizon').val(s.hookseekerHorizon ?? 70);
-    $('#cnz-set-lorebook-sync-start').val(s.lorebookSyncStart ?? 'syncTurn');
+    $('#cnz-set-hookseeker-horizon').val(s.hookseekerHorizon ?? 40);
+    $('#cnz-set-lorebook-sync-start').val(s.lorebookSyncStart ?? 'syncPoint');
     $('#cnz-set-auto-advance-mask').prop('checked', s.autoAdvanceMask ?? false);
     $('#cnz-set-enable-rag').prop('checked', s.enableRag ?? false);
     $('#cnz-rag-settings-body').toggleClass('cnz-disabled', !(s.enableRag ?? false));
@@ -4001,7 +4071,7 @@ function bindSettingsHandlers() {
     });
 
     $('#cnz-set-hookseeker-horizon').on('input', function () {
-        const val = Math.max(1, parseInt($(this).val()) || 70);
+        const val = Math.max(1, parseInt($(this).val()) || 40);
         getSettings().hookseekerHorizon = val;
         saveSettingsDebounced(); updateDirtyIndicator();
     });
@@ -4276,12 +4346,7 @@ function bindSettingsHandlers() {
 
         const clearHeaders = document.getElementById('cnz-purge-clear-headers')?.checked ?? true;
 
-        // 1. Reset lastLorebookSyncAt
-        const meta = getMetaSettings();
-        meta.lastLorebookSyncAt = null;
-        saveSettingsDebounced();
-
-        // 2. Optionally clear chunk headers from chat messages
+        // 1. Optionally clear chunk headers from chat messages
         if (clearHeaders) {
             const chat = ctx.chat ?? [];
             let modified = false;
