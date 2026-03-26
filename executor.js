@@ -27,19 +27,19 @@
 // Listens for CONTRACT_DISPATCHED. Fires the LLM call. Emits JOB_COMPLETED or
 // JOB_FAILED. No CNZ knowledge. No business logic beyond retry.
 
-import { emit, on }   from './bus.js';
+import { emit, on, BUS_EVENTS }   from './bus.js';
 import { Recipes }    from './recipes.js';
 import { generateRaw } from '../../../../script.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
 
-on('CONTRACT_DISPATCHED', async (payload) => {
+on(BUS_EVENTS.CONTRACT_DISPATCHED, async (payload) => {
     const { jobId, cycleId, recipeId, maxRetries = 1 } = payload;
 
     let lastErr;
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
             const result = await _fireCall(payload);
-            emit('JOB_COMPLETED', { jobId, cycleId, recipeId, result, inputs: payload.inputs });
+            emit(BUS_EVENTS.JOB_COMPLETED, { jobId, cycleId, recipeId, result, inputs: payload.inputs });
             return;
         } catch (err) {
             lastErr = err;
@@ -49,7 +49,7 @@ on('CONTRACT_DISPATCHED', async (payload) => {
         }
     }
 
-    emit('JOB_FAILED', { jobId, cycleId, recipeId, error: lastErr, inputs: payload.inputs });
+    emit(BUS_EVENTS.JOB_FAILED, { jobId, cycleId, recipeId, error: lastErr, inputs: payload.inputs });
 });
 
 async function _fireCall({ recipeId, inputs, settings, maxTokens }) {

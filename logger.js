@@ -16,16 +16,16 @@
 // ─── CNZ LLM Logger ───────────────────────────────────────────────────────────
 // One line per LLM call event. No payload inspection beyond identity fields.
 
-import { on } from './bus.js';
+import { on, BUS_EVENTS } from './bus.js';
 
-on('CONTRACT_DISPATCHED', ({ jobId, cycleId, recipeId, maxRetries = 1 }) => {
+on(BUS_EVENTS.CONTRACT_DISPATCHED, ({ jobId, cycleId, recipeId, maxRetries = 1 }) => {
     console.log(`[CNZ] LLM dispatch  ${recipeId}  job=${jobId}  cycle=${cycleId}  maxRetries=${maxRetries}`);
 });
 
-on('JOB_COMPLETED', ({ jobId, cycleId, recipeId }) => {
+on(BUS_EVENTS.JOB_COMPLETED, ({ jobId, cycleId, recipeId }) => {
     console.log(`[CNZ] LLM completed ${recipeId}  job=${jobId}  cycle=${cycleId}`);
 });
 
-on('JOB_FAILED', ({ jobId, cycleId, recipeId, error }) => {
+on(BUS_EVENTS.JOB_FAILED, ({ jobId, cycleId, recipeId, error }) => {
     console.error(`[CNZ] LLM failed    ${recipeId}  job=${jobId}  cycle=${cycleId}  reason=${error?.message ?? error}`);
 });

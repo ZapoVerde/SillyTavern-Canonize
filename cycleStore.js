@@ -45,7 +45,7 @@
 // dependency resolution. The only "smart" component — intelligence limited to
 // graph resolution.
 
-import { emit, on } from './bus.js';
+import { emit, on, BUS_EVENTS } from './bus.js';
 import { Recipes }  from './recipes.js';
 
 const DEFAULT_CONCURRENCY = 3;
@@ -75,7 +75,7 @@ const _maxConcurrentByKey = {}; // stalenessKey → maxConcurrent (stored for dr
 export function startCycle(cycleId, seeds) {
     _store[cycleId] = { ...seeds };
     _currentCycle   = cycleId;
-    emit('CYCLE_STARTED', { cycleId, seeds });
+    emit(BUS_EVENTS.CYCLE_STARTED, { cycleId, seeds });
 }
 
 /**
@@ -125,7 +125,7 @@ export function dispatchContract(recipeId, extraInputs = {}, settings) {
         ? settings[recipe.maxTokens]
         : recipe.maxTokens;
 
-    emit('CONTRACT_DISPATCHED', {
+    emit(BUS_EVENTS.CONTRACT_DISPATCHED, {
         jobId,
         cycleId,
         recipeId,
@@ -220,7 +220,7 @@ function _dispatchFanOut(inputSets, recipe, settings, cycleId) {
 
         if (_inFlightByKey[key] < maxConcurrent) {
             _inFlightByKey[key]++;
-            emit('CONTRACT_DISPATCHED', contract);
+            emit(BUS_EVENTS.CONTRACT_DISPATCHED, contract);
         } else {
             _fanOutQueue[key].push(contract);
         }
@@ -239,13 +239,13 @@ function _drainFanOutQueue(key) {
     while (_inFlightByKey[key] < maxConcurrent && queue.length > 0) {
         const contract = queue.shift();
         _inFlightByKey[key]++;
-        emit('CONTRACT_DISPATCHED', contract);
+        emit(BUS_EVENTS.CONTRACT_DISPATCHED, contract);
     }
 }
 
 // ── Result Routing ────────────────────────────────────────────────────────────
 
-on('JOB_COMPLETED', ({ jobId, cycleId, recipeId, result, inputs }) => {
+on(BUS_EVENTS.JOB_COMPLETED, ({ jobId, cycleId, recipeId, result, inputs }) => {
     const recipe = Recipes[recipeId];
     if (!recipe) return;
 
@@ -269,7 +269,7 @@ on('JOB_COMPLETED', ({ jobId, cycleId, recipeId, result, inputs }) => {
             if (!_store[cycleId]) _store[cycleId] = {};
             const results = fanOutState?.results ?? [];
             _store[cycleId][recipe.produces] = results;
-            emit('CYCLE_STORE_UPDATED', { cycleId, key: recipe.produces, value: results });
+            emit(BUS_EVENTS.CYCLE_STORE_UPDATED, { cycleId, key: recipe.produces, value: results });
         }
         return;
     }
@@ -278,10 +278,10 @@ on('JOB_COMPLETED', ({ jobId, cycleId, recipeId, result, inputs }) => {
     if (_activeJobByKey[recipe.stalenessKey] !== jobId) return;
     if (!_store[cycleId]) return;
     _store[cycleId][recipe.produces] = result;
-    emit('CYCLE_STORE_UPDATED', { cycleId, key: recipe.produces, value: result });
+    emit(BUS_EVENTS.CYCLE_STORE_UPDATED, { cycleId, key: recipe.produces, value: result });
 });
 
-on('JOB_FAILED', ({ jobId, cycleId, recipeId, error, inputs }) => {
+on(BUS_EVENTS.JOB_FAILED, ({ jobId, cycleId, recipeId, error, inputs }) => {
     const recipe = Recipes[recipeId];
     if (!recipe) return;
 
@@ -307,7 +307,7 @@ on('JOB_FAILED', ({ jobId, cycleId, recipeId, error, inputs }) => {
             if (!_store[cycleId]) _store[cycleId] = {};
             const results = fanOutState?.results ?? [];
             _store[cycleId][recipe.produces] = results;
-            emit('CYCLE_STORE_UPDATED', { cycleId, key: recipe.produces, value: results, error: error?.message });
+            emit(BUS_EVENTS.CYCLE_STORE_UPDATED, { cycleId, key: recipe.produces, value: results, error: error?.message });
         }
         return;
     }
@@ -315,7 +315,7 @@ on('JOB_FAILED', ({ jobId, cycleId, recipeId, error, inputs }) => {
     // Single-job path
     if (_activeJobByKey[recipe.stalenessKey] !== jobId) return;
     console.error(`[CNZ] Job failed: ${recipeId} (job ${jobId})`, error);
-    emit('CYCLE_STORE_UPDATED', {
+    emit(BUS_EVENTS.CYCLE_STORE_UPDATED, {
         cycleId,
         key:   recipe.produces,
         value: null,
@@ -325,7 +325,7 @@ on('JOB_FAILED', ({ jobId, cycleId, recipeId, error, inputs }) => {
 
 // ── Dependency Resolution ─────────────────────────────────────────────────────
 
-on('CYCLE_STORE_UPDATED', ({ cycleId, key }) => {
+on(BUS_EVENTS.CYCLE_STORE_UPDATED, ({ cycleId, key }) => {
     if (cycleId !== _currentCycle) return;
     const stored = _store[cycleId];
     if (!stored) return;

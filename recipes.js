@@ -43,6 +43,7 @@ import { interpolate,
          DEFAULT_TARGETED_UPDATE_PROMPT,
          DEFAULT_TARGETED_NEW_PROMPT } from './defaults.js';
 import { event_types } from '../../../../script.js';
+import { BUS_EVENTS } from './bus.js';
 
 export const Recipes = {
 
@@ -220,7 +221,7 @@ export const Triggers = {
             const char = context.characters[context.characterId];
             return { char, messages, gap, every, trailingBoundary, largeGap: gap >= every * 2 };
         },
-        emits: 'SYNC_TRIGGERED',
+        emits: BUS_EVENTS.SYNC_TRIGGERED,
     },
 
     /**
@@ -229,6 +230,37 @@ export const Triggers = {
      * ST event data object (mutated in-place by the handler) and the computed
      * mask boundary. Returns null when no anchor exists yet.
      */
+    /**
+     * Fires SYNC_TRIGGERED when the review modal opens and the uncommitted gap
+     * is >= the sync window. Skipped if a sync is already in progress.
+     * Snooze is intentionally ignored — the user explicitly opened the modal.
+     */
+    modal_sync: {
+        id:         'modal_sync',
+        source:     'bus',
+        watchEvent: BUS_EVENTS.MODAL_OPENED,
+        condition:  (state, settings) => {
+            const { context, messages, pairCount, dnaChain, syncInProgress } = state;
+            if (!context || context.groupId || context.characterId == null) return null;
+            if (syncInProgress) return null;
+            const every = settings.chunkEveryN ?? 20;
+            if (every <= 0 || pairCount <= 0) return null;
+
+            const lkgIdx     = dnaChain?.lkgMsgIdx ?? -1;
+            const priorPairs = lkgIdx >= 0
+                ? messages.slice(0, lkgIdx + 1).filter(m => !m.is_system && m.is_user).length
+                : 0;
+            const lcb              = settings.liveContextBuffer ?? 5;
+            const trailingBoundary = Math.max(0, pairCount - lcb);
+            const gap              = trailingBoundary - priorPairs;
+            if (gap < every) return null;
+
+            const char = context.characters[context.characterId];
+            return { char, messages, gap, every, trailingBoundary, largeGap: gap >= every * 2 };
+        },
+        emits: BUS_EVENTS.SYNC_TRIGGERED,
+    },
+
     mask_advance: {
         id:         'mask_advance',
         source:     'st',
@@ -241,7 +273,7 @@ export const Triggers = {
             if (maskBoundary <= 0) return null;
             return { data: eventData, maskBoundary };
         },
-        emits: 'MASK_ADVANCE_TRIGGERED',
+        emits: BUS_EVENTS.MASK_ADVANCE_TRIGGERED,
     },
 
 };

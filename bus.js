@@ -53,15 +53,20 @@ export function off(eventName, handler) {
 let _devMode = false;
 export function enableDevMode() { _devMode = true; }
 
-// ─── Event Name Reference ─────────────────────────────────────────────────────
-// All events used by CNZ. Screaming snake case. Read as plain English facts.
-//
-// CYCLE_STARTED               { cycleId, seeds }
-// CONTRACT_DISPATCHED         { jobId, cycleId, recipeId, inputs, settings, maxTokens, maxRetries }
-// JOB_COMPLETED               { jobId, cycleId, recipeId, result, inputs }
-// JOB_FAILED                  { jobId, cycleId, recipeId, error, inputs }
-// CYCLE_STORE_UPDATED         { cycleId, key, value, error? }
-// SYNC_COMPLETED              { cycleId, outcomes }
-// MODAL_OPENED                { cycleId }
-// CORRECTION_SUBMITTED        { cycleId, corrections }
-// DNA_WRITE_REQUESTED         { cycleId, payload }
+// ─── Event Name Constants ─────────────────────────────────────────────────────
+// Single source of truth for all CNZ bus event names.
+// Use these constants everywhere — never bare strings.
+// Payload shapes documented inline.
+export const BUS_EVENTS = Object.freeze({
+    CYCLE_STARTED:          'CYCLE_STARTED',           // { cycleId, seeds }
+    CONTRACT_DISPATCHED:    'CONTRACT_DISPATCHED',     // { jobId, cycleId, recipeId, inputs, settings, maxTokens, maxRetries }
+    JOB_COMPLETED:          'JOB_COMPLETED',           // { jobId, cycleId, recipeId, result, inputs }
+    JOB_FAILED:             'JOB_FAILED',              // { jobId, cycleId, recipeId, error, inputs }
+    CYCLE_STORE_UPDATED:    'CYCLE_STORE_UPDATED',     // { cycleId, key, value, error? }
+    SYNC_TRIGGERED:         'SYNC_TRIGGERED',          // { char, messages, gap, every, trailingBoundary, largeGap }
+    MASK_ADVANCE_TRIGGERED: 'MASK_ADVANCE_TRIGGERED',  // { data, maskBoundary }
+    SYNC_COMPLETED:         'SYNC_COMPLETED',          // { cycleId, outcomes }
+    MODAL_OPENED:           'MODAL_OPENED',            // { }
+    CORRECTION_SUBMITTED:   'CORRECTION_SUBMITTED',    // { cycleId, corrections }
+    DNA_WRITE_REQUESTED:    'DNA_WRITE_REQUESTED',     // { cycleId, payload }
+});

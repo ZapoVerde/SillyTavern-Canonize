@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.5
+ * @version 1.0.6
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -67,7 +67,7 @@
  *       _priorSituation, _beforeSituation,
  *       _lorebookName, _lorebookSuggestions, _lorebookDelta,
  *       _stagedProsePairs, _stagedPairOffset, _splitPairIdx,
- *       _ragChunks, _splitIndexWhenRagBuilt, _lastSummaryUsedForRag,
+ *       _ragChunks, _splitIndexWhenRagBuilt,
  *       _lastRagUrl,
  *       _cnzGenerating, _lastKnownAvatar,
  *       _currentStep, _modalOpenHeadUuid,
@@ -87,7 +87,7 @@ import { extension_settings, saveMetadataDebounced } from '../../../extensions.j
 import { updateWorldInfoList } from '../../../../scripts/world-info.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
 import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML, buildLedgerInspectorHTML, buildOrphanModalHTML } from './ui.js';
-import { emit, on, off, enableDevMode } from './bus.js';
+import { emit, on, off, enableDevMode, BUS_EVENTS } from './bus.js';
 import { startCycle, dispatchContract, getCycleValue,
          setCurrentSettings, invalidateAllJobs } from './cycleStore.js';
 import { initScheduler, setSyncInProgress, isSyncInProgress,
@@ -195,7 +195,6 @@ let _lorebookSuggestions   = [];
 let _ragChunks             = [];
 let _stagedProsePairs      = [];
 let _stagedPairOffset      = 0;   // pairs preceding _stagedProsePairs[0] in the full chat
-let _lastSummaryUsedForRag = null;
 let _splitPairIdx          = 0;
 
 // Ledger node fields — set each sync cycle
@@ -971,7 +970,7 @@ function resolveClassifierHistory(pairStart, historyN, fullPairs, stagedPairOffs
 function waitForRagChunks(timeoutMs = 120_000) {
     return new Promise(resolve => {
         const timer = setTimeout(() => {
-            off('CYCLE_STORE_UPDATED', handler);
+            off(BUS_EVENTS.CYCLE_STORE_UPDATED, handler);
             for (const c of _ragChunks) {
                 if (c.status === 'in-flight') c.status = 'pending';
             }
@@ -982,10 +981,10 @@ function waitForRagChunks(timeoutMs = 120_000) {
         function handler({ key }) {
             if (key !== 'rag_chunk_results') return;
             clearTimeout(timer);
-            off('CYCLE_STORE_UPDATED', handler);
+            off(BUS_EVENTS.CYCLE_STORE_UPDATED, handler);
             resolve();
         }
-        on('CYCLE_STORE_UPDATED', handler);
+        on(BUS_EVENTS.CYCLE_STORE_UPDATED, handler);
     });
 }
 
@@ -1106,13 +1105,13 @@ function _waitForRecipe(recipeId, extraInputs = {}) {
         }
 
         function cleanup() {
-            off('JOB_COMPLETED', onCompleted);
-            off('JOB_FAILED',    onFailed);
+            off(BUS_EVENTS.JOB_COMPLETED, onCompleted);
+            off(BUS_EVENTS.JOB_FAILED,    onFailed);
             _cnzGenerating = false;
         }
 
-        on('JOB_COMPLETED', onCompleted);
-        on('JOB_FAILED',    onFailed);
+        on(BUS_EVENTS.JOB_COMPLETED, onCompleted);
+        on(BUS_EVENTS.JOB_FAILED,    onFailed);
     });
 }
 
@@ -1561,6 +1560,41 @@ function deriveSuggestionsFromLedgerDiff(before, after) {
  * @param {object} char        Character object from ST context.
  * @param {string} newScenario Updated scenario string.
  */
+async function patchCharacterWorld(char, lorebookName) {
+    const updatedChar = structuredClone(char);
+    if (!updatedChar.data)            updatedChar.data = {};
+    if (!updatedChar.data.extensions) updatedChar.data.extensions = {};
+    updatedChar.data.extensions.world = lorebookName;
+
+    const formData = new FormData();
+    formData.append('ch_name',                   char.name);
+    formData.append('description',               char.description                      ?? '');
+    formData.append('personality',               char.personality                      ?? '');
+    formData.append('scenario',                  char.scenario                         ?? '');
+    formData.append('first_mes',                 char.first_mes                        ?? '');
+    formData.append('mes_example',               char.mes_example                      ?? '');
+    formData.append('creator_notes',             char.data?.creator_notes              ?? '');
+    formData.append('system_prompt',             char.data?.system_prompt              ?? '');
+    formData.append('post_history_instructions', char.data?.post_history_instructions  ?? '');
+    formData.append('creator',                   char.data?.creator                    ?? '');
+    formData.append('character_version',         char.data?.character_version          ?? '');
+    formData.append('world',                     lorebookName);
+    formData.append('json_data',                 JSON.stringify(updatedChar));
+    formData.append('avatar_url',                char.avatar);
+    formData.append('chat',                      char.chat);
+    formData.append('create_date',               char.create_date);
+
+    const headers = getRequestHeaders();
+    delete headers['Content-Type'];
+
+    const res = await fetch('/api/characters/edit', {
+        method:  'POST',
+        headers,
+        body:    formData,
+    });
+    if (!res.ok) throw new Error(`World link patch failed (HTTP ${res.status})`);
+}
+
 async function patchCharacterScenario(char, newScenario) {
     const formData = new FormData();
     formData.append('ch_name',                   char.name);
@@ -1856,7 +1890,7 @@ function ragRegenCard(chunkIndex) {
         stagedPairs:      _stagedProsePairs,
         stagedPairOffset: _stagedPairOffset,
         splitPairIdx:     _splitPairIdx,
-        scenario_hooks:   _lastSummaryUsedForRag || '',
+        scenario_hooks:   '',
     }, settings);
 }
 
@@ -1924,64 +1958,9 @@ function onEnterRagWorkshop() {
     $('#cnz-rag-disabled').addClass('cnz-hidden');
     $('#cnz-rag-mode-note').text(getRagModeLabel()).removeClass('cnz-hidden');
 
-    // 1. SYNC: Pull the most current summary from the Step 1 textarea
-    const currentTextareaSummary = $('#cnz-situation-text').val()?.trim();
-    
-    // 2. LOGIC: If the summary changed (or was just generated), update the RAG context
-    if (currentTextareaSummary && currentTextareaSummary !== _lastSummaryUsedForRag) {
-        console.log("[CNZ] RAG Workshop: Using updated summary from Step 1.");
-        _lastSummaryUsedForRag = currentTextareaSummary;
-        
-        // Mark existing chunks as stale so they know they need a refresh with the new context
-        for (const chunk of _ragChunks) {
-            if (chunk.status === 'complete') chunk.status = 'stale';
-        }
-    } else if (!_lastSummaryUsedForRag && currentTextareaSummary) {
-        _lastSummaryUsedForRag = currentTextareaSummary;
-    }
-
-    // REFACTOR-NOTE: ledger reconstruction removed — DNA-based reconstruction pending
-
-    // Path: Build chunks if they don't exist
-    if (_ragChunks.length === 0) {
-        const archivePairs = _stagedProsePairs.slice(0, _splitPairIdx);
-        if (archivePairs.length > 0) {
-            _ragChunks = buildRagChunks(archivePairs, _stagedPairOffset, getSettings());
-            _splitIndexWhenRagBuilt = _splitPairIdx;
-            hydrateChunkHeadersFromChat();
-        }
-    }
-
-    // RENDER UI
+    // Modal is a read-only view of _ragChunks. Sync owns all chunk building and dispatch.
     renderRagWorkshop();
     renderAllChunkChatLabels();
-
-    // GRIDLOCK BREAKER: Always hide the "No Summary" message if we have ANY text to work with
-    if (_lastSummaryUsedForRag || currentTextareaSummary) {
-        hideRagNoSummaryMessage();
-    } else {
-        showRagNoSummaryMessage();
-        return; // Only bail if there truly is NO summary anywhere
-    }
-
-    // If all chunks are done, stop. Otherwise dispatch pending/stale chunks.
-    if (_ragChunks.every(c => c.status === 'complete' || c.status === 'manual')) return;
-
-    const pendingChunks = _ragChunks.filter(c => c.status === 'pending' || c.status === 'stale');
-    if (pendingChunks.length > 0) {
-        const workshopMessages  = SillyTavern.getContext()?.chat ?? [];
-        const workshopFullPairs = buildProsePairs(workshopMessages);
-        const workshopSettings  = getSettings();
-        setCurrentSettings(workshopSettings);
-        dispatchContract('rag_classifier', {
-            ragChunks:        pendingChunks,
-            fullPairs:        workshopFullPairs,
-            stagedPairs:      _stagedProsePairs,
-            stagedPairOffset: _stagedPairOffset,
-            splitPairIdx:     _splitPairIdx,
-            scenario_hooks:   _lastSummaryUsedForRag || '',
-        }, workshopSettings);
-    }
 }
 
 function onLeaveRagWorkshop() {
@@ -3454,9 +3433,6 @@ async function openReviewModal() {
         _lorebookData  = structuredClone(headRef.anchor.lorebook ?? { entries: {} });
         _draftLorebook = structuredClone(_lorebookData);
         _lorebookName  = headRef.anchor.lorebook?.name || _lorebookName;
-        if (!_lastSummaryUsedForRag && headRef.anchor.hooks) {
-            _lastSummaryUsedForRag = headRef.anchor.hooks;
-        }
     }
 
     if (parentRef) {
@@ -3469,6 +3445,14 @@ async function openReviewModal() {
 
     _lorebookSuggestions = headRef ? deriveSuggestionsFromLedgerDiff(_parentNodeLorebook, _draftLorebook) : [];
     _modalOpenHeadUuid   = headRef?.anchor?.uuid ?? null;
+
+    // Link lorebook to character if not already set.
+    const charForLink = freshChar ?? char;
+    if (_lorebookName && charForLink?.data?.extensions?.world !== _lorebookName) {
+        patchCharacterWorld(charForLink, _lorebookName).catch(e =>
+            console.error('[CNZ] openReviewModal: lorebook link failed:', e.message ?? e),
+        );
+    }
 
     initWizardSession(true);
 
@@ -3485,6 +3469,7 @@ async function openReviewModal() {
 
     showModal();
     updateWizard(1);
+    emit(BUS_EVENTS.MODAL_OPENED, {});
 }
 
 // ─── CNZ Logging ─────────────────────────────────────────────────────────────
@@ -3590,7 +3575,6 @@ async function runRagPipeline() {
     _splitIndexWhenRagBuilt = _splitPairIdx;
 
     hydrateChunkHeadersFromChat();
-    _lastSummaryUsedForRag = _priorSituation || '';
     setCurrentSettings(ragSettings);
     dispatchContract('rag_classifier', {
         ragChunks:        _ragChunks,
@@ -3598,7 +3582,7 @@ async function runRagPipeline() {
         stagedPairs:      _stagedProsePairs,
         stagedPairOffset: _stagedPairOffset,
         splitPairIdx:     _splitPairIdx,
-        scenario_hooks:   _lastSummaryUsedForRag,
+        scenario_hooks:   '',
     }, ragSettings);
     await waitForRagChunks(120_000);
 
@@ -3760,6 +3744,15 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         _lorebookData  = await lbEnsureLorebook(_lorebookName);
         _draftLorebook = structuredClone(_lorebookData);
         console.log(`[CNZ] Lorebook lazy-loaded: "${_lorebookName}" (${Object.keys(_lorebookData.entries ?? {}).length} entries)`);
+    }
+    // Link lorebook to character if not already set.
+    if (char?.data?.extensions?.world !== _lorebookName) {
+        try {
+            await patchCharacterWorld(char, _lorebookName);
+            console.log(`[CNZ] Lorebook linked to character: "${char.name}" → "${_lorebookName}"`);
+        } catch (e) {
+            console.error('[CNZ] Lorebook link failed:', e.message ?? e);
+        }
     }
 
     // --- LANE 1: LOREBOOK (Independent) ---
@@ -4497,7 +4490,6 @@ function resetSessionState() {
     _parentNodeLorebook     = null;
     _priorSituation         = '';
     _beforeSituation        = '';
-    _lastSummaryUsedForRag  = null;
     _lastRagUrl             = '';
     resetStagedState();
 }
@@ -4684,7 +4676,7 @@ async function init() {
     // ── Bus subscribers ───────────────────────────────────────────────────────
 
     // RAG fan-out: mark chunk in-flight when its contract is dispatched
-    on('CONTRACT_DISPATCHED', ({ recipeId, inputs }) => {
+    on(BUS_EVENTS.CONTRACT_DISPATCHED, ({ recipeId, inputs }) => {
         if (recipeId !== 'rag_classifier') return;
         const chunk = _ragChunks[inputs?.chunkIndex];
         if (!chunk) return;
@@ -4693,7 +4685,7 @@ async function init() {
     });
 
     // RAG fan-out: apply chunk results when all jobs settle
-    on('CYCLE_STORE_UPDATED', ({ key, value }) => {
+    on(BUS_EVENTS.CYCLE_STORE_UPDATED, ({ key, value }) => {
         if (key !== 'rag_chunk_results' || !value) return;
         for (const { chunkIndex, header } of value) {
             const chunk = _ragChunks[chunkIndex];
@@ -4713,7 +4705,7 @@ async function init() {
     });
 
     // Auto-sync pump — fired by the auto_sync trigger in recipes.js
-    on('SYNC_TRIGGERED', ({ char, messages, gap, every, trailingBoundary, largeGap }) => {
+    on(BUS_EVENTS.SYNC_TRIGGERED, ({ char, messages, gap, every, trailingBoundary, largeGap }) => {
         console.log(`[CNZ] ══ SYNC TRIGGERED ══ gap=${gap}/${every} largeGap=${largeGap} char="${char?.name}"`);
         if (!largeGap) {
             runCnzSync(char, messages).catch(err =>
@@ -4754,7 +4746,7 @@ async function init() {
     });
 
     // Context mask — fired by the mask_advance trigger on CHAT_COMPLETION_PROMPT_READY
-    on('MASK_ADVANCE_TRIGGERED', ({ data, maskBoundary }) => {
+    on(BUS_EVENTS.MASK_ADVANCE_TRIGGERED, ({ data, maskBoundary }) => {
         if (_cnzGenerating) return;  // skip mask during CNZ's own AI calls
         let nsCount = 0;
         const filtered = data.chat.filter((msg) => {

@@ -32,7 +32,7 @@
 // Owns snooze/sync-in-progress state and drives trigger evaluation.
 // No business logic — all conditions live in Triggers (recipes.js).
 
-import { emit, on } from './bus.js';
+import { emit, on, BUS_EVENTS } from './bus.js';
 import { eventSource } from '../../../../script.js';
 
 // ── Module State ──────────────────────────────────────────────────────────────
