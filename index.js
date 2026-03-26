@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.11
+ * @version 1.0.12
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -65,13 +65,13 @@
  *     state_ownership: [
  *       _lorebookData, _draftLorebook, _parentNodeLorebook,
  *       _priorSituation, _beforeSituation,
- *       _lorebookName, _lorebookSuggestions, _lorebookDelta,
+ *       _lorebookName, _lorebookSuggestions,
  *       _stagedProsePairs, _stagedPairOffset, _splitPairIdx,
- *       _ragChunks, _splitIndexWhenRagBuilt,
+ *       _ragChunks,
  *       _lastRagUrl,
  *       _cnzGenerating, _lastKnownAvatar,
  *       _currentStep, _modalOpenHeadUuid,
- *       _hooksLoading, _lorebookLoading, _lbActiveIngesterIndex,
+ *       _lorebookLoading, _lbActiveIngesterIndex,
  *       _lbDebounceTimer,
  *       _ragRawDetached, _pendingOrphans, _dnaChain,
  *       extension_settings.cnz]
@@ -82,13 +82,13 @@
  *       /api/chats/saveChat]
  */
 
-import { generateRaw, saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup, chat_metadata } from '../../../../script.js';
-import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
+import { saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup } from '../../../../script.js';
+import { extension_settings } from '../../../extensions.js';
 import { updateWorldInfoList } from '../../../../scripts/world-info.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
 import { buildModalHTML, buildPromptModalHTML, buildSettingsHTML, buildDnaChainInspectorHTML, buildOrphanModalHTML } from './ui.js';
 import { emit, on, off, enableDevMode, BUS_EVENTS } from './bus.js';
-import { startCycle, dispatchContract, getCycleValue,
+import { dispatchContract,
          setCurrentSettings, invalidateAllJobs } from './cycleStore.js';
 import { initScheduler, setSyncInProgress, isSyncInProgress,
          snooze, resetScheduler, setDnaChain, getGap } from './scheduler.js';
@@ -198,8 +198,7 @@ let _stagedPairOffset      = 0;   // pairs preceding _stagedProsePairs[0] in the
 let _splitPairIdx          = 0;
 
 // Anchor fields — set each sync cycle
-let _lastRagUrl    = '';
-let _lorebookDelta = null;
+let _lastRagUrl      = '';
 let _priorSituation  = '';
 let _beforeSituation = '';  // hooks text from before the last sync
                              // read from parent node's state.hooks in openReviewModal
@@ -221,12 +220,10 @@ let _dnaChain = null;
 // does not disrupt background sync cycles.
 
 let _currentStep             = 1;    // active wizard step (1–4)
-let _hooksLoading            = false;
 let _lorebookLoading         = false;
 let _lbActiveIngesterIndex   = 0;
 let _lbDebounceTimer         = null;
 let _ragRawDetached          = false;
-let _splitIndexWhenRagBuilt  = null;  // _splitPairIdx at last chunk build; null = not built
 let _modalOpenHeadUuid       = null;  // lkg anchor uuid captured at modal open; concurrent-sync guard
 
 /**
@@ -362,16 +359,6 @@ function escapeHtml(str) {
  * @param {number}   nonSystemCount  1-based target count.
  * @returns {number}
  */
-function findMessageIndexAtCount(messages, nonSystemCount) {
-    let count = 0;
-    for (let i = 0; i < messages.length; i++) {
-        if (!messages[i].is_system) count++;
-        if (count === nonSystemCount) return i;
-    }
-    return -1;
-}
-
-
 // ─── Scenario Anchor Management ───────────────────────────────────────────────
 
 /**
@@ -1660,30 +1647,6 @@ function cnzFileName(avatarKey, type, ...args) {
     }
 }
 
-/**
- * Uploads content to the ST Data Bank. Accepts a string or an object (JSON-serialised).
- * Returns the client-relative path as returned by the upload API.
- * @param {string}        filename   Already-safe filename (from cnzFileName).
- * @param {string|object} content    Text content or JSON-serialisable object.
- * @returns {Promise<string>}        Stored path for use with cnzDeleteFile.
- */
-async function cnzUploadFile(filename, content) {
-    const text = typeof content === 'string' ? content : JSON.stringify(content);
-    const res = await fetch('/api/files/upload', {
-        method:  'POST',
-        headers: getRequestHeaders(),
-        body:    JSON.stringify({ name: filename, data: utf8ToBase64(text) }),
-    });
-    if (!res.ok) throw new Error(`[CNZ] File upload failed (HTTP ${res.status}): ${filename}`);
-    const json = await res.json();
-    if (!json.path) throw new Error(`[CNZ] File upload returned no path: ${filename}`);
-    // Register in knownFiles registry for orphan check
-    const meta = getMetaSettings();
-    if (!meta.knownFiles) meta.knownFiles = [];
-    if (!meta.knownFiles.includes(json.path)) meta.knownFiles.push(json.path);
-    saveSettingsDebounced();
-    return json.path;
-}
 
 /**
  * Deletes a file from the ST Data Bank by its stored path.
@@ -1739,7 +1702,7 @@ async function cnzDeleteFile(path) {
  * @param {object} char  Character object (avatar key used for node file lookup).
  * @param {object} node  Dummy chain entry (used only for error messages).
  */
-async function restoreLorebookToNode(char, node, nodeFile = null) {
+async function restoreLorebookToNode(_char, node, nodeFile = null) {
     const nodeFile_ = nodeFile;
     if (!nodeFile_?.state?.lorebook) throw new Error(`[CNZ] No lorebook state in node ${node.nodeId}`);
     const lbData = nodeFile_.state.lorebook;
@@ -1756,7 +1719,7 @@ async function restoreLorebookToNode(char, node, nodeFile = null) {
  * @param {object} char  Character object from ST context.
  * @param {object} node  Dummy chain entry (used only for error messages).
  */
-async function restoreHooksToNode(char, node, nodeFile = null) {
+async function restoreHooksToNode(char, _node, nodeFile = null) {
     const nodeFile_ = nodeFile;
     const hooksText = nodeFile_?.state?.hooks ?? '';
     const freshCtx  = SillyTavern.getContext();
@@ -1923,19 +1886,6 @@ function onRagRevertRaw() {
     renderRagWorkshop();
 }
 
-function showRagNoSummaryMessage() {
-    $('#cnz-rag-no-summary').removeClass('cnz-hidden');
-    $('#cnz-rag-tab-bar, #cnz-rag-tab-sectioned, #cnz-rag-tab-raw').addClass('cnz-hidden');
-    $('#cnz-rag-detached-warn, #cnz-rag-detached-revert').addClass('cnz-hidden');
-}
-
-function hideRagNoSummaryMessage() {
-    $('#cnz-rag-no-summary').addClass('cnz-hidden');
-    $('#cnz-rag-tab-bar').removeClass('cnz-hidden');
-    const activeTab = $('#cnz-rag-tab-bar .cnz-tab-active').data('tab') ?? 'sectioned';
-    $('#cnz-rag-tab-sectioned').toggleClass('cnz-hidden', activeTab !== 'sectioned');
-    $('#cnz-rag-tab-raw').toggleClass('cnz-hidden', activeTab !== 'raw');
-}
 
 function getRagModeLabel() {
     return 'Output: AI-classified summary + full text';
@@ -2044,7 +1994,7 @@ function buildSyncWindowTranscript(horizonTurns, messages, settings) {
     const lcb = settings.liveContextBuffer ?? 5;
     const tbb = Math.max(0, allPairs.length - lcb);   // trailing buffer boundary in pairs
 
-    let windowPairs = allPairs.filter((p, i) => i < tbb);
+    let windowPairs = allPairs.filter((_, i) => i < tbb);
 
     // SURGICAL UNLOCK: If the buffer is larger than the chat,
     // don't send an empty transcript. Send the last available pair.
@@ -2134,11 +2084,6 @@ function setLbLoading(isLoading) {
     if (isLoading) $('#cnz-lb-freeform').val('');
 }
 
-// populateLbFreeform — kept for call-site safety; freeform is now always driven by syncFreeformFromSuggestions.
-function populateLbFreeform(_text) {
-    setLbLoading(false);
-    syncFreeformFromSuggestions();
-}
 
 function showLbError(message) {
     setLbLoading(false);
@@ -3617,18 +3562,6 @@ async function openReviewModal() {
     emit(BUS_EVENTS.MODAL_OPENED, {});
 }
 
-// ─── CNZ Logging ─────────────────────────────────────────────────────────────
-
-function logTurnReport(count, liveContextBuffer, trailingBoundary, priorSequenceNum, every) {
-    const gap = trailingBoundary - priorSequenceNum;
-    const bufferStart = trailingBoundary + 1;
-    console.log(
-        `[CNZ] Turn ${count} | ` +
-        `committed: 0–${priorSequenceNum} | ` +
-        `buffer: ${bufferStart}–${count} (${liveContextBuffer} turns) | ` +
-        `gap: ${gap}/${every}`
-    );
-}
 
 function logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN) {
     const fmt = pairs => pairs.length > 0
@@ -3717,7 +3650,6 @@ async function runRagPipeline() {
     _splitPairIdx           = _stagedProsePairs.length;
     const ragSettings = getSettings();
     _ragChunks              = buildRagChunks(_stagedProsePairs, _stagedPairOffset, ragSettings);
-    _splitIndexWhenRagBuilt = _splitPairIdx;
 
     hydrateChunkHeadersFromChat();
     setCurrentSettings(ragSettings);
@@ -3751,13 +3683,12 @@ async function runRagPipeline() {
  * @param {object[]} messages  Full chat message array.
  * @returns {Promise<void>}
  */
-async function commitDnaAnchor(char, messages) {
+async function commitDnaAnchor(messages) {
     if (_stagedProsePairs.length === 0) {
         console.warn('[CNZ] commitDnaAnchor: no staged pairs — skipping anchor write');
         return;
     }
 
-    const allPairs     = buildProsePairs(messages);
     const anchorPairIdx = _stagedProsePairs.length - 1;
     const anchorPair   = _stagedProsePairs[anchorPairIdx];
 
@@ -3980,7 +3911,7 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     console.log('[CNZ] DNA chain: committing anchor');
     let anchorOk = false;
     try {
-        await commitDnaAnchor(char, messages);
+        await commitDnaAnchor(messages);
         anchorOk = true;
         console.log('[CNZ] DNA chain: ✓ ok');
     } catch (e) {
@@ -4397,11 +4328,13 @@ async function purgeAndRebuild() {
         const byteSize    = new TextEncoder().encode(ragText).length;
         registerCharacterAttachment(char.avatar, ragUrl, ragFileName, byteSize);
 
-        const lkgMsg = messages[chain.lkgMsgIdx];
-        if (lkgMsg?.extra?.cnz) {
-            lkgMsg.extra.cnz = Object.assign({}, lkgMsg.extra.cnz, { ragUrl });
-            await ctx.saveChat();
+        for (const { msgIdx } of chain.anchors) {
+            const msg = messages[msgIdx];
+            if (msg?.extra?.cnz) {
+                msg.extra.cnz = Object.assign({}, msg.extra.cnz, { ragUrl });
+            }
         }
+        await ctx.saveChat();
 
         // ── 6. Re-vectorize ───────────────────────────────────────────────────────
         const { executeSlashCommandsWithOptions } = ctx;
@@ -4785,7 +4718,6 @@ function resetStagedState() {
     _stagedPairOffset       = 0;
     _splitPairIdx           = 0;
     _ragChunks              = [];
-    _splitIndexWhenRagBuilt = null;
     clearChunkChatLabels();
 }
 
