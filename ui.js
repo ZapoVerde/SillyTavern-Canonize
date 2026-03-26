@@ -372,7 +372,7 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
         <div class="cnz-settings-row">
           <label class="cnz-checkbox-label">
             <input id="cnz-set-auto-advance-mask" type="checkbox" ${(s.autoAdvanceMask ?? false) ? 'checked' : ''}>
-            <span>Auto-advance context mask ${tip('When enabled, the context mask follows the ledger head after each commit, hiding canonized turns from the main AI.')}</span>
+            <span>Auto-advance context mask ${tip('When enabled, the context mask follows the DNA chain head after each commit, hiding canonized turns from the main AI.')}</span>
           </label>
         </div>
 
@@ -488,9 +488,8 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
       <!-- ── Danger zone ── -->
       <div class="cnz-settings-group">
         <div class="cnz-settings-row">
-          <button id="cnz-inspect-ledger" class="cnz-btn cnz-btn-secondary cnz-btn-sm" title="Inspect the CNZ ledger chain for the current character">Inspect Ledger</button>
-          <button id="cnz-storage-report" class="cnz-btn cnz-btn-secondary cnz-btn-sm" title="Show disk usage of all CNZ files in the Data Bank">Storage Report</button>
-          <button id="cnz-purge-ledger" class="cnz-btn cnz-btn-danger cnz-btn-sm" title="Clear all CNZ sync history for the current character">Purge Ledger</button>
+          <button id="cnz-inspect-chain" class="cnz-btn cnz-btn-secondary cnz-btn-sm" title="Inspect the CNZ DNA chain for the current character">Inspect Chain</button>
+          <button id="cnz-purge-chain" class="cnz-btn cnz-btn-danger cnz-btn-sm" title="Delete RAG files, restore lorebook and hooks from last anchor, rebuild RAG from chain">Purge &amp; Rebuild</button>
         </div>
       </div>
 
@@ -521,16 +520,16 @@ export function buildOrphanModalHTML() {
 }
 
 /**
- * Returns the HTML for the Ledger Inspector modal (read-only).
- * The body content is populated dynamically by openLedgerInspector() in index.js.
+ * Returns the HTML for the DNA Chain Inspector modal (read-only).
+ * The body content is populated dynamically by openDnaChainInspector() in index.js.
  * @returns {string}
  */
-export function buildLedgerInspectorHTML() {
+export function buildDnaChainInspectorHTML() {
     return `
 <div id="cnz-li-overlay" class="cnz-overlay cnz-hidden">
   <div id="cnz-li-modal" class="cnz-modal cnz-li-modal" role="dialog" aria-modal="true">
     <div class="cnz-section-header">
-      <h3 id="cnz-li-title" class="cnz-title">Ledger Inspector</h3>
+      <h3 id="cnz-li-title" class="cnz-title">DNA Chain Inspector</h3>
       <button id="cnz-li-close" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Close</button>
     </div>
     <div id="cnz-li-body" class="cnz-li-body"></div>
