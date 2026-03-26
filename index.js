@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.8
+ * @version 1.0.9
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -3307,6 +3307,10 @@ async function openDnaChainInspector() {
     $body.append('<div class="cnz-li-section-label">Narrative Memory</div>');
     const attachments = extension_settings.character_attachments?.[char?.avatar] ?? [];
 
+    // verifiedOnDisk is populated below and reused by the anchor expand handler
+    // to flag anchor ragUrls that are missing or unregistered.
+    const verifiedOnDisk = new Set();
+
     if (attachments.length === 0) {
         $body.append('<div class="cnz-li-rag-row"><span class="cnz-li-rag-name cnz-li-status-muted">No RAG files registered.</span></div>');
     } else {
@@ -3335,6 +3339,7 @@ async function openDnaChainInspector() {
                     const $status = $row.find('.cnz-li-rag-status');
                     if (exists) {
                         $status.text('✓').removeClass('cnz-li-status-pending').addClass('cnz-li-status-ok');
+                        verifiedOnDisk.add(url);
                     } else {
                         $status.text('✗').removeClass('cnz-li-status-pending').addClass('cnz-li-status-warn');
                     }
@@ -3378,13 +3383,22 @@ async function openDnaChainInspector() {
             if (expanding && !loaded) {
                 loaded = true;
                 const lbName  = escapeHtml(anchor.lorebook?.name ?? '—');
-                const ragFile = anchor.ragUrl ? escapeHtml(anchor.ragUrl.split('/').pop()) : 'none';
+                let ragFileHtml;
+                if (!anchor.ragUrl) {
+                    ragFileHtml = '<span class="cnz-li-status-muted">none</span>';
+                } else {
+                    const fileName  = escapeHtml(anchor.ragUrl.split('/').pop());
+                    const onDisk    = verifiedOnDisk.has(anchor.ragUrl);
+                    const statusCls = onDisk ? 'cnz-li-status-ok' : 'cnz-li-status-warn';
+                    const statusChr = onDisk ? '✓' : '✗';
+                    ragFileHtml = `<span class="${statusCls}">${statusChr}</span> ${fileName}`;
+                }
                 $nodeBody.html(`
                     <div class="cnz-li-field"><span class="cnz-li-field-label">UUID: </span>${escapeHtml(anchor.uuid ?? '—')}</div>
                     <div class="cnz-li-field"><span class="cnz-li-field-label">Parent: </span>${escapeHtml(anchor.parentUuid ?? 'root')}</div>
                     <div class="cnz-li-field"><span class="cnz-li-field-label">Committed: </span>${escapeHtml(anchor.committedAt ?? '—')}</div>
                     <div class="cnz-li-field"><span class="cnz-li-field-label">Lorebook: </span>${lbName}</div>
-                    <div class="cnz-li-field"><span class="cnz-li-field-label">RAG file: </span>${ragFile}</div>
+                    <div class="cnz-li-field"><span class="cnz-li-field-label">RAG file: </span>${ragFileHtml}</div>
                     <div class="cnz-li-field cnz-li-hooks-block">
                         <span class="cnz-li-field-label">Hooks:</span>
                         <div class="cnz-li-hooks-preview">${escapeHtml(anchor.hooks || '(none)')}</div>
@@ -4283,29 +4297,21 @@ async function purgeAndRebuild() {
         await restoreLorebookToNode(char, { nodeId: 'rebuild' }, fakeNodeFile);
         await restoreHooksToNode(char, { nodeId: 'rebuild' }, fakeNodeFile);
 
-        // ── 4. Reconstruct combined RAG document from chain ───────────────────────
-        const allPairs       = buildProsePairs(messages);
-        const combinedChunks = [];
-
-        for (const anchor of chain.anchors) {
-            if (!anchor.ragHeaders?.length) continue;
-            for (const h of anchor.ragHeaders) {
-                if (h.pairStart == null || h.pairEnd == null) continue; // pre-upgrade anchor — skip
-                const window  = allPairs.slice(h.pairStart, h.pairEnd);
-                const content = window.map(p => {
-                    const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
-                    for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
-                    return parts.join('\n\n');
-                }).join('\n\n');
-                combinedChunks.push({
-                    chunkIndex: combinedChunks.length,
-                    header:     h.header,
-                    turnRange:  h.turnRange,
-                    content,
-                    status:     'complete',
-                });
-            }
+        // ── 4. Reconstruct combined RAG document from message stamps ─────────────
+        // Primary source: cnz_chunk_header persisted on each chunk's last message.
+        // This works for all existing chats regardless of when they were synced.
+        // Anchor ragHeaders with pairStart/pairEnd are used by the inspector only.
+        const allPairs    = buildProsePairs(messages);
+        const ragChunks   = buildRagChunks(allPairs, 0, getSettings());
+        for (const chunk of ragChunks) {
+            const lastPairIdx = (chunk.pairEnd ?? chunk.chunkIndex + 1) - 1;
+            const pair        = allPairs[lastPairIdx];
+            const lastMsg     = pair?.messages?.[pair.messages.length - 1];
+            if (!lastMsg?.extra?.cnz_chunk_header) continue;
+            chunk.header = lastMsg.extra.cnz_chunk_header;
+            chunk.status = 'complete';
         }
+        const combinedChunks = ragChunks.filter(c => c.status === 'complete');
 
         if (combinedChunks.length === 0) {
             toastr.warning('CNZ: No classified chunks found in chain — RAG file not rebuilt. Run a sync first.');
