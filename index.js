@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.9
+ * @version 1.0.10
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -4278,8 +4278,14 @@ async function purgeAndRebuild() {
   <li>Restore the hooks summary from the last anchor</li>
   <li>Rebuild a single RAG file from the full chain history</li>
 </ul>
-<p>This cannot be undone.</p>`, 'confirm');
+<label style="display:flex;align-items:center;gap:0.5em;margin-top:0.75em;">
+  <input type="checkbox" id="cnz-purge-deep">
+  Reclassify all chunks with AI (slow)
+</label>
+<p style="margin-top:0.5em">This cannot be undone.</p>`, 'confirm');
     if (!confirmed) return;
+
+    const deepReclassify = document.getElementById('cnz-purge-deep')?.checked ?? false;
 
     try {
         // ── 1. Delete all CNZ RAG files ──────────────────────────────────────────
@@ -4297,21 +4303,61 @@ async function purgeAndRebuild() {
         await restoreLorebookToNode(char, { nodeId: 'rebuild' }, fakeNodeFile);
         await restoreHooksToNode(char, { nodeId: 'rebuild' }, fakeNodeFile);
 
-        // ── 4. Reconstruct combined RAG document from message stamps ─────────────
-        // Primary source: cnz_chunk_header persisted on each chunk's last message.
-        // This works for all existing chats regardless of when they were synced.
-        // Anchor ragHeaders with pairStart/pairEnd are used by the inspector only.
-        const allPairs    = buildProsePairs(messages);
-        const ragChunks   = buildRagChunks(allPairs, 0, getSettings());
-        for (const chunk of ragChunks) {
-            const lastPairIdx = (chunk.pairEnd ?? chunk.chunkIndex + 1) - 1;
-            const pair        = allPairs[lastPairIdx];
-            const lastMsg     = pair?.messages?.[pair.messages.length - 1];
-            if (!lastMsg?.extra?.cnz_chunk_header) continue;
-            chunk.header = lastMsg.extra.cnz_chunk_header;
-            chunk.status = 'complete';
+        // ── 4. Reconstruct combined RAG document ──────────────────────────────────
+        const allPairs   = buildProsePairs(messages);
+        const ragSettings = getSettings();
+
+        // Fast path: hydrate from cnz_chunk_header stamps already on messages.
+        // Deep path: reclassify every chunk fresh via the AI classifier fan-out,
+        //   using the same dispatch + bus pattern as runRagPipeline.
+        let combinedChunks;
+        if (deepReclassify) {
+            // Set module state so the fan-out and bus subscriber operate correctly.
+            _stagedProsePairs = allPairs;
+            _stagedPairOffset = 0;
+            _splitPairIdx     = allPairs.length;
+            _ragChunks        = buildRagChunks(allPairs, 0, ragSettings); // all status: 'pending'
+
+            setCurrentSettings(ragSettings);
+            dispatchContract('rag_classifier', {
+                ragChunks:        _ragChunks,
+                fullPairs:        allPairs,
+                stagedPairs:      allPairs,
+                stagedPairOffset: 0,
+                splitPairIdx:     allPairs.length,
+                scenario_hooks:   chain.lkg.hooks ?? '',
+            }, ragSettings);
+            // Longer timeout — full chat history, not just one sync window.
+            await waitForRagChunks(300_000);
+            combinedChunks = _ragChunks.filter(c => c.status === 'complete');
+        } else {
+            // Fast path: walk messages and collect cnz_chunk_header stamps directly.
+            // Do NOT re-chunk — new chunk boundaries won't align with original stamps
+            // if the chat has grown since the original sync.
+            combinedChunks = [];
+            let prevPairEnd = 0;
+            for (let i = 0; i < allPairs.length; i++) {
+                const pair    = allPairs[i];
+                const lastMsg = pair?.messages?.[pair.messages.length - 1];
+                if (!lastMsg?.extra?.cnz_chunk_header) continue;
+                const pairStart = prevPairEnd;
+                const pairEnd   = i + 1;
+                const window    = allPairs.slice(pairStart, pairEnd);
+                const content   = window.map(p => {
+                    const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
+                    for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
+                    return parts.join('\n\n');
+                }).join('\n\n');
+                combinedChunks.push({
+                    chunkIndex: combinedChunks.length,
+                    header:     lastMsg.extra.cnz_chunk_header,
+                    turnRange:  lastMsg.extra.cnz_turn_label?.replace(/^\*+\s*Memory:\s*/i, '') ?? `Pairs ${pairStart + 1}–${pairEnd}`,
+                    content,
+                    status:     'complete',
+                });
+                prevPairEnd = pairEnd;
+            }
         }
-        const combinedChunks = ragChunks.filter(c => c.status === 'complete');
 
         if (combinedChunks.length === 0) {
             toastr.warning('CNZ: No classified chunks found in chain — RAG file not rebuilt. Run a sync first.');
@@ -4320,7 +4366,7 @@ async function purgeAndRebuild() {
 
         // ── 5. Upload, register, patch LKG anchor, save ───────────────────────────
         const charName    = char.name ?? '';
-        const ragText     = buildRagDocument(combinedChunks, getSettings(), charName);
+        const ragText     = buildRagDocument(combinedChunks, ragSettings, charName);
         const ragFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name);
         const ragUrl      = await uploadRagFile(ragText, ragFileName);
         const byteSize    = new TextEncoder().encode(ragText).length;
