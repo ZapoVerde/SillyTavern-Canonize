@@ -1961,6 +1961,26 @@ function onEnterRagWorkshop() {
     // Modal is a read-only view of _ragChunks. Sync owns all chunk building and dispatch.
     renderRagWorkshop();
     renderAllChunkChatLabels();
+
+    // Auto-regen any pending chunks (e.g. restored from anchor with missing headers).
+    // Only fires if no classifier jobs are already in-flight — avoids re-dispatching
+    // chunks that a concurrent sync has already queued.
+    const pendingChunks  = _ragChunks.filter(c => c.status === 'pending');
+    const inFlightChunks = _ragChunks.filter(c => c.status === 'in-flight');
+    if (pendingChunks.length > 0 && inFlightChunks.length === 0) {
+        const messages = SillyTavern.getContext().chat ?? [];
+        const fullPairs = buildProsePairs(messages);
+        const settings  = getSettings();
+        setCurrentSettings(settings);
+        dispatchContract('rag_classifier', {
+            ragChunks:        pendingChunks,
+            fullPairs,
+            stagedPairs:      _stagedProsePairs,
+            stagedPairOffset: _stagedPairOffset,
+            splitPairIdx:     _splitPairIdx,
+            scenario_hooks:   '',
+        }, settings);
+    }
 }
 
 function onLeaveRagWorkshop() {
@@ -2717,7 +2737,15 @@ function populateRagPanel() {
     const char    = context.characters[context.characterId];
     if (!char || !getSettings().enableRag) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
     const allAttachments = extension_settings.character_attachments?.[char.avatar] ?? [];
-    if (!allAttachments.length) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
+    const headAnchor     = _dnaChain?.lkg;
+    const ragExpected    = headAnchor && (headAnchor.ragHeaders?.length > 0 || headAnchor.ragUrl);
+    if (!allAttachments.length && !ragExpected) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
+    if (ragExpected && !allAttachments.length) {
+        $('#cnz-rag-timeline').empty();
+        $('#cnz-rag-warning').text('Narrative Memory file missing — confirm to rebuild from current chunks.').removeClass('cnz-hidden');
+        $('#cnz-step4-rag').removeClass('cnz-hidden');
+        return;
+    }
     const rows = allAttachments.map(a =>
         `<div class="cnz-rag-item cnz-rag-item--existing">&#x2713; ${escapeHtml(a.name.replace(/\.txt$/i, ''))}</div>`,
     );
@@ -2860,8 +2888,11 @@ async function onConfirmClick() {
     }
 
     // ── Step 3: RAG upload ───────────────────────────────────────────────────
-    const hasManualChunks = _ragChunks.some(c => c.status === 'manual');
-    if (hasManualChunks || _ragRawDetached) {
+    const hasManualChunks    = _ragChunks.some(c => c.status === 'manual');
+    const hasSettledChunks   = _ragChunks.some(c => c.status === 'complete' || c.status === 'manual');
+    const ragAttachments     = extension_settings.character_attachments?.[char.avatar] ?? [];
+    const ragFileMissing     = hasSettledChunks && ragAttachments.length === 0;
+    if (hasManualChunks || _ragRawDetached || ragFileMissing) {
         try {
             const _ragCtx      = SillyTavern.getContext();
             const _ragCharName = _ragCtx?.characters?.[_ragCtx?.characterId]?.name ?? '';
@@ -3433,6 +3464,30 @@ async function openReviewModal() {
         _lorebookData  = structuredClone(headRef.anchor.lorebook ?? { entries: {} });
         _draftLorebook = structuredClone(_lorebookData);
         _lorebookName  = headRef.anchor.lorebook?.name || _lorebookName;
+
+        // Restore RAG state from the last committed anchor when no sync has run this session.
+        // Guard: if _stagedProsePairs is already populated, a sync is in progress — leave it alone.
+        if (_ragChunks.length === 0 && _stagedProsePairs.length === 0) {
+            const messages  = SillyTavern.getContext().chat ?? [];
+            const allPairs  = buildProsePairs(messages);
+            const { pairs, pairOffset } = deriveLastCommittedPairs(allPairs, messages, _dnaChain);
+            if (pairs.length > 0) {
+                _stagedProsePairs = pairs;
+                _stagedPairOffset = pairOffset;
+                _splitPairIdx     = pairs.length;
+                _ragChunks        = buildRagChunks(pairs, pairOffset, getSettings());
+
+                // Apply stored headers — chunks not present in the anchor stay 'pending' for auto-regen.
+                const headerMap = new Map((headRef.anchor.ragHeaders ?? []).map(h => [h.chunkIndex, h]));
+                for (const chunk of _ragChunks) {
+                    const stored = headerMap.get(chunk.chunkIndex);
+                    if (stored?.header) {
+                        chunk.header = stored.header;
+                        chunk.status = 'complete';
+                    }
+                }
+            }
+        }
     }
 
     if (parentRef) {
@@ -3679,6 +3734,35 @@ function computeSyncWindow(allPairs, messages, settings, coverAll, dnaChain) {
     const syncPairOffset = firstPair ? allPairs.indexOf(firstPair) : 0;
 
     return { syncPairs, syncPairOffset };
+}
+
+/**
+ * Derives the prose-pair slice that was committed in the most recent sync cycle.
+ * Inverse of computeSyncWindow — returns the pairs between the parent anchor and
+ * the head anchor rather than the uncommitted pairs after the head.
+ * Pure function — no module state reads.
+ *
+ * @param {object[]} allPairs   Full pair array from buildProsePairs(messages).
+ * @param {object[]} messages   Full chat message array.
+ * @param {object}   dnaChain   Current _dnaChain value (may be null).
+ * @returns {{ pairs: object[], pairOffset: number }}
+ */
+function deriveLastCommittedPairs(allPairs, messages, dnaChain) {
+    const anchors = dnaChain?.anchors ?? [];
+    if (anchors.length === 0) return { pairs: [], pairOffset: 0 };
+
+    const headRef   = anchors[anchors.length - 1];
+    const parentRef = anchors.length >= 2 ? anchors[anchors.length - 2] : null;
+
+    const headPriorSeq   = messages.slice(0, headRef.msgIdx + 1).filter(m => !m.is_system).length;
+    const parentPriorSeq = parentRef
+        ? messages.slice(0, parentRef.msgIdx + 1).filter(m => !m.is_system).length
+        : 0;
+
+    const pairs      = allPairs.filter(p => p.validIdx >= parentPriorSeq && p.validIdx < headPriorSeq);
+    const pairOffset = pairs.length > 0 ? allPairs.indexOf(pairs[0]) : 0;
+
+    return { pairs, pairOffset };
 }
 
 /**
