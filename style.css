@@ -1228,6 +1228,12 @@
     word-break: break-all;
 }
 
+.cnz-li-rag-label {
+    flex-shrink: 0;
+    min-width: 8em;
+    color: var(--cnz-text-muted, #888);
+}
+
 .cnz-li-status-ok      { color: var(--cnz-success, #4caf50); }
 .cnz-li-status-warn    { color: var(--cnz-error,   #e57373); }
 .cnz-li-status-pending { color: var(--cnz-text-muted, #888); }

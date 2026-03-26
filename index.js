@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.10
+ * @version 1.0.11
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -3303,50 +3303,75 @@ async function openDnaChainInspector() {
     const pairWord    = uncommitted === 1 ? 'pair' : 'pairs';
     $body.append(`<div class="cnz-li-summary">${uncommitted} uncommitted ${pairWord} since last update</div>`);
 
-    // ── Section 2: RAG files ──────────────────────────────────────────────────
+    // ── Section 2: RAG coverage map ───────────────────────────────────────────
+    // Shows each anchor in chronological order with its RAG file status.
+    // verifiedOnDisk is reused by the Section 3 anchor expand handler.
     $body.append('<div class="cnz-li-section-label">Narrative Memory</div>');
-    const attachments = extension_settings.character_attachments?.[char?.avatar] ?? [];
 
-    // verifiedOnDisk is populated below and reused by the anchor expand handler
-    // to flag anchor ragUrls that are missing or unregistered.
     const verifiedOnDisk = new Set();
 
-    if (attachments.length === 0) {
-        $body.append('<div class="cnz-li-rag-row"><span class="cnz-li-rag-name cnz-li-status-muted">No RAG files registered.</span></div>');
+    if (chain.anchors.length === 0) {
+        $body.append('<div class="cnz-li-rag-row"><span class="cnz-li-rag-name cnz-li-status-muted">No syncs committed yet.</span></div>');
     } else {
-        const $ragRows = {};
-        for (const att of attachments) {
-            const fileName = att.name ?? att.url.split('/').pop();
-            const $row = $(`<div class="cnz-li-rag-row">
-                <span class="cnz-li-rag-status cnz-li-status-pending">?</span>
-                <span class="cnz-li-rag-name">${escapeHtml(fileName)}</span>
-            </div>`);
-            $body.append($row);
-            $ragRows[att.url] = $row;
-        }
+        // Verify all URLs referenced by anchors plus the attachment registry in one call.
+        const attachments = extension_settings.character_attachments?.[char?.avatar] ?? [];
+        const anchorUrls  = chain.anchors.map(({ anchor }) => anchor.ragUrl).filter(Boolean);
+        const allUrls     = [...new Set([...anchorUrls, ...attachments.map(a => a.url)])];
 
-        try {
-            const res = await fetch('/api/files/verify', {
-                method:  'POST',
-                headers: getRequestHeaders(),
-                body:    JSON.stringify({ urls: attachments.map(a => a.url) }),
-            });
-            if (res.ok) {
-                const verified = await res.json();
-                for (const [url, exists] of Object.entries(verified)) {
-                    const $row = $ragRows[url];
-                    if (!$row) continue;
-                    const $status = $row.find('.cnz-li-rag-status');
-                    if (exists) {
-                        $status.text('✓').removeClass('cnz-li-status-pending').addClass('cnz-li-status-ok');
-                        verifiedOnDisk.add(url);
-                    } else {
-                        $status.text('✗').removeClass('cnz-li-status-pending').addClass('cnz-li-status-warn');
+        if (allUrls.length > 0) {
+            try {
+                const res = await fetch('/api/files/verify', {
+                    method:  'POST',
+                    headers: getRequestHeaders(),
+                    body:    JSON.stringify({ urls: allUrls }),
+                });
+                if (res.ok) {
+                    const verified = await res.json();
+                    for (const [url, exists] of Object.entries(verified)) {
+                        if (exists) verifiedOnDisk.add(url);
                     }
                 }
+            } catch (err) {
+                console.warn('[CNZ] openDnaChainInspector: RAG verify failed:', err);
             }
-        } catch (err) {
-            console.warn('[CNZ] openDnaChainInspector: RAG verify failed:', err);
+        }
+
+        // Render one row per anchor, oldest first.
+        // firstSeenLabel tracks the label of the anchor that first introduced each ragUrl,
+        // so repeated files show "(same as #N)" instead of just "(same)".
+        const total         = chain.anchors.length;
+        const firstSeenLabel = new Map(); // ragUrl → label string
+
+        for (let i = 0; i < chain.anchors.length; i++) {
+            const { anchor }  = chain.anchors[i];
+            const label       = i === total - 1 ? 'HEAD' : `#${i + 1}`;
+            const shortUuid   = anchor.uuid?.slice(0, 8) ?? '—';
+            const labelText   = `${label}  ${shortUuid}`;
+
+            let statusCls, statusChr, nameHtml;
+            if (!anchor.ragUrl) {
+                statusCls = 'cnz-li-status-warn';
+                statusChr = '⚠';
+                nameHtml  = '<span class="cnz-li-rag-name cnz-li-status-muted">no file</span>';
+            } else {
+                const onDisk = verifiedOnDisk.has(anchor.ragUrl);
+                statusCls = onDisk ? 'cnz-li-status-ok' : 'cnz-li-status-warn';
+                statusChr = onDisk ? '✓' : '✗';
+                if (firstSeenLabel.has(anchor.ragUrl)) {
+                    const ref = escapeHtml(firstSeenLabel.get(anchor.ragUrl));
+                    nameHtml = `<span class="cnz-li-rag-name cnz-li-status-muted">(same as ${ref})</span>`;
+                } else {
+                    firstSeenLabel.set(anchor.ragUrl, label);
+                    const fileName = escapeHtml(anchor.ragUrl.split('/').pop());
+                    nameHtml = `<span class="cnz-li-rag-name">${fileName}</span>`;
+                }
+            }
+
+            $body.append(`<div class="cnz-li-rag-row">
+                <span class="cnz-li-rag-label">${escapeHtml(labelText)}</span>
+                <span class="cnz-li-rag-status ${statusCls}">${statusChr}</span>
+                ${nameHtml}
+            </div>`);
         }
     }
 
