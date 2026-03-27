@@ -24,7 +24,6 @@
  * Recipes.targeted_new     — targeted new entry for a single lorebook concept.
  *
  * Triggers.auto_sync       — fires on MESSAGE_RECEIVED; condition checks gap / snooze.
- * Triggers.mask_advance    — fires on CHAT_COMPLETION_PROMPT_READY; computes mask payload.
  *
  * @contract
  *   assertions:
@@ -225,12 +224,6 @@ export const Triggers = {
     },
 
     /**
-     * Fires MASK_ADVANCE_TRIGGERED on each prompt-ready event so the context
-     * mask can be applied outside of `init()`. The payload carries the original
-     * ST event data object (mutated in-place by the handler) and the computed
-     * mask boundary. Returns null when no anchor exists yet.
-     */
-    /**
      * Fires SYNC_TRIGGERED when the review modal opens and the uncommitted gap
      * is >= the sync window. Skipped if a sync is already in progress.
      * Snooze is intentionally ignored — the user explicitly opened the modal.
@@ -259,27 +252,6 @@ export const Triggers = {
             return { char, messages, gap, every, trailingBoundary, largeGap: gap >= every * 2 };
         },
         emits: BUS_EVENTS.SYNC_TRIGGERED,
-    },
-
-    mask_advance: {
-        id:         'mask_advance',
-        source:     'st',
-        watchEvent: event_types.CHAT_COMPLETION_PROMPT_READY,
-        condition:  (state) => {
-            const { dnaChain, messages, eventData } = state;
-            const lkgIdxMask = dnaChain?.lkgMsgIdx ?? -1;
-            if (lkgIdxMask < 0) return null;
-            // Count non-system messages after the anchor in the raw chat array.
-            // Counting from the tail is stable: ST truncates from the head, so the
-            // live buffer after the anchor is always present in the prompt regardless
-            // of context window size.
-            const liveCount     = messages.slice(lkgIdxMask + 1).filter(m => !m.is_system).length;
-            const promptNsCount = eventData.chat.filter(m => m.role !== 'system').length;
-            const keepFrom      = promptNsCount - liveCount;
-            if (keepFrom <= 0) return null;
-            return { data: eventData, keepFrom };
-        },
-        emits: BUS_EVENTS.MASK_ADVANCE_TRIGGERED,
     },
 
 };

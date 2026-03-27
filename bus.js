@@ -64,7 +64,6 @@ export const BUS_EVENTS = Object.freeze({
     JOB_FAILED:             'JOB_FAILED',              // { jobId, cycleId, recipeId, error, inputs }
     CYCLE_STORE_UPDATED:    'CYCLE_STORE_UPDATED',     // { cycleId, key, value, error? }
     SYNC_TRIGGERED:         'SYNC_TRIGGERED',          // { char, messages, gap, every, trailingBoundary, largeGap }
-    MASK_ADVANCE_TRIGGERED: 'MASK_ADVANCE_TRIGGERED',  // { data, maskBoundary }
     SYNC_COMPLETED:         'SYNC_COMPLETED',          // { cycleId, outcomes }
     MODAL_OPENED:           'MODAL_OPENED',            // { }
     CORRECTION_SUBMITTED:   'CORRECTION_SUBMITTED',    // { cycleId, corrections }

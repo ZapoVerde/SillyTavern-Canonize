@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.13
+ * @version 1.0.14
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -5000,21 +5000,25 @@ async function init() {
         })();
     });
 
-    // Context mask — fired by the mask_advance trigger on CHAT_COMPLETION_PROMPT_READY.
-    // keepFrom is pre-computed by the trigger: it is the number of non-system prompt
-    // messages to skip from the front (everything at or before the anchor).
-    on(BUS_EVENTS.MASK_ADVANCE_TRIGGERED, ({ data, keepFrom }) => {
-        let nsCount = 0;
-        const filtered = data.chat.filter((msg) => {
-            if (msg.role === 'system') return true;
-            nsCount++;
-            return nsCount > keepFrom;
-        });
-        const hidden = data.chat.length - filtered.length;
-        if (hidden > 0) {
-            data.chat.splice(0, data.chat.length, ...filtered);
+    // Context mask — registered as a ST generate_interceptor in manifest.json.
+    // ST core calls cnzMaskMessages() directly before each generation.
+    globalThis.cnzMaskMessages = function(chat) {
+        if (!getSettings().autoAdvanceMask) return;
+        const IGNORE = SillyTavern.getContext().symbols.ignore;
+        // Scan from the tail for the most recent anchor in this chat slice.
+        // If ST's context window truncated the anchor out, all remaining messages
+        // are post-anchor and nothing should be hidden.
+        let anchorIdx = -1;
+        for (let i = chat.length - 1; i >= 0; i--) {
+            if (chat[i]?.extra?.cnz?.type === 'anchor') { anchorIdx = i; break; }
         }
-    });
+        if (anchorIdx < 0) return;
+        for (let i = 0; i <= anchorIdx; i++) {
+            chat[i] = structuredClone(chat[i]);
+            chat[i].extra ??= {};
+            chat[i].extra[IGNORE] = true;
+        }
+    };
 
 }
 

@@ -6,8 +6,9 @@
     "js": "index.js",
     "css": "style.css",
     "author": "ZapoVerde",
-    "version": "1.0.13",
+    "version": "1.0.14",
     "homePage": "https://github.com/ZapoVerde/SillyTavern-Canonize",
+    "generate_interceptor": "cnzMaskMessages",
     "auto_update": true,
     "i18n": {
         "en-us": "i18n/en-us.json"
