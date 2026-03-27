@@ -4033,32 +4033,21 @@ async function runHealer(char, _chatFileName) {
  * @param {string}      title              Title displayed in the modal header.
  * @param {string}      defaultValue       Value used by the "Reset to Default" button.
  * @param {string[]}    vars               Template variable names to display as badges.
- * @param {string|null} trailingPromptKey  Optional settings key for a trailing prompt shown below the main textarea.
  */
-function openPromptModal(settingsKey, title, defaultValue, vars = [], trailingPromptKey = null) {
-    const $overlay         = $('#cnz-pm-overlay');
-    const $textarea        = $('#cnz-pm-textarea');
-    const $titleEl         = $('#cnz-pm-title');
-    const $reset           = $('#cnz-pm-reset');
-    const $close           = $('#cnz-pm-close');
-    const $vars            = $('#cnz-pm-vars');
-    const $trailingSection = $('#cnz-pm-trailing-section');
-    const $trailingArea    = $('#cnz-pm-trailing-textarea');
+function openPromptModal(settingsKey, title, defaultValue, vars = []) {
+    const $overlay  = $('#cnz-pm-overlay');
+    const $textarea = $('#cnz-pm-textarea');
+    const $titleEl  = $('#cnz-pm-title');
+    const $reset    = $('#cnz-pm-reset');
+    const $close    = $('#cnz-pm-close');
+    const $vars     = $('#cnz-pm-vars');
 
     $titleEl.text(title);
     $textarea.val(getSettings()[settingsKey] ?? defaultValue);
     $vars.html(vars.map(v => `<code class="cnz-pm-var">{{${v}}}</code>`).join(' '));
 
-    if (trailingPromptKey) {
-        $trailingArea.val(getSettings()[trailingPromptKey] ?? '');
-        $trailingSection.removeClass('cnz-hidden');
-    } else {
-        $trailingSection.addClass('cnz-hidden');
-    }
-
     // Unbind any previous open's handlers before re-binding
     $textarea.off('input.pm');
-    $trailingArea.off('input.pm');
     $reset.off('click.pm');
     $close.off('click.pm');
     $overlay.off('click.pm');
@@ -4069,20 +4058,9 @@ function openPromptModal(settingsKey, title, defaultValue, vars = [], trailingPr
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
-    if (trailingPromptKey) {
-        $trailingArea.on('input.pm', function () {
-            getSettings()[trailingPromptKey] = $(this).val();
-            saveSettingsDebounced(); updateDirtyIndicator();
-        });
-    }
-
     $reset.on('click.pm', function () {
         getSettings()[settingsKey] = defaultValue;
         $textarea.val(defaultValue);
-        if (trailingPromptKey) {
-            getSettings()[trailingPromptKey] = '';
-            $trailingArea.val('');
-        }
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
@@ -4390,7 +4368,7 @@ function bindSettingsHandlers() {
 
     $('#cnz-edit-summary-prompt').on('click', () =>
         openPromptModal('hookseekerPrompt', 'Edit Summary Prompt', DEFAULT_HOOKSEEKER_PROMPT,
-            ['transcript', 'prev_summary'], 'hookseekerTrailingPrompt'));
+            ['transcript', 'prev_summary']));
 
     $('#cnz-edit-lorebook-prompt').on('click', () =>
         openPromptModal('lorebookSyncPrompt', 'Edit Lorebook Sync Prompt', DEFAULT_LOREBOOK_SYNC_PROMPT,

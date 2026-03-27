@@ -785,26 +785,6 @@
     resize: vertical;
 }
 
-.cnz-pm-trailing-section {
-    margin-top: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.cnz-pm-trailing-label {
-    font-size: 0.8rem;
-    opacity: 0.8;
-}
-
-.cnz-pm-trailing-textarea {
-    height: 100px;
-    font-size: 0.8rem;
-    font-family: monospace;
-    line-height: 1.45;
-    resize: vertical;
-}
-
 .cnz-pm-vars {
     display: flex;
     flex-wrap: wrap;

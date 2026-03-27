@@ -277,10 +277,6 @@ export function buildPromptModalHTML() {
     </div>
     <div id="cnz-pm-vars" class="cnz-pm-vars"></div>
     <textarea id="cnz-pm-textarea" class="cnz-textarea cnz-pm-textarea" spellcheck="false"></textarea>
-    <div id="cnz-pm-trailing-section" class="cnz-pm-trailing-section cnz-hidden">
-      <label class="cnz-label cnz-pm-trailing-label" for="cnz-pm-trailing-textarea">Trailing prompt</label>
-      <textarea id="cnz-pm-trailing-textarea" class="cnz-textarea cnz-pm-trailing-textarea" spellcheck="false" placeholder="e.g. Pay special attention to …"></textarea>
-    </div>
     <div class="cnz-buttons cnz-wizard-footer">
       <button id="cnz-pm-close" class="cnz-btn cnz-btn-secondary">Close</button>
     </div>
