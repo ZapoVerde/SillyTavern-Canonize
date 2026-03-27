@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.15
+ * @version 1.0.16
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -155,7 +155,6 @@ const PROFILE_DEFAULTS = Object.freeze({
     lorebookSyncStart:        'syncPoint',   // 'syncPoint' | 'latestTurn'
     lorebookSyncPrompt:       DEFAULT_LOREBOOK_SYNC_PROMPT,
     hookseekerPrompt:         DEFAULT_HOOKSEEKER_PROMPT,
-    hookseekerTrailingPrompt: '',
     // Rolling trim
     autoAdvanceMask:          false,
     // RAG

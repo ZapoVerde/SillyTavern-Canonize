@@ -50,13 +50,10 @@ export const Recipes = {
         id:           'hookseeker',
         inputs:       ['transcript'],
         buildPrompt:  (inputs, settings) => {
-            let prompt = interpolate(
+            return interpolate(
                 settings.hookseekerPrompt || DEFAULT_HOOKSEEKER_PROMPT,
                 { transcript: inputs.transcript, prev_summary: inputs.prev_summary ?? '' }
             );
-            const trailing = (settings.hookseekerTrailingPrompt ?? '').trim();
-            if (trailing) prompt = prompt + '\n\n' + trailing;
-            return prompt;
         },
         profileKey:   'profileId',
         maxTokens:    null,
