@@ -83,6 +83,7 @@
  */
 
 import { saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup } from '../../../../script.js';
+import { promptManager } from '../../../../scripts/openai.js';
 import { extension_settings } from '../../../extensions.js';
 import { updateWorldInfoList } from '../../../../scripts/world-info.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
@@ -136,8 +137,7 @@ if (MDP) enableDevMode();
 
 const EXT_NAME            = 'cnz';
 const DEFAULT_CONCURRENCY = 3;
-const HOOKS_START         = '<!-- Current Scenario State -->';
-const HOOKS_END           = '<!--  -->';
+const CNZ_SUMMARY_ID      = 'cnz_summary';
 
 
 // Profile-level configuration keys — saved per profile, loaded into activeState.
@@ -357,42 +357,95 @@ function escapeHtml(str) {
  * @param {number}   nonSystemCount  1-based target count.
  * @returns {number}
  */
-// ─── Scenario Anchor Management ───────────────────────────────────────────────
+// ─── CNZ Summary Prompt Management ────────────────────────────────────────────
 
 /**
- * Returns the text between the CNZ hooks anchor comments, or null if absent.
- * Pure function — no side effects.
- * @param {string} scenarioText
- * @returns {string|null}
+ * Returns the active PromptManager instance, or null if unavailable
+ * (e.g. non-Chat-Completion backend).
+ * @returns {import('../../../../scripts/PromptManager.js').PromptManager|null}
  */
-function extractHookseekerBlock(scenarioText) {
-    const start = scenarioText.indexOf(HOOKS_START);
-    const end   = scenarioText.indexOf(HOOKS_END);
-    if (start === -1 || end === -1 || end <= start) return null;
-    return scenarioText.slice(start + HOOKS_START.length, end);
+function getCnzPromptManager() {
+    return promptManager ?? null;
 }
 
 /**
- * Replaces the content between the CNZ hooks anchor comments with `newContent`.
- * If the anchors are absent, appends them (with two newlines of separation) to the
- * end of `scenarioText`. Returns the full updated scenario string.
- * Pure function — no side effects.
- * @param {string} scenarioText
- * @param {string} newContent
- * @returns {string}
+ * IO Executor. Ensures the CNZ Summary prompt exists in the prompt manager
+ * and is registered in the active prompt order above chatHistory.
+ * No-op if already present. Calls saveServiceSettings if it creates the prompt.
+ * @param {import('../../../../scripts/PromptManager.js').PromptManager} pm
  */
-function writeHookseekerBlock(scenarioText, newContent) {
-    const start = scenarioText.indexOf(HOOKS_START);
-    const end   = scenarioText.indexOf(HOOKS_END);
-    if (start !== -1 && end !== -1 && end > start) {
-        return (
-            scenarioText.slice(0, start + HOOKS_START.length) +
-            '\n' + newContent.trim() + '\n' +
-            scenarioText.slice(end)
-        );
+function ensureCnzSummaryPrompt(pm) {
+    if (pm.getPromptById(CNZ_SUMMARY_ID)) return;
+
+    pm.addPrompt({
+        name:    'CNZ Summary',
+        content: '',
+        role:    'system',
+        enabled: true,
+        cnz_avatar:      null,
+        cnz_anchor_uuid: null,
+    }, CNZ_SUMMARY_ID);
+
+    const order          = pm.getPromptOrderForCharacter(pm.activeCharacter);
+    const chatHistoryIdx = order.findIndex(e => e.identifier === 'chatHistory');
+    if (chatHistoryIdx !== -1) {
+        order.splice(chatHistoryIdx, 0, { identifier: CNZ_SUMMARY_ID, enabled: true });
+    } else {
+        order.push({ identifier: CNZ_SUMMARY_ID, enabled: true });
     }
-    const sep = scenarioText.length > 0 ? '\n\n' : '';
-    return scenarioText + sep + HOOKS_START + '\n' + newContent.trim() + '\n' + HOOKS_END;
+
+    pm.saveServiceSettings();
+}
+
+/**
+ * IO Executor. Writes hooks text, character avatar, and anchor UUID to the
+ * CNZ Summary prompt object, then persists via saveServiceSettings.
+ * Creates the prompt if absent.
+ * @param {string}      avatar      Character avatar filename.
+ * @param {string}      content     Hooks summary text.
+ * @param {string|null} anchorUuid  Head anchor UUID, or null if not yet committed.
+ */
+function writeCnzSummaryPrompt(avatar, content, anchorUuid) {
+    const pm = getCnzPromptManager();
+    if (!pm) return;
+    ensureCnzSummaryPrompt(pm);
+    const prompt = pm.getPromptById(CNZ_SUMMARY_ID);
+    if (!prompt) return;
+    prompt.content         = content;
+    prompt.cnz_avatar      = avatar;
+    prompt.cnz_anchor_uuid = anchorUuid ?? null;
+    pm.saveServiceSettings();
+}
+
+/**
+ * Stateful owner. Refreshes the CNZ Summary prompt from the DNA chain when
+ * the active character changes. In-memory update only — no saveServiceSettings,
+ * as the anchor chain is the source of truth.
+ * No-op if the prompt does not yet exist (not created until first sync).
+ * @param {object|null} char   Incoming character object, or null if no character.
+ * @param {object}      chain  Already-computed DNA chain for the incoming chat.
+ */
+function syncCnzSummaryOnCharacterSwitch(char, chain) {
+    const pm = getCnzPromptManager();
+    if (!pm) return;
+    const prompt = pm.getPromptById(CNZ_SUMMARY_ID);
+    if (!prompt) return;
+
+    if (!char) {
+        prompt.content         = '';
+        prompt.cnz_avatar      = null;
+        prompt.cnz_anchor_uuid = null;
+        return;
+    }
+
+    const head = chain?.lkg ?? null;
+    if (prompt.cnz_avatar === char.avatar && prompt.cnz_anchor_uuid === (head?.uuid ?? null)) {
+        return;
+    }
+
+    prompt.content         = head?.hooks ?? '';
+    prompt.cnz_avatar      = char.avatar;
+    prompt.cnz_anchor_uuid = head?.uuid ?? null;
 }
 
 // ─── DNA Chain ───────────────────────────────────────────────────────────────
@@ -540,7 +593,7 @@ async function writeDnaLinks(pairs, anchorIdx, uuid, pairOffset) {
  * consume DNA-chain anchors without modification.
  * Pure function — no state reads, no IO.
  * @param {CnzAnchor} anchor
- * @returns {{ state: { hooks: string, lorebook: object, ragFiles: string[] } }}
+ * @returns {{ state: { uuid: string|null, hooks: string, lorebook: object, ragFiles: string[] } }}
  */
 function buildNodeFileFromAnchor(anchor) {
     let ragFiles = [];
@@ -550,6 +603,7 @@ function buildNodeFileFromAnchor(anchor) {
     }
     return {
         state: {
+            uuid:     anchor.uuid ?? null,
             hooks:    anchor.hooks ?? '',
             lorebook: anchor.lorebook ?? { entries: {} },
             ragFiles,
@@ -1153,7 +1207,7 @@ function runTargetedLbCall(mode, entryName, entryKeys, entryContent, transcript)
  *   2. Each function corresponds to exactly one server endpoint or operation.
  * @api-declaration
  *   lbListLorebooks, lbGetLorebook, lbSaveLorebook, lbEnsureLorebook,
- *   patchCharacterScenario, uploadRagFile, registerCharacterAttachment,
+ *   uploadRagFile, registerCharacterAttachment,
  *   cnzUploadFile, cnzDeleteFile
  * @contract
  *   assertions:
@@ -1575,36 +1629,6 @@ async function patchCharacterWorld(char, lorebookName) {
     if (!res.ok) throw new Error(`World link patch failed (HTTP ${res.status})`);
 }
 
-async function patchCharacterScenario(char, newScenario) {
-    const formData = new FormData();
-    formData.append('ch_name',                   char.name);
-    formData.append('description',               char.description                      ?? '');
-    formData.append('personality',               char.personality                      ?? '');
-    formData.append('scenario',                  newScenario);
-    formData.append('first_mes',                 char.first_mes                        ?? '');
-    formData.append('mes_example',               char.mes_example                      ?? '');
-    formData.append('creator_notes',             char.data?.creator_notes              ?? '');
-    formData.append('system_prompt',             char.data?.system_prompt              ?? '');
-    formData.append('post_history_instructions', char.data?.post_history_instructions  ?? '');
-    //formData.append('tags', char.tags ?? []);
-    formData.append('creator',                   char.data?.creator                    ?? '');
-    formData.append('character_version',         char.data?.character_version          ?? '');
-    //formData.append('alternate_greetings', char.data?.alternate_greetings ?? []);
-    formData.append('json_data',                 JSON.stringify(char));
-    formData.append('avatar_url',                char.avatar);
-    formData.append('chat',                      char.chat);
-    formData.append('create_date',               char.create_date);
-
-    const headers = getRequestHeaders();
-    delete headers['Content-Type'];
-
-    const res = await fetch('/api/characters/edit', {
-        method:  'POST',
-        headers,
-        body:    formData,
-    });
-    if (!res.ok) throw new Error(`Scenario patch failed (HTTP ${res.status})`);
-}
 
 // ─── File Primitives ──────────────────────────────────────────────────────────
 
@@ -1688,7 +1712,7 @@ async function cnzDeleteFile(path) {
  *   runHealer, restoreLorebookToNode, restoreHooksToNode, restoreRagToNode
  * @contract
  *   assertions:
- *     external_io: [/api/worldinfo/*, /api/characters/edit, /api/files/delete, /api/chats/saveChat]
+ *     external_io: [/api/worldinfo/*, /api/files/delete, /api/chats/saveChat, promptManager.saveServiceSettings]
  */
 // ─── Healer Utilities ─────────────────────────────────────────────────────────
 
@@ -1710,20 +1734,16 @@ async function restoreLorebookToNode(_char, node, nodeFile = null) {
 }
 
 /**
- * Restores the character's scenario hooks block to the state stored in `node.state.hooks`.
- * Fetches the node file and writes hooks back via patchCharacterScenario.
+ * IO Executor. Restores the CNZ Summary prompt to the hooks state stored in
+ * `node.state.hooks` and stamps the anchor UUID from `node.state.uuid`.
  * @param {object} char  Character object from ST context.
- * @param {object} node  Dummy chain entry (used only for error messages).
+ * @param {object} _node Dummy chain entry (used only for error messages).
+ * @param {object|null} nodeFile  nodeFile-shaped object with state.hooks and state.uuid.
  */
-async function restoreHooksToNode(char, _node, nodeFile = null) {
-    const nodeFile_ = nodeFile;
-    const hooksText = nodeFile_?.state?.hooks ?? '';
-    const freshCtx  = SillyTavern.getContext();
-    const freshChar = freshCtx.characters.find(c => c.avatar === char.avatar);
-    if (!freshChar) throw new Error('Character not found in context for hooks restoration.');
-    const newScenario = writeHookseekerBlock(freshChar.scenario ?? '', hooksText);
-    await patchCharacterScenario(freshChar, newScenario);
-    await SillyTavern.getContext().getOneCharacter(freshChar.avatar);
+function restoreHooksToNode(char, _node, nodeFile = null) {
+    const hooksText  = nodeFile?.state?.hooks ?? '';
+    const anchorUuid = nodeFile?.state?.uuid  ?? null;
+    writeCnzSummaryPrompt(char.avatar, hooksText, anchorUuid);
 }
 
 /**
@@ -2766,16 +2786,11 @@ async function onConfirmClick() {
     // ── Step 1: Hooks save ───────────────────────────────────────────────────
     if (hooksText !== _priorSituation) {
         try {
-            const freshCtx  = SillyTavern.getContext();
-            const freshChar = freshCtx.characters.find(c => c.avatar === char.avatar);
-            if (freshChar) {
-                const newScenario = writeHookseekerBlock(freshChar.scenario ?? '', hooksText);
-                await patchCharacterScenario(freshChar, newScenario);
-                await SillyTavern.getContext().getOneCharacter(freshChar.avatar);
-                _priorSituation = hooksText;
-                hooksChanged = true;
-                upsertReceiptItem('cnz-receipt-hooks', receiptSuccess('Narrative Hooks updated in character scenario'));
-            }
+            // UUID unchanged — Confirm patches the head anchor in-place
+            writeCnzSummaryPrompt(char.avatar, hooksText, _dnaChain.lkg?.uuid ?? null);
+            _priorSituation = hooksText;
+            hooksChanged = true;
+            upsertReceiptItem('cnz-receipt-hooks', receiptSuccess('Narrative Hooks updated in CNZ Summary prompt'));
         } catch (err) {
             console.error('[CNZ] Hooks save failed:', err);
             upsertReceiptItem('cnz-receipt-hooks', receiptFailure(`Hooks save failed: ${err.message}`));
@@ -3468,10 +3483,13 @@ async function openReviewModal() {
         }
     }
 
-    // Re-fetch character to pick up any scenario patch written during a
-    // background sync that may not yet be reflected in the original char ref.
-    const freshChar = SillyTavern.getContext().characters.find(c => c.avatar === char.avatar);
-    _priorSituation = extractHookseekerBlock((freshChar ?? char).scenario ?? '') ?? '';
+    // Read current hooks from the CNZ Summary prompt (source of truth after a sync).
+    // Fall back to the head anchor's hooks field if the prompt is unavailable or stale.
+    const _pm          = getCnzPromptManager();
+    const _cnzPrompt   = _pm?.getPromptById(CNZ_SUMMARY_ID);
+    _priorSituation    = (_cnzPrompt && _cnzPrompt.cnz_avatar === char.avatar)
+        ? (_cnzPrompt.content ?? '')
+        : '';
 
     // Derive before/after states from DNA chain — no network fetches needed.
     _dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
@@ -3593,16 +3611,15 @@ async function processLorebookUpdate(rawText) {
 }
 
 /**
- * Writes new hookseeker text into the character scenario anchor block.
+ * IO Executor. Writes new hookseeker text into the CNZ Summary prompt.
+ * Anchor UUID is null at this point — stamped after commitDnaAnchor.
  * @param {string} hooksText  Raw hookseeker output.
- * @returns {Promise<void>}
  */
-async function processHooksUpdate(hooksText) {
+function processHooksUpdate(hooksText) {
     const ctx  = SillyTavern.getContext();
     const char = ctx.characters[ctx.characterId];
     if (!char) throw new Error('No character selected');
-    const newScenario = writeHookseekerBlock(char.scenario ?? '', hooksText.trim());
-    await patchCharacterScenario(char, newScenario);
+    writeCnzSummaryPrompt(char.avatar, hooksText.trim(), null);
 }
 
 /**
@@ -3898,6 +3915,9 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         await commitDnaAnchor(messages);
         anchorOk = true;
         console.log('[CNZ] DNA chain: ✓ ok');
+        // Stamp the now-known anchor UUID onto the CNZ Summary prompt
+        const newUuid = _dnaChain.lkg?.uuid ?? null;
+        if (newUuid) writeCnzSummaryPrompt(char.avatar, _priorSituation, newUuid);
     } catch (e) {
         console.error('[CNZ] DNA chain: ✗ failed —', e.message ?? e, e);
     }
@@ -4239,7 +4259,7 @@ async function purgeAndRebuild() {
         saveSettingsDebounced();
 
         // ── 2 & 3. Restore lorebook and hooks from LKG ───────────────────────────
-        const fakeNodeFile = { state: { lorebook: chain.lkg.lorebook, hooks: chain.lkg.hooks } };
+        const fakeNodeFile = { state: { uuid: chain.lkg.uuid ?? null, lorebook: chain.lkg.lorebook, hooks: chain.lkg.hooks } };
         await restoreLorebookToNode(char, { nodeId: 'rebuild' }, fakeNodeFile);
         await restoreHooksToNode(char, { nodeId: 'rebuild' }, fakeNodeFile);
 
@@ -4738,6 +4758,7 @@ function onChatChanged() {
         const chatMessages = SillyTavern.getContext().chat ?? [];
         _dnaChain = readDnaChain(chatMessages);
         setDnaChain(_dnaChain);
+        syncCnzSummaryOnCharacterSwitch(char, _dnaChain);
         if (char) {
             runHealer(char, char.chat).catch(err =>
                 console.error('[CNZ] onChatChanged: healer failed:', err),
