@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
+ * @version 1.0.17
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -3538,7 +3538,7 @@ async function openReviewModal() {
     _modalOpenHeadUuid   = headRef?.anchor?.uuid ?? null;
 
     // Link lorebook to character if not already set.
-    const charForLink = freshChar ?? char;
+    const charForLink = char;
     if (_lorebookName && charForLink?.data?.extensions?.world !== _lorebookName) {
         patchCharacterWorld(charForLink, _lorebookName).catch(e =>
             console.error('[CNZ] openReviewModal: lorebook link failed:', e.message ?? e),
