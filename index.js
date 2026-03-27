@@ -218,6 +218,7 @@ let _dnaChain = null;
 
 let _currentStep             = 1;    // active wizard step (1–4)
 let _lorebookLoading         = false;
+let _hooksLoading            = false;
 let _lbActiveIngesterIndex   = 0;
 let _lbDebounceTimer         = null;
 let _ragRawDetached          = false;
