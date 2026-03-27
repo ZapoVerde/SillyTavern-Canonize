@@ -269,9 +269,15 @@ export const Triggers = {
             const { dnaChain, messages, eventData } = state;
             const lkgIdxMask = dnaChain?.lkgMsgIdx ?? -1;
             if (lkgIdxMask < 0) return null;
-            const maskBoundary = messages.slice(0, lkgIdxMask + 1).filter(m => !m.is_system).length;
-            if (maskBoundary <= 0) return null;
-            return { data: eventData, maskBoundary };
+            // Count non-system messages after the anchor in the raw chat array.
+            // Counting from the tail is stable: ST truncates from the head, so the
+            // live buffer after the anchor is always present in the prompt regardless
+            // of context window size.
+            const liveCount     = messages.slice(lkgIdxMask + 1).filter(m => !m.is_system).length;
+            const promptNsCount = eventData.chat.filter(m => m.role !== 'system').length;
+            const keepFrom      = promptNsCount - liveCount;
+            if (keepFrom <= 0) return null;
+            return { data: eventData, keepFrom };
         },
         emits: BUS_EVENTS.MASK_ADVANCE_TRIGGERED,
     },

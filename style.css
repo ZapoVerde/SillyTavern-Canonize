@@ -978,6 +978,10 @@
     color: var(--yellow, #f0b429);
 }
 
+.cnz-choice-info {
+    color: var(--green, #4caf50);
+}
+
 .cnz-choice-buttons {
     display: flex;
     gap: 8px;

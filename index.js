@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.12
+ * @version 1.0.13
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
@@ -179,9 +179,6 @@ const PROFILE_DEFAULTS = Object.freeze({
 let _lorebookData   = null;  // {entries:{}} — server copy of the active lorebook
 let _draftLorebook  = null;  // working copy for staged changes
 
-// Set to true while CNZ itself drives a generateWithProfile/generateRaw call so
-// the MASK_ADVANCE_TRIGGERED handler knows to skip the context mask.
-let _cnzGenerating = false;
 
 // Healer tracking — updated on CHAT_CHANGED
 let _lastKnownAvatar = null;
@@ -1073,7 +1070,6 @@ function _waitForRecipe(recipeId, extraInputs = {}) {
         const settings = getSettings();
         setCurrentSettings(settings);
 
-        _cnzGenerating = true;
         const jobId = dispatchContract(recipeId, extraInputs, settings);
 
         function onCompleted({ jobId: j, recipeId: r, result }) {
@@ -1091,7 +1087,6 @@ function _waitForRecipe(recipeId, extraInputs = {}) {
         function cleanup() {
             off(BUS_EVENTS.JOB_COMPLETED, onCompleted);
             off(BUS_EVENTS.JOB_FAILED,    onFailed);
-            _cnzGenerating = false;
         }
 
         on(BUS_EVENTS.JOB_COMPLETED, onCompleted);
@@ -2796,18 +2791,6 @@ async function onConfirmClick() {
                 await lbSaveLorebook(_lorebookName, _draftLorebook);
                 _lorebookData = structuredClone(_draftLorebook);
 
-                // Derive delta inline — _lorebookDelta is no longer relied upon as ephemeral state
-                const createdUids = [], modifiedEntries = {};
-                for (const [uid, entry] of Object.entries(_draftLorebook.entries ?? {})) {
-                    const orig = preLorebook.entries?.[uid];
-                    if (!orig) {
-                        createdUids.push(uid);
-                    } else if (orig.content !== entry.content || JSON.stringify(orig.key) !== JSON.stringify(entry.key)) {
-                        modifiedEntries[uid] = { content: orig.content, key: [...(orig.key ?? [])] };
-                    }
-                }
-                // _lorebookDelta kept in sync for any remaining references (revert buttons etc.)
-                _lorebookDelta = { createdUids, modifiedEntries };
                 lorebookChanged = true;
 
                 const changedNames = Object.values(_draftLorebook.entries ?? {})
@@ -4730,7 +4713,6 @@ function resetSessionState() {
     _draftLorebook          = null;
     _lorebookName           = '';
     _lorebookSuggestions    = [];
-    _lorebookDelta          = null;
     _parentNodeLorebook     = null;
     _priorSituation         = '';
     _beforeSituation        = '';
@@ -4840,19 +4822,45 @@ async function onWandButtonClick() {
     }
 
     // gap > chunkEveryN — ask the user how much to cover.
-    // Ask the user how much to cover.
-    const extraWarning = `<p class="cnz-choice-warn">⚠ ${gap - (settings.chunkEveryN ?? 20)} turn(s) in the middle may never have been captured by auto-sync.</p>`;
+    // Check which middle turns are truly unRAGged vs already captured.
+    const winSize       = settings.chunkEveryN ?? 20;
+    const lkgIdx        = _dnaChain?.lkgMsgIdx ?? -1;
+    const lcb           = settings.liveContextBuffer ?? 5;
+    const pairCount     = messages.filter(m => !m.is_system && m.is_user).length;
+    const priorPairs    = lkgIdx >= 0
+        ? messages.slice(0, lkgIdx + 1).filter(m => !m.is_system && m.is_user).length
+        : 0;
+    const trailingBound = Math.max(0, pairCount - lcb);
+    const allPairs      = buildProsePairs(messages);
+    const gapPairs      = allPairs.slice(priorPairs, trailingBound);
+    const middlePairs   = gapPairs.slice(0, Math.max(0, gapPairs.length - winSize));
+    const unragged      = middlePairs.filter(p => {
+        const lastMsg = p.messages.length > 0 ? p.messages[p.messages.length - 1] : p.user;
+        return !lastMsg?.extra?.cnz_chunk_header;
+    });
+
+    let extraWarning;
+    if (middlePairs.length === 0) {
+        extraWarning = '';
+    } else if (unragged.length === 0) {
+        extraWarning = `<p class="cnz-choice-info">✓ All ${middlePairs.length} middle turn(s) are already in RAG — Standard window will only skip the anchor update.</p>`;
+    } else if (unragged.length < middlePairs.length) {
+        extraWarning = `<p class="cnz-choice-warn">⚠ ${unragged.length} of ${middlePairs.length} middle turn(s) have never been in RAG and will be lost with Standard window.</p>`;
+    } else {
+        extraWarning = `<p class="cnz-choice-warn">⚠ ${unragged.length} turn(s) in the middle have never been in RAG and will be lost with Standard window.</p>`;
+    }
+
     const choice = await showSyncChoicePopup(
         `<h3>How much should this sync cover?</h3>
-        <p>${gap} turn(s) have accumulated since the last sync (window size: ${settings.chunkEveryN ?? 20}).</p>
+        <p>${gap} turn(s) have accumulated since the last sync (window size: ${winSize}).</p>
         ${extraWarning}`,
         `Full gap (${gap} turns)`,
-        `Standard window (last ${settings.chunkEveryN ?? 20} turns)`,
+        `Standard window (last ${winSize} turns)`,
     );
     if (choice === 'cancel') return;
     const coverAll = choice === 'full';
 
-    toastr.info(`CNZ: Running sync (${coverAll ? `full ${gap}-turn gap` : `last ${settings.chunkEveryN ?? 20} turns`})…`);
+    toastr.info(`CNZ: Running sync (${coverAll ? `full ${gap}-turn gap` : `last ${winSize} turns`})…`);
     await runCnzSync(char, messages, { coverAll });
     openReviewModal();
 }
@@ -4992,14 +5000,15 @@ async function init() {
         })();
     });
 
-    // Context mask — fired by the mask_advance trigger on CHAT_COMPLETION_PROMPT_READY
-    on(BUS_EVENTS.MASK_ADVANCE_TRIGGERED, ({ data, maskBoundary }) => {
-        if (_cnzGenerating) return;  // skip mask during CNZ's own AI calls
+    // Context mask — fired by the mask_advance trigger on CHAT_COMPLETION_PROMPT_READY.
+    // keepFrom is pre-computed by the trigger: it is the number of non-system prompt
+    // messages to skip from the front (everything at or before the anchor).
+    on(BUS_EVENTS.MASK_ADVANCE_TRIGGERED, ({ data, keepFrom }) => {
         let nsCount = 0;
         const filtered = data.chat.filter((msg) => {
             if (msg.role === 'system') return true;
             nsCount++;
-            return nsCount > maskBoundary;
+            return nsCount > keepFrom;
         });
         const hidden = data.chat.length - filtered.length;
         if (hidden > 0) {
