@@ -349,16 +349,16 @@ export const state = {
 - [x] `modal/orchestrator.js`
 
 ### BATCH 4 — Slim index.js (subtasks)
-- [ ] 4a: Update imports block (remove promptManager/updateWorldInfoList; add state.js, core/*, lorebook/*, rag/*, modal/orchestrator)
-- [ ] 4b: Delete state/constants block — lines 136–348 (EXT_NAME, PROFILE_DEFAULTS, let _foo vars, typedefs, getSettings, escapeHtml)
-- [ ] 4c: Delete extracted core fns — lines 349–1563 (buildTranscript, buildProsePairs, utf8ToBase64, LLM calls, DNA chain, summary-prompt, lorebook API/utils)
-- [ ] 4d: Delete extracted rag+modal fns — lines 1564–3565 (rag/api, rag/pipeline, healer, patchCharacterWorld, all modal fns, openReviewModal)
-- [ ] 4e: Delete runHealer body — lines 3957–4024 (now in core/healer.js; replace with import call)
-- [ ] 4f: Delete runRagPipeline body — lines 3634–3677 (now in rag/pipeline.js; replace call in runCnzSync)
-- [ ] 4g: Delete purgeAndRebuild body — lines 4193–4330 (now in core/healer.js; remove, already imported)
-- [ ] 4h: Replace all bare `_foo` → `state._foo` in remaining functions (runCnzSync, processLorebookUpdate, commitDnaAnchor, resetStagedState, resetSessionState, onChatChanged, onWandButtonClick, bus subscribers, refreshSettingsUI, bindSettingsHandlers)
-- [ ] 4i: Update modal dynamic imports in hooks-workshop.js + lb-workshop.js from `../index.js` → `../core/llm-calls.js`
-- [ ] 4j: Update preamble
+- [x] 4a: Update imports block (remove promptManager/updateWorldInfoList; add state.js, core/*, lorebook/*, rag/*, modal/orchestrator)
+- [x] 4b: Delete state/constants block — lines 136–348 (EXT_NAME, PROFILE_DEFAULTS, let _foo vars, typedefs, getSettings, escapeHtml)
+- [x] 4c: Delete extracted core fns — lines 349–1563 (buildTranscript, buildProsePairs, utf8ToBase64, LLM calls, DNA chain, summary-prompt, lorebook API/utils)
+- [x] 4d: Delete extracted rag+modal fns — lines 1564–3565 (rag/api, rag/pipeline, healer, patchCharacterWorld, all modal fns, openReviewModal)
+- [x] 4e: Delete runHealer body — lines 3957–4024 (now in core/healer.js; replace with import call)
+- [x] 4f: Delete runRagPipeline body — lines 3634–3677 (now in rag/pipeline.js; replace call in runCnzSync)
+- [x] 4g: Delete purgeAndRebuild body — lines 4193–4330 (now in core/healer.js; remove, already imported)
+- [x] 4h: Replace all bare `_foo` → `state._foo` in remaining functions (runCnzSync, processLorebookUpdate, commitDnaAnchor, resetStagedState, resetSessionState, onChatChanged, onWandButtonClick, bus subscribers, refreshSettingsUI, bindSettingsHandlers)
+- [x] 4i: Update modal dynamic imports in hooks-workshop.js + lb-workshop.js from `../index.js` → `../core/llm-calls.js`
+- [x] 4j: Update preamble
 
 ### Notes
 - `modal/hooks-workshop.js`, `modal/lb-workshop.js` still call `runHookseekerCall` / `runLorebookSyncCall` / `runTargetedLbCall` via `import('../index.js')` — in Batch 4 update these to `import('../core/llm-calls.js')`
@@ -367,3 +367,4 @@ export const state = {
 
 ### Done
 Batches 1–3 verified 2026-03-27.
+Batch 4 complete 2026-03-27.

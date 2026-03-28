@@ -88,7 +88,7 @@ export async function onLbRegenClick() {
     const lbRegenSet    = getSettings();
     const transcript    = upToLatest ? buildModalTranscript(horizon) : buildSyncWindowTranscript(horizon, lbRegenMsgs, lbRegenSet);
 
-    import('../index.js').then(({ runLorebookSyncCall }) => {
+    import('../core/llm-calls.js').then(({ runLorebookSyncCall }) => {
         runLorebookSyncCall(transcript, preSyncLorebook)
             .then(text => {
 
@@ -330,7 +330,7 @@ export function onLbIngesterRegenerate() {
 
     $('#cnz-lb-btn-regen').prop('disabled', true);
 
-    import('../index.js').then(({ runTargetedLbCall }) => {
+    import('../core/llm-calls.js').then(({ runTargetedLbCall }) => {
         runTargetedLbCall(mode, s.name, keys, content, transcript)
             .then(rawText => {
                 const trimmed = rawText?.trim() ?? '';
@@ -466,7 +466,7 @@ export function onTargetedGenerateClick() {
     $('#cnz-targeted-spinner').removeClass('cnz-hidden');
     $('#cnz-targeted-generate').prop('disabled', true);
 
-    import('../index.js').then(({ runTargetedLbCall }) => {
+    import('../core/llm-calls.js').then(({ runTargetedLbCall }) => {
         runTargetedLbCall('new', keyword, '', '', transcript)
             .then(rawText => {
                 const trimmed = rawText?.trim() ?? '';

@@ -1,22 +1,24 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
+ * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role Feature Entry Point
  * @description
- * SillyTavern Narrative Engine (CNZ) — autonomous background engine that
- * silently canonizes roleplay turns every N turns into three persistent
- * stores: a lorebook (structured world facts), a scenario anchor block
- * (hookseeker prose summary of active threads), and a RAG document
- * (searchable narrative memory archive uploaded as a character attachment).
+ * SillyTavern Narrative Engine (CNZ) — extension entry point and session
+ * orchestrator. Owns the sync pipeline (runCnzSync), session state reset
+ * (resetSessionState/resetStagedState), ST event bindings, and the wand button.
+ * All major subsystems are now in separate modules:
+ *   core/     — llm-calls, healer, settings, transcript, dna-chain, summary-prompt
+ *   settings/ — panel (UI), data (settings state)
+ *   lorebook/ — api, utils
+ *   rag/      — api, pipeline
+ *   modal/    — orchestrator, commit, hooks-workshop, lb-workshop, rag-workshop
  *
- * A four-step review modal lets the user inspect and correct each sync
- * cycle's output before finalizing corrections to disk. The DNA Chain
- * tracks narrative milestones as Anchor records embedded directly in chat
- * messages, enabling the Healer to detect branches and restore the correct
- * world state for the active timeline.
+ * Background sync fires every chunkEveryN turns (via scheduler → SYNC_TRIGGERED).
+ * Manual sync runs via the wand button (onWandButtonClick). Both converge on
+ * runCnzSync → three parallel lanes (lorebook, hooks, RAG) → commitDnaAnchor.
  *
- * Modal steps:
+ * Modal steps (owned by modal/ modules):
  * (1) Hooks Workshop — edit/regen the hookseeker summary, diff vs previous sync
  * (2) Lorebook Workshop — review AI suggestions, targeted generate, stage corrections
  * (3) RAG Workshop — review chunk cards, edit headers, regen individual chunks
@@ -26,19 +28,19 @@
  * 1. SYNC OWNS ITS COMMIT: runCnzSync writes lorebook, hooks, RAG, and a DNA
  *    anchor to the chat as its own atomic operation. The modal corrects, it
  *    does not re-commit the sync.
- * 2. MODAL STAGES ONLY: All edits in the modal mutate _draftLorebook in memory.
+ * 2. MODAL STAGES ONLY: All edits in the modal mutate state._draftLorebook in memory.
  *    Nothing writes to disk until the user clicks Finalize.
  *    Suggestion objects carry three mutually exclusive verdict flags (_applied,
  *    _rejected, _deleted); all three start false so every suggestion opens
  *    unresolved for user review. Deleted entries are absent from
- *    _draftLorebook.entries and are therefore not written by Finalize.
+ *    state._draftLorebook.entries and are therefore not written by Finalize.
  * 3. ANCHOR IS SOURCE OF TRUTH: Before-states for all modal diffs come from
  *    the DNA chain's head anchor, never from ephemeral sync-cycle variables.
  * 4. HEAD ANCHOR UPDATED IN PLACE: Finalize patches the existing head anchor
  *    in the chat. No new anchor is written for modal corrections.
  * 5. ENGINE STATE SURVIVES MODAL: closeModal resets UI state only. All engine
- *    state (_ragChunks, _draftLorebook, _lorebookSuggestions, etc.) persists
- *    until character switch.
+ *    state (state._ragChunks, state._draftLorebook, state._lorebookSuggestions, etc.)
+ *    persists until character switch.
  * 6. CONTEXT MASK: The main AI prompt sees only turns above the DNA chain head.
  *    Older turns are replaced by the hookseeker summary and RAG chunks.
  * 
@@ -47,33 +49,35 @@
  *
  * @api-declaration
  * Entry points: onWandButtonClick() (manual), SYNC_TRIGGERED bus event (auto-sync).
- * Sync pipeline: runCnzSync(), runHealer().
- * Modal: openReviewModal(), onConfirmClick(), closeModal().
- * AI calls: _waitForRecipe() — routes all LLM calls through bus/executor.
- * RAG: buildRagChunks(), buildRagDocument(), waitForRagChunks().
- * Lorebook: parseLbSuggestions(), enrichLbSuggestions(), updateLbDiff(),
- *           deleteLbEntry(), revertLbSuggestion().
- * DNA Chain: readDnaChain(), getLkgAnchor(), findLastAiMessageInPair(),
- *            writeDnaAnchor(), writeDnaLinks(), buildAnchorPayload().
- * Bus: emit(), on(), off() — see bus.js
- * Recipes: Recipes{} — see recipes.js
- * Cycle: startCycle(), dispatchContract() — see cycleStore.js
+ * Sync pipeline (here): runCnzSync(), processLorebookUpdate(), processHooksUpdate(),
+ *   commitDnaAnchor(), computeSyncWindow(), deriveLastCommittedPairs(), logSyncStart().
+ * Session state (here): resetSessionState(), resetStagedState(), onChatChanged().
+ * Wand (here): onWandButtonClick(), injectWandButton(), showSyncChoicePopup().
+ * Init (here): init().
+ * Delegated to modules — see their @api-declaration for details:
+ *   settings/panel.js: injectSettingsPanel(), bindSettingsHandlers(), refreshSettingsUI(),
+ *     refreshProfileDropdown(), updateDirtyIndicator(), updateRagAiControlsVisibility(),
+ *     openPromptModal()
+ *   core/healer.js: runHealer(), purgeAndRebuild()
+ *   core/llm-calls.js: runLorebookSyncCall(), runHookseekerCall(), runTargetedLbCall()
+ *   modal/orchestrator.js: openReviewModal(), injectModal(), closeModal()
+ *   rag/pipeline.js: runRagPipeline(), buildRagChunks(), buildRagDocument()
  *
  * @contract
  *   assertions:
  *     purity: mutates
  *     state_ownership: [
- *       _lorebookData, _draftLorebook, _parentNodeLorebook,
- *       _priorSituation, _beforeSituation,
- *       _lorebookName, _lorebookSuggestions,
- *       _stagedProsePairs, _stagedPairOffset, _splitPairIdx,
- *       _ragChunks,
- *       _lastRagUrl,
- *       _cnzGenerating, _lastKnownAvatar,
- *       _currentStep, _modalOpenHeadUuid,
- *       _lorebookLoading, _lbActiveIngesterIndex,
- *       _lbDebounceTimer,
- *       _ragRawDetached, _pendingOrphans, _dnaChain,
+ *       state._lorebookData, state._draftLorebook, state._parentNodeLorebook,
+ *       state._priorSituation, state._beforeSituation,
+ *       state._lorebookName, state._lorebookSuggestions,
+ *       state._stagedProsePairs, state._stagedPairOffset, state._splitPairIdx,
+ *       state._ragChunks,
+ *       state._lastRagUrl,
+ *       state._lastKnownAvatar,
+ *       state._currentStep, state._modalOpenHeadUuid,
+ *       state._lorebookLoading, state._lbActiveIngesterIndex,
+ *       state._lbDebounceTimer,
+ *       state._ragRawDetached, state._pendingOrphans, state._dnaChain,
  *       extension_settings.cnz]
  *     external_io: [
  *       generateRaw (via executor.js), ConnectionManagerRequestService (via executor.js),
@@ -82,40 +86,31 @@
  *       /api/chats/saveChat]
  */
 
-import { saveSettingsDebounced, getRequestHeaders, eventSource, event_types, callPopup } from '../../../../script.js';
+import { saveSettingsDebounced, getRequestHeaders, eventSource, event_types } from '../../../../script.js';
 import { extension_settings } from '../../../extensions.js';
-import { ConnectionManagerRequestService } from '../../shared.js';
-import { buildSettingsHTML } from './ui.js';
 import { emit, on, off, enableDevMode, BUS_EVENTS } from './bus.js';
-import { dispatchContract, setCurrentSettings, invalidateAllJobs } from './cycleStore.js';
+import { invalidateAllJobs } from './cycleStore.js';
 import { initScheduler, setSyncInProgress, isSyncInProgress,
          snooze, resetScheduler, setDnaChain, getGap } from './scheduler.js';
 import { Triggers } from './recipes.js';
 import './executor.js';   // self-registers its CONTRACT_DISPATCHED handler on import
 import './logger.js';    // console observer for LLM call lifecycle
-import { DEFAULT_LOREBOOK_SYNC_PROMPT, DEFAULT_HOOKSEEKER_PROMPT,
-         DEFAULT_RAG_CLASSIFIER_PROMPT,
-         DEFAULT_TARGETED_UPDATE_PROMPT, DEFAULT_TARGETED_NEW_PROMPT } from './defaults.js';
-import { state, EXT_NAME, escapeHtml } from './state.js';
-import { getSettings, getMetaSettings, initSettings } from './core/settings.js';
+import { state } from './state.js';
+import { getSettings, initSettings } from './core/settings.js';
 import { buildTranscript, buildProsePairs } from './core/transcript.js';
 import { runLorebookSyncCall, runHookseekerCall } from './core/llm-calls.js';
 import { readDnaChain, getLkgAnchor, buildAnchorPayload,
          writeDnaAnchor, writeDnaLinks } from './core/dna-chain.js';
 import { writeCnzSummaryPrompt, syncCnzSummaryOnCharacterSwitch } from './core/summary-prompt.js';
-import { runHealer, purgeAndRebuild } from './core/healer.js';
+import { runHealer } from './core/healer.js';
 import { lbEnsureLorebook, lbSaveLorebook } from './lorebook/api.js';
 import { parseLbSuggestions, enrichLbSuggestions,
-         nextLorebookUid, makeLbDraftEntry, formatLorebookEntries } from './lorebook/utils.js';
-import { uploadRagFile, registerCharacterAttachment,
-         cnzAvatarKey, cnzFileName, cnzDeleteFile } from './rag/api.js';
-import { buildRagChunks, buildRagDocument, runRagPipeline,
-         waitForRagChunks, hydrateChunkHeadersFromChat,
-         writeChunkHeaderToChat, renderRagCard,
+         nextLorebookUid, makeLbDraftEntry } from './lorebook/utils.js';
+import { runRagPipeline, writeChunkHeaderToChat, renderRagCard,
          renderChunkChatLabel, clearChunkChatLabels } from './rag/pipeline.js';
 import { patchCharacterWorld } from './modal/commit.js';
-import { injectModal, openReviewModal,
-         openDnaChainInspector, openOrphanModal } from './modal/orchestrator.js';
+import { injectModal, openReviewModal, openOrphanModal } from './modal/orchestrator.js';
+import { injectSettingsPanel } from './settings/panel.js';
 
 // ─── Mobile Debug Panel ───────────────────────────────────────────────────────
 const MDP = false; // set true to enable on-screen console overlay for mobile debugging
@@ -147,49 +142,7 @@ if (MDP) (function() {
 })();
 if (MDP) enableDevMode();
 
-// ─── Local Constants ──────────────────────────────────────────────────────────
-
-const DEFAULT_CONCURRENCY = 3;   // default for maxConcurrentCalls setting
-const DEFAULT_SEPARATOR   = 'Chunk {{chunk_number}} ({{turn_range}})'; // RAG separator default
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+// ─── CNZ Core Helper ──────────────────────────────────────────────────────────
 
 function logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN) {
     const fmt = pairs => pairs.length > 0
@@ -216,10 +169,10 @@ function logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN) {
 async function processLorebookUpdate(rawText) {
     if (!rawText.trim() || rawText.trim() === 'NO CHANGES NEEDED') return;
     const suggestions = parseLbSuggestions(rawText);
-    _lorebookSuggestions = enrichLbSuggestions(suggestions);
-    for (const s of _lorebookSuggestions) {
+    state._lorebookSuggestions = enrichLbSuggestions(suggestions);
+    for (const s of state._lorebookSuggestions) {
         if (s.linkedUid !== null) {
-            const entry = _draftLorebook?.entries?.[String(s.linkedUid)];
+            const entry = state._draftLorebook?.entries?.[String(s.linkedUid)];
             if (entry) {
                 if (s.comment  !== undefined) entry.comment = s.comment;
                 if (s.keys     !== undefined) entry.key     = s.keys;
@@ -227,13 +180,13 @@ async function processLorebookUpdate(rawText) {
             }
         } else {
             const uid = nextLorebookUid();
-            _draftLorebook.entries[String(uid)] = makeLbDraftEntry(uid, s.name, s.keys, s.content);
+            state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(uid, s.name, s.keys, s.content);
             s.linkedUid = uid;
         }
         s._applied = false;
     }
-    await lbSaveLorebook(_lorebookName, _draftLorebook);
-    _lorebookData = structuredClone(_draftLorebook);
+    await lbSaveLorebook(state._lorebookName, state._draftLorebook);
+    state._lorebookData = structuredClone(state._draftLorebook);
 }
 
 /**
@@ -248,60 +201,7 @@ function processHooksUpdate(hooksText) {
     writeCnzSummaryPrompt(char.avatar, hooksText.trim(), null);
 }
 
-/**
- * Builds RAG chunks for the current sync window, classifies them, uploads the
- * RAG document, and registers it as a character attachment.
- *
- * Expects _stagedProsePairs and _stagedPairOffset to have been set by the caller
- * (runCnzSync) before this function is invoked. The surgical-unlock fallback below
- * guards against direct calls outside that context only.
- *
- * @returns {Promise<void>}
- */
-async function runRagPipeline() {
-    const ctx  = SillyTavern.getContext();
-    const char = ctx.characters[ctx.characterId];
-    if (!char) throw new Error('No character selected');
 
-    const messages = ctx.chat ?? [];
-    const allPairs = buildProsePairs(messages);
-
-    // Surgical unlock: guard against direct calls where staged pairs were not set.
-    if (_stagedProsePairs.length === 0 && allPairs.length > 0) {
-        _stagedProsePairs = [allPairs[allPairs.length - 1]];
-        const firstValidIdx = _stagedProsePairs[0].validIdx;
-        const foundIdx      = allPairs.findIndex(p => p.validIdx >= firstValidIdx);
-        _stagedPairOffset   = foundIdx === -1 ? 0 : foundIdx;
-    }
-
-    _splitPairIdx           = _stagedProsePairs.length;
-    const ragSettings = getSettings();
-    _ragChunks              = buildRagChunks(_stagedProsePairs, _stagedPairOffset, ragSettings);
-
-    hydrateChunkHeadersFromChat();
-    setCurrentSettings(ragSettings);
-    dispatchContract('rag_classifier', {
-        ragChunks:        _ragChunks,
-        fullPairs:        allPairs,
-        stagedPairs:      _stagedProsePairs,
-        stagedPairOffset: _stagedPairOffset,
-        splitPairIdx:     _splitPairIdx,
-        scenario_hooks:   '',
-    }, ragSettings);
-    await waitForRagChunks(120_000);
-
-    const ctx2      = SillyTavern.getContext();
-    const charName2 = ctx2?.characters?.[ctx2?.characterId]?.name ?? '';
-    const ragText   = buildRagDocument(_ragChunks, getSettings(), charName2);
-    if (!ragText.trim()) return;
-
-    const charName   = char.name;
-    const ragFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), charName);
-    _lastRagUrl      = await uploadRagFile(ragText, ragFileName);
-
-    const byteSize = new TextEncoder().encode(ragText).length;
-    registerCharacterAttachment(char.avatar, _lastRagUrl, ragFileName, byteSize);
-}
 
 /**
  * Commits the current sync cycle to the DNA chain by writing a CnzAnchor
@@ -311,37 +211,37 @@ async function runRagPipeline() {
  * @returns {Promise<void>}
  */
 async function commitDnaAnchor(messages) {
-    if (_stagedProsePairs.length === 0) {
+    if (state._stagedProsePairs.length === 0) {
         console.warn('[CNZ] commitDnaAnchor: no staged pairs — skipping anchor write');
         return;
     }
 
-    const anchorPairIdx = _stagedProsePairs.length - 1;
-    const anchorPair   = _stagedProsePairs[anchorPairIdx];
+    const anchorPairIdx = state._stagedProsePairs.length - 1;
+    const anchorPair   = state._stagedProsePairs[anchorPairIdx];
 
     const lkg        = getLkgAnchor(messages);
     const parentUuid = lkg?.anchor?.uuid ?? null;
 
-    const ragHeaders = _ragChunks
+    const ragHeaders = state._ragChunks
         .filter(c => c.status === 'complete' || c.status === 'manual')
-        .map(c => ({ chunkIndex: c.chunkIndex, header: c.header, turnRange: c.turnRange, pairStart: _stagedPairOffset + c.pairStart, pairEnd: _stagedPairOffset + c.pairEnd }));
+        .map(c => ({ chunkIndex: c.chunkIndex, header: c.header, turnRange: c.turnRange, pairStart: state._stagedPairOffset + c.pairStart, pairEnd: state._stagedPairOffset + c.pairEnd }));
 
     const anchor = buildAnchorPayload({
         uuid:        crypto.randomUUID(),
         committedAt: new Date().toISOString(),
-        hooks:       _priorSituation,
-        lorebook:    Object.assign({ name: _lorebookName }, structuredClone(_draftLorebook ?? { entries: {} })),
-        ragUrl:      _lastRagUrl || null,
+        hooks:       state._priorSituation,
+        lorebook:    Object.assign({ name: state._lorebookName }, structuredClone(state._draftLorebook ?? { entries: {} })),
+        ragUrl:      state._lastRagUrl || null,
         ragHeaders,
         parentUuid,
     });
 
     await writeDnaAnchor(anchorPair, anchor);
-    await writeDnaLinks(_stagedProsePairs, anchorPairIdx, anchor.uuid, _stagedPairOffset);
+    await writeDnaLinks(state._stagedProsePairs, anchorPairIdx, anchor.uuid, state._stagedPairOffset);
 
-    _dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
-    setDnaChain(_dnaChain);
-    console.log('[CNZ] commitDnaAnchor: anchor written uuid=' + anchor.uuid + ' pairs=' + _stagedProsePairs.length);
+    state._dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
+    setDnaChain(state._dnaChain);
+    console.log('[CNZ] commitDnaAnchor: anchor written uuid=' + anchor.uuid + ' pairs=' + state._stagedProsePairs.length);
 }
 
 /**
@@ -436,7 +336,7 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     setSyncInProgress(true);
     const settings  = getSettings();
     const allPairs  = buildProsePairs(messages);
-    const { syncPairs, syncPairOffset } = computeSyncWindow(allPairs, messages, settings, coverAll, _dnaChain);
+    const { syncPairs, syncPairOffset } = computeSyncWindow(allPairs, messages, settings, coverAll, state._dnaChain);
 
     if (syncPairs.length === 0) {
         console.warn('[CNZ] runCnzSync: no uncommitted pairs in window — aborting');
@@ -445,8 +345,8 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     }
 
     // Stage pairs so commitDnaAnchor and runRagPipeline both land on the right range.
-    _stagedProsePairs = syncPairs;
-    _stagedPairOffset = syncPairOffset;
+    state._stagedProsePairs = syncPairs;
+    state._stagedPairOffset = syncPairOffset;
 
     // Hookseeker transcript: sync pairs plus lookback into committed turns for continuity.
     const horizon       = settings.hookseekerHorizon ?? 40;
@@ -471,18 +371,18 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     logSyncStart(hookPairs, lbPairsForLog, syncPairs, coverAll, settings.chunkEveryN ?? 20);
 
     // Ensure lorebook is loaded before lanes start — auto-sync may run before openReviewModal.
-    if (!_draftLorebook) {
-        const lbName   = settings.lorebookName || char.name;
-        _lorebookName  = lbName;
-        _lorebookData  = await lbEnsureLorebook(_lorebookName);
-        _draftLorebook = structuredClone(_lorebookData);
-        console.log(`[CNZ] Lorebook lazy-loaded: "${_lorebookName}" (${Object.keys(_lorebookData.entries ?? {}).length} entries)`);
+    if (!state._draftLorebook) {
+        const lbName        = settings.lorebookName || char.name;
+        state._lorebookName = lbName;
+        state._lorebookData = await lbEnsureLorebook(state._lorebookName);
+        state._draftLorebook = structuredClone(state._lorebookData);
+        console.log(`[CNZ] Lorebook lazy-loaded: "${state._lorebookName}" (${Object.keys(state._lorebookData.entries ?? {}).length} entries)`);
     }
     // Link lorebook to character if not already set.
-    if (char?.data?.extensions?.world !== _lorebookName) {
+    if (char?.data?.extensions?.world !== state._lorebookName) {
         try {
-            await patchCharacterWorld(char, _lorebookName);
-            console.log(`[CNZ] Lorebook linked to character: "${char.name}" → "${_lorebookName}"`);
+            await patchCharacterWorld(char, state._lorebookName);
+            console.log(`[CNZ] Lorebook linked to character: "${char.name}" → "${state._lorebookName}"`);
         } catch (e) {
             console.error('[CNZ] Lorebook link failed:', e.message ?? e);
         }
@@ -492,7 +392,7 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     const lbPromise = (async () => {
         console.log('[CNZ] Lane 1 (lorebook): starting');
         try {
-            const text = await runLorebookSyncCall(lbTranscript, _lorebookData);
+            const text = await runLorebookSyncCall(lbTranscript, state._lorebookData);
             await processLorebookUpdate(text);
             console.log('[CNZ] Lane 1 (lorebook): ✓ ok');
             return true;
@@ -506,14 +406,14 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     const hooksPromise = (async () => {
         console.log('[CNZ] Lane 2 (hooks): starting');
         try {
-            const text = await runHookseekerCall(hookTranscript, _priorSituation);
+            const text = await runHookseekerCall(hookTranscript, state._priorSituation);
             await processHooksUpdate(text);
-            _priorSituation = text;
+            state._priorSituation = text;
             console.log('[CNZ] Lane 2 (hooks): ✓ ok');
             return true;
         } catch (e) {
             console.error('[CNZ] Lane 2 (hooks): ✗ failed —', e.message ?? e, e);
-            _priorSituation = 'Current Action';
+            state._priorSituation = 'Current Action';
             return false;
         }
     })();
@@ -542,8 +442,8 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         anchorOk = true;
         console.log('[CNZ] DNA chain: ✓ ok');
         // Stamp the now-known anchor UUID onto the CNZ Summary prompt
-        const newUuid = _dnaChain.lkg?.uuid ?? null;
-        if (newUuid) writeCnzSummaryPrompt(char.avatar, _priorSituation, newUuid);
+        const newUuid = state._dnaChain.lkg?.uuid ?? null;
+        if (newUuid) writeCnzSummaryPrompt(char.avatar, state._priorSituation, newUuid);
     } catch (e) {
         console.error('[CNZ] DNA chain: ✗ failed —', e.message ?? e, e);
     }
@@ -566,678 +466,8 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     }
 }
 
-/**
- * Fires on CHAT_CHANGED for same-character chat switches (and once at startup).
- * Walks the DNA chain against the current chat history to detect branches.
- * If a branch is found, restores the lorebook and hooks block to the last valid
- * anchor and rolls the DNA chain head back.
- *
- * Outcomes:
- *   - Same timeline (head hash matches) → silent return.
- *   - No matching node (pre-CNZ or unrelated chat) → silent return.
- *   - Branch detected → restore + toastr.warning.
- *   - Restoration failure → toastr.error.
- *
- * @param {object} char         Current character object from context.
- * @param {string} chatFileName Current chat filename (unused directly; kept for signature parity).
- */
-async function runHealer(char, _chatFileName) {
-    const context  = SillyTavern.getContext();
-    const messages = context.chat ?? [];
-    if (!messages.length) return;
 
-    _dnaChain = readDnaChain(messages);
-    setDnaChain(_dnaChain);
-    if (_dnaChain.anchors.length === 0) return;
 
-    // ── Head check — same timeline? ───────────────────────────────────────────
-    const headRef = _dnaChain.anchors[_dnaChain.anchors.length - 1];
-    if (messages[headRef.msgIdx]?.extra?.cnz?.uuid === headRef.anchor.uuid) return;
-
-    // ── Find deepest still-valid anchor ──────────────────────────────────────
-    const lkgRef = findLkgAnchorByPosition(_dnaChain.anchors, messages);
-    if (!lkgRef) return; // chat predates CNZ or is unrelated
-
-    // ── Branch detected ───────────────────────────────────────────────────────
-    const restorePoint = lkgRef.msgIdx + 1;
-
-    const confirmed = await callPopup(
-        `<h3>CNZ: Timeline Branch Detected</h3>
-        <p>The current chat diverges from the last committed sync point at
-        <strong>message ${restorePoint}</strong>.</p>
-        <p>CNZ will restore world state to that point:</p>
-        <ul>
-            <li>Lorebook entries rolled back</li>
-            <li>Narrative hooks rolled back</li>
-            <li>RAG files for orphaned turns removed</li>
-            <li>Vector index purged and rebuilt</li>
-        </ul>
-        <p>This cannot be undone.</p>`,
-        'confirm',
-    );
-
-    if (!confirmed) {
-        toastr.warning(
-            'CNZ: Timeline branch detected but restoration was cancelled — ' +
-            'world state may not match the current chat.',
-            '',
-            { timeOut: 0, extendedTimeOut: 0, closeButton: true },
-        );
-        return;
-    }
-
-    try {
-        const nodeFile   = buildNodeFileFromAnchor(lkgRef.anchor);
-        const nodeDummy  = { nodeId: lkgRef.anchor.uuid }; // safe dummy for error messages in restore fns
-
-        await restoreLorebookToNode(char, nodeDummy, nodeFile);
-        await restoreHooksToNode(char, nodeDummy, nodeFile);
-
-        try {
-            await restoreRagToNode(char, nodeFile);
-        } catch (err) {
-            console.error('[CNZ] Healer: RAG reconciliation failed:', err);
-            toastr.warning('CNZ: Branch healed but RAG reconciliation failed — vector index may be inconsistent.');
-        }
-
-        _dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
-        setDnaChain(_dnaChain);
-
-        toastr.warning(`CNZ: Branch detected — restored to message ${restorePoint}. Vector index rebuilt.`);
-    } catch (err) {
-        console.error('[CNZ] Healer: restoration failed:', err);
-        toastr.error('CNZ: Branch detected but restoration failed — lorebook may be inconsistent.');
-    }
-}
-
-// ─── Prompt Modal ─────────────────────────────────────────────────────────────
-
-/**
- * Opens the prompt-editor popup for a given settings key.
- * Changes are saved live on input; the modal is closed with the Close button
- * or by clicking the overlay backdrop.
- * @param {string}      settingsKey        Key in extension_settings[EXT_NAME] to read/write.
- * @param {string}      title              Title displayed in the modal header.
- * @param {string}      defaultValue       Value used by the "Reset to Default" button.
- * @param {string[]}    vars               Template variable names to display as badges.
- */
-function openPromptModal(settingsKey, title, defaultValue, vars = []) {
-    const $overlay  = $('#cnz-pm-overlay');
-    const $textarea = $('#cnz-pm-textarea');
-    const $titleEl  = $('#cnz-pm-title');
-    const $reset    = $('#cnz-pm-reset');
-    const $close    = $('#cnz-pm-close');
-    const $vars     = $('#cnz-pm-vars');
-
-    $titleEl.text(title);
-    $textarea.val(getSettings()[settingsKey] ?? defaultValue);
-    $vars.html(vars.map(v => `<code class="cnz-pm-var">{{${v}}}</code>`).join(' '));
-
-    // Unbind any previous open's handlers before re-binding
-    $textarea.off('input.pm');
-    $reset.off('click.pm');
-    $close.off('click.pm');
-    $overlay.off('click.pm');
-    $('#cnz-pm-modal').off('click.pm').on('click.pm', e => e.stopPropagation());
-
-    $textarea.on('input.pm', function () {
-        getSettings()[settingsKey] = $(this).val();
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $reset.on('click.pm', function () {
-        getSettings()[settingsKey] = defaultValue;
-        $textarea.val(defaultValue);
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    const closePromptModal = (e) => {
-        e?.stopPropagation();
-        $overlay.addClass('cnz-hidden');
-    };
-    $close.on('click.pm', closePromptModal);
-    $overlay.on('click.pm', function (e) {
-        if (e.target === this) closePromptModal(e);
-    });
-
-    $overlay.removeClass('cnz-hidden');
-    requestAnimationFrame(() => $textarea[0]?.focus());
-}
-
-/**
- * @section Settings Panel
- * @architectural-role Extension Settings UI
- * @description
- * Owns the extension settings UI rendered in the ST extensions panel.
- * Manages profile creation, switching, and deletion; binds all input
- * handlers to activeState; and controls visibility of dependent controls
- * (e.g. RAG AI controls hidden when RAG is disabled). The prompt modal
- * for editing multi-line prompts is also launched from here.
- * @core-principles
- *   1. All handlers write to activeState first, then call saveSettingsDebounced.
- *   2. refreshSettingsUI is the single source of truth for control state — never set DOM directly.
- * @api-declaration
- *   injectSettingsPanel, bindSettingsHandlers, refreshSettingsUI,
- *   refreshProfileDropdown, updateDirtyIndicator,
- *   updateRagAiControlsVisibility, openPromptModal
- * @contract
- *   assertions:
- *     external_io: [none]
- */
-// ─── Settings Panel ───────────────────────────────────────────────────────────
-
-/** True if activeState differs from the saved profile snapshot. */
-function isStateDirty() {
-    const meta = getMetaSettings();
-    return JSON.stringify(meta.activeState) !== JSON.stringify(meta.profiles[meta.currentProfileName]);
-}
-
-/** Updates the profile dropdown label to append '*' when state is dirty. */
-function updateDirtyIndicator() {
-    const meta  = getMetaSettings();
-    const label = meta.currentProfileName + (isStateDirty() ? ' *' : '');
-    const $sel  = $('#cnz-profile-select');
-    $sel.find(`option[value="${CSS.escape(meta.currentProfileName)}"]`).text(label);
-    $sel.val(meta.currentProfileName);
-}
-
-/**
- * Repopulates all settings inputs from activeState. Called after loading a profile.
- * Connection profile dropdowns are re-initialized via handleDropdown, which
- * requires the element to already be in the DOM.
- */
-function refreshSettingsUI() {
-    const s = getSettings();
-
-    $('#cnz-set-live-context-buffer').val(s.liveContextBuffer ?? 5);
-    $('#cnz-set-chunk-every-n').val(s.chunkEveryN ?? 20);
-    $('#cnz-set-gap-snooze').val(s.gapSnoozeTurns ?? 5);
-    $('#cnz-set-hookseeker-horizon').val(s.hookseekerHorizon ?? 40);
-    $('#cnz-set-lorebook-sync-start').val(s.lorebookSyncStart ?? 'syncPoint');
-    $('#cnz-set-auto-advance-mask').prop('checked', s.autoAdvanceMask ?? false);
-    $('#cnz-set-enable-rag').prop('checked', s.enableRag ?? false);
-    $('#cnz-rag-settings-body').toggleClass('cnz-disabled', !(s.enableRag ?? false));
-    $('#cnz-set-rag-separator').val(s.ragSeparator ?? DEFAULT_SEPARATOR);
-    $('#cnz-set-rag-contents').val(s.ragContents ?? 'summary+full');
-
-    const hasSummary = (s.ragContents ?? 'summary+full') !== 'full';
-    $('#cnz-rag-summary-source-row').toggleClass('cnz-hidden', !hasSummary);
-    $('#cnz-set-rag-summary-source').val(s.ragSummarySource ?? 'defined');
-    $('#cnz-set-rag-max-tokens').val(s.ragMaxTokens ?? 100);
-    $('#cnz-set-rag-chunk-size').val(s.ragChunkSize ?? 2);
-    $('#cnz-set-rag-chunk-overlap').val(s.ragChunkOverlap ?? 0);
-    $('#cnz-set-rag-classifier-history').val(s.ragClassifierHistory ?? 0);
-    $('#cnz-set-rag-max-concurrent').val(s.maxConcurrentCalls ?? DEFAULT_CONCURRENCY);
-    $('#cnz-set-rag-retries').val(s.ragMaxRetries ?? 1);
-    updateRagAiControlsVisibility();
-
-    // Re-initialize connection profile dropdowns with the newly loaded values.
-    try {
-        ConnectionManagerRequestService.handleDropdown(
-            '#cnz-set-profile',
-            s.profileId ?? '',
-            (profile) => { getSettings().profileId = profile?.id ?? null; saveSettingsDebounced(); updateDirtyIndicator(); },
-        );
-    } catch (e) { /* silent */ }
-    try {
-        ConnectionManagerRequestService.handleDropdown(
-            '#cnz-set-rag-profile',
-            s.ragProfileId ?? '',
-            (profile) => { getSettings().ragProfileId = profile?.id ?? null; saveSettingsDebounced(); updateDirtyIndicator(); },
-        );
-    } catch (e) { /* silent */ }
-
-    updateDirtyIndicator();
-}
-
-/** Rebuilds the profile <select> options from the current profiles dict. */
-function refreshProfileDropdown() {
-    const meta = getMetaSettings();
-    const $sel = $('#cnz-profile-select');
-    $sel.empty();
-    for (const name of Object.keys(meta.profiles)) {
-        $sel.append($('<option>').val(name).text(name));
-    }
-    updateDirtyIndicator();
-}
-
-/**
- * Hard-resets the external world to match the LKG anchor, then rebuilds a single
- * combined RAG file from all chunk data stored in the chain.
- *
- * Order of operations:
- *   1. Delete all CNZ RAG files for this character from the Data Bank.
- *   2. Restore the lorebook from the LKG anchor.
- *   3. Restore the hooks summary from the LKG anchor.
- *   4. Reconstruct one combined RAG document from every anchor's ragHeaders
- *      (using stored pairStart/pairEnd for content slicing, stored header text).
- *   5. Upload, register, update LKG anchor ragUrl, save chat.
- *   6. Purge and re-ingest the vector index.
- *
- * Stateful owner: reads module state (isSyncInProgress), writes nothing directly —
- * delegates all state mutation to the existing restore/register helpers.
- */
-async function purgeAndRebuild() {
-    if (isSyncInProgress()) {
-        toastr.warning('CNZ: Sync in progress — wait for it to complete.');
-        return;
-    }
-    const ctx  = SillyTavern.getContext();
-    const char = ctx?.characters?.[ctx?.characterId];
-    if (!char) { toastr.error('CNZ: No character selected.'); return; }
-
-    const messages = ctx.chat ?? [];
-    const chain    = readDnaChain(messages);
-    if (!chain.lkg) {
-        toastr.warning('CNZ: No anchor found in this chat — nothing to restore from.');
-        return;
-    }
-
-    const confirmed = await callPopup(`
-<h3>Purge &amp; Rebuild</h3>
-<p>For <strong>${escapeHtml(char.name)}</strong>, this will:</p>
-<ul>
-  <li>Delete all CNZ RAG files from the Data Bank</li>
-  <li>Clear and restore the lorebook from the last anchor</li>
-  <li>Restore the hooks summary from the last anchor</li>
-  <li>Rebuild a single RAG file from the full chain history</li>
-</ul>
-<label style="display:flex;align-items:center;gap:0.5em;margin-top:0.75em;">
-  <input type="checkbox" id="cnz-purge-deep">
-  Reclassify all chunks with AI (slow)
-</label>
-<p style="margin-top:0.5em">This cannot be undone.</p>`, 'confirm');
-    if (!confirmed) return;
-
-    const deepReclassify = document.getElementById('cnz-purge-deep')?.checked ?? false;
-
-    try {
-        // ── 1. Delete all CNZ RAG files ──────────────────────────────────────────
-        const cnzRagPrefix   = `cnz_${cnzAvatarKey(char.avatar)}_rag_`;
-        const allAttachments = extension_settings.character_attachments?.[char.avatar] ?? [];
-        const cnzFiles       = allAttachments.filter(a => a.name?.startsWith(cnzRagPrefix));
-        for (const f of cnzFiles) {
-            await cnzDeleteFile(f.url);
-        }
-        extension_settings.character_attachments[char.avatar] = allAttachments.filter(a => !cnzFiles.includes(a));
-        saveSettingsDebounced();
-
-        // ── 2 & 3. Restore lorebook and hooks from LKG ───────────────────────────
-        const fakeNodeFile = { state: { uuid: chain.lkg.uuid ?? null, lorebook: chain.lkg.lorebook, hooks: chain.lkg.hooks } };
-        await restoreLorebookToNode(char, { nodeId: 'rebuild' }, fakeNodeFile);
-        await restoreHooksToNode(char, { nodeId: 'rebuild' }, fakeNodeFile);
-
-        // ── 4. Reconstruct combined RAG document ──────────────────────────────────
-        const allPairs   = buildProsePairs(messages);
-        const ragSettings = getSettings();
-
-        // Fast path: hydrate from cnz_chunk_header stamps already on messages.
-        // Deep path: reclassify every chunk fresh via the AI classifier fan-out,
-        //   using the same dispatch + bus pattern as runRagPipeline.
-        let combinedChunks;
-        if (deepReclassify) {
-            // Set module state so the fan-out and bus subscriber operate correctly.
-            _stagedProsePairs = allPairs;
-            _stagedPairOffset = 0;
-            _splitPairIdx     = allPairs.length;
-            _ragChunks        = buildRagChunks(allPairs, 0, ragSettings); // all status: 'pending'
-
-            setCurrentSettings(ragSettings);
-            dispatchContract('rag_classifier', {
-                ragChunks:        _ragChunks,
-                fullPairs:        allPairs,
-                stagedPairs:      allPairs,
-                stagedPairOffset: 0,
-                splitPairIdx:     allPairs.length,
-                scenario_hooks:   chain.lkg.hooks ?? '',
-            }, ragSettings);
-            // Longer timeout — full chat history, not just one sync window.
-            await waitForRagChunks(300_000);
-            combinedChunks = _ragChunks.filter(c => c.status === 'complete');
-        } else {
-            // Fast path: walk messages and collect cnz_chunk_header stamps directly.
-            // Do NOT re-chunk — new chunk boundaries won't align with original stamps
-            // if the chat has grown since the original sync.
-            combinedChunks = [];
-            let prevPairEnd = 0;
-            for (let i = 0; i < allPairs.length; i++) {
-                const pair    = allPairs[i];
-                const lastMsg = pair?.messages?.[pair.messages.length - 1];
-                if (!lastMsg?.extra?.cnz_chunk_header) continue;
-                const pairStart = prevPairEnd;
-                const pairEnd   = i + 1;
-                const window    = allPairs.slice(pairStart, pairEnd);
-                const content   = window.map(p => {
-                    const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
-                    for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
-                    return parts.join('\n\n');
-                }).join('\n\n');
-                combinedChunks.push({
-                    chunkIndex: combinedChunks.length,
-                    header:     lastMsg.extra.cnz_chunk_header,
-                    turnRange:  lastMsg.extra.cnz_turn_label?.replace(/^\*+\s*Memory:\s*/i, '') ?? `Pairs ${pairStart + 1}–${pairEnd}`,
-                    content,
-                    status:     'complete',
-                });
-                prevPairEnd = pairEnd;
-            }
-        }
-
-        if (combinedChunks.length === 0) {
-            toastr.warning('CNZ: No classified chunks found in chain — RAG file not rebuilt. Run a sync first.');
-            return;
-        }
-
-        // ── 5. Upload, register, patch LKG anchor, save ───────────────────────────
-        const charName    = char.name ?? '';
-        const ragText     = buildRagDocument(combinedChunks, ragSettings, charName);
-        const ragFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name);
-        const ragUrl      = await uploadRagFile(ragText, ragFileName);
-        const byteSize    = new TextEncoder().encode(ragText).length;
-        registerCharacterAttachment(char.avatar, ragUrl, ragFileName, byteSize);
-
-        for (const { msgIdx } of chain.anchors) {
-            const msg = messages[msgIdx];
-            if (msg?.extra?.cnz) {
-                msg.extra.cnz = Object.assign({}, msg.extra.cnz, { ragUrl });
-            }
-        }
-        await ctx.saveChat();
-
-        // ── 6. Re-vectorize ───────────────────────────────────────────────────────
-        const { executeSlashCommandsWithOptions } = ctx;
-        await executeSlashCommandsWithOptions('/db-purge');
-        await executeSlashCommandsWithOptions('/db-ingest');
-
-        toastr.success(`CNZ: Rebuild complete — ${combinedChunks.length} chunks re-indexed.`);
-    } catch (err) {
-        console.error('[CNZ] purgeAndRebuild:', err);
-        toastr.error(`CNZ: Rebuild failed: ${err.message}`);
-    }
-}
-
-function bindSettingsHandlers() {
-    // ── Summary / Lorebook ────────────────────────────────────────────────────
-    $('#cnz-set-live-context-buffer').on('input', function () {
-        const val = Math.max(0, parseInt($(this).val()) || 5);
-        getSettings().liveContextBuffer = val;
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-chunk-every-n').on('input', function () {
-        const val = Math.max(1, parseInt($(this).val()) || 20);
-        getSettings().chunkEveryN = val;
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-gap-snooze').on('input', function () {
-        const val = Math.max(1, parseInt($(this).val()) || 5);
-        getSettings().gapSnoozeTurns = val;
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-hookseeker-horizon').on('input', function () {
-        const val = Math.max(1, parseInt($(this).val()) || 40);
-        getSettings().hookseekerHorizon = val;
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-lorebook-sync-start').on('change', function () {
-        getSettings().lorebookSyncStart = $(this).val();
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-auto-advance-mask').on('change', function () {
-        getSettings().autoAdvanceMask = $(this).prop('checked');
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-
-    $('#cnz-edit-summary-prompt').on('click', () =>
-        openPromptModal('hookseekerPrompt', 'Edit Summary Prompt', DEFAULT_HOOKSEEKER_PROMPT,
-            ['transcript', 'prev_summary']));
-
-    $('#cnz-edit-lorebook-prompt').on('click', () =>
-        openPromptModal('lorebookSyncPrompt', 'Edit Lorebook Sync Prompt', DEFAULT_LOREBOOK_SYNC_PROMPT,
-            ['lorebook_entries', 'transcript']));
-
-    $('#cnz-edit-targeted-update-prompt').on('click', () =>
-        openPromptModal('targetedUpdatePrompt', 'Edit Targeted Update Prompt',
-            DEFAULT_TARGETED_UPDATE_PROMPT,
-            ['entry_name', 'entry_keys', 'entry_content', 'transcript']));
-
-    $('#cnz-edit-targeted-new-prompt').on('click', () =>
-        openPromptModal('targetedNewPrompt', 'Edit Targeted New Entry Prompt',
-            DEFAULT_TARGETED_NEW_PROMPT,
-            ['entry_name', 'transcript']));
-
-    // ── RAG ───────────────────────────────────────────────────────────────────
-    $('#cnz-set-enable-rag').on('change', function () {
-        getSettings().enableRag = $(this).prop('checked');
-        saveSettingsDebounced(); updateDirtyIndicator();
-        $('#cnz-rag-settings-body').toggleClass('cnz-disabled', !getSettings().enableRag);
-    });
-
-    $('#cnz-set-rag-separator').on('change', function () {
-        const newVal   = $(this).val();
-        const oldVal   = getSettings().ragSeparator ?? '';
-        if (newVal === oldVal) return;
-
-        // Count stored chunk headers in the current chat
-        const chat       = SillyTavern.getContext().chat ?? [];
-        const storedCount = chat.filter(m => m.extra?.cnz_chunk_header).length;
-
-        if (storedCount > 0) {
-            const approxTurns = storedCount * (getSettings().ragChunkSize ?? 2);
-            const confirmed   = confirm(
-                `Changing the separator invalidates ${storedCount} stored chunk header(s) ` +
-                `(~${approxTurns} turns).\n\n` +
-                `All headers will be cleared and reclassified, and your external vector store ` +
-                `will need to resync.\n\nProceed?`
-            );
-            if (!confirmed) {
-                $(this).val(oldVal);   // revert the input
-                return;
-            }
-            // Clear stored headers from all chat messages
-            for (const m of chat) {
-                if (m.extra?.cnz_chunk_header) {
-                    delete m.extra.cnz_chunk_header;
-                    delete m.extra.cnz_turn_label;
-                }
-            }
-            SillyTavern.getContext().saveChat().catch(err =>
-                console.error('[CNZ] saveChat after separator clear failed:', err),
-            );
-            // Mark any in-memory chunks as pending so they reclassify on next open
-            for (const c of _ragChunks) {
-                if (c.status === 'complete' || c.status === 'manual') c.status = 'pending';
-            }
-        }
-
-        getSettings().ragSeparator = newVal;
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-rag-contents').on('change', function () {
-        getSettings().ragContents = $(this).val();
-        saveSettingsDebounced(); updateDirtyIndicator();
-        const hasSummary = $(this).val() !== 'full';
-        $('#cnz-rag-summary-source-row').toggleClass('cnz-hidden', !hasSummary);
-        updateRagAiControlsVisibility();
-    });
-
-    $('#cnz-set-rag-summary-source').on('change', function () {
-        getSettings().ragSummarySource = $(this).val();
-        saveSettingsDebounced(); updateDirtyIndicator();
-        updateRagAiControlsVisibility();
-    });
-
-    $('#cnz-set-rag-max-tokens').on('input', function () {
-        const val = parseInt($(this).val(), 10);
-        if (!isNaN(val) && val >= 1) {
-            getSettings().ragMaxTokens = val;
-            saveSettingsDebounced(); updateDirtyIndicator();
-        }
-    });
-
-    $('#cnz-set-rag-chunk-size').on('input', function () {
-        const val = Math.max(1, parseInt($(this).val()) || 2);
-        getSettings().ragChunkSize = val;
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-rag-chunk-overlap').on('change', function () {
-        getSettings().ragChunkOverlap = parseInt($(this).val()) || 0;
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-rag-max-concurrent').on('input', function () {
-        const val = Math.max(1, parseInt($(this).val()) || DEFAULT_CONCURRENCY);
-        getSettings().maxConcurrentCalls = val;
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-rag-retries').on('input', function () {
-        const val = Math.max(0, parseInt($(this).val()) || 0);
-        getSettings().ragMaxRetries = val;
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-rag-classifier-history').on('input', function () {
-        const val = Math.max(0, parseInt($(this).val()) || 0);
-        getSettings().ragClassifierHistory = val;
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-edit-classifier-prompt').on('click', () =>
-        openPromptModal('ragClassifierPrompt', 'Edit Classifier Prompt', DEFAULT_RAG_CLASSIFIER_PROMPT,
-            ['summary', 'history', 'target_turns']));
-
-    // ── Connection profiles ───────────────────────────────────────────────────
-    try {
-        ConnectionManagerRequestService.handleDropdown(
-            '#cnz-set-profile',
-            getSettings().profileId ?? '',
-            (profile) => {
-                getSettings().profileId = profile?.id ?? null;
-                saveSettingsDebounced(); updateDirtyIndicator();
-            },
-        );
-    } catch (e) {
-        console.warn('[CNZ] Could not initialize profile dropdown:', e);
-    }
-
-    try {
-        ConnectionManagerRequestService.handleDropdown(
-            '#cnz-set-rag-profile',
-            getSettings().ragProfileId ?? '',
-            (profile) => {
-                getSettings().ragProfileId = profile?.id ?? null;
-                saveSettingsDebounced(); updateDirtyIndicator();
-            },
-        );
-    } catch (e) {
-        console.warn('[CNZ] Could not initialize RAG profile dropdown:', e);
-    }
-
-    // ── Profile management ────────────────────────────────────────────────────
-    $('#cnz-profile-select').on('change', function () {
-        const newName = $(this).val();
-        const meta    = getMetaSettings();
-        if (!meta.profiles[newName]) return;
-        meta.currentProfileName = newName;
-        meta.activeState        = structuredClone(meta.profiles[newName]);
-        saveSettingsDebounced();
-        refreshSettingsUI();
-    });
-
-    $('#cnz-profile-save').on('click', function () {
-        const meta = getMetaSettings();
-        meta.profiles[meta.currentProfileName] = structuredClone(meta.activeState);
-        saveSettingsDebounced();
-        updateDirtyIndicator();
-    });
-
-    $('#cnz-profile-add').on('click', async function () {
-        const rawName = await callPopup('<h3>New profile name</h3>', 'input', '');
-        const name    = (rawName ?? '').trim();
-        if (!name) return;
-        const meta = getMetaSettings();
-        if (meta.profiles[name]) {
-            toastr.warning(`Profile "${name}" already exists.`);
-            return;
-        }
-        meta.profiles[name]     = structuredClone(meta.activeState);
-        meta.currentProfileName = name;
-        saveSettingsDebounced();
-        refreshProfileDropdown();
-    });
-
-    $('#cnz-profile-rename').on('click', async function () {
-        const meta    = getMetaSettings();
-        const rawName = await callPopup('<h3>Rename profile</h3>', 'input', meta.currentProfileName);
-        const newName = (rawName ?? '').trim();
-        if (!newName || newName === meta.currentProfileName) return;
-        if (meta.profiles[newName]) {
-            toastr.warning(`Profile "${newName}" already exists.`);
-            return;
-        }
-        meta.profiles[newName] = meta.profiles[meta.currentProfileName];
-        delete meta.profiles[meta.currentProfileName];
-        meta.currentProfileName = newName;
-        saveSettingsDebounced();
-        refreshProfileDropdown();
-    });
-
-    $('#cnz-profile-delete').on('click', async function () {
-        const meta = getMetaSettings();
-        if (Object.keys(meta.profiles).length <= 1) {
-            toastr.warning('Cannot delete the only profile.');
-            return;
-        }
-        const confirmed = await callPopup(
-            `<h3>Delete profile "${escapeHtml(meta.currentProfileName)}"?</h3>This cannot be undone.`,
-            'confirm',
-        );
-        if (!confirmed) return;
-        delete meta.profiles[meta.currentProfileName];
-        meta.currentProfileName = Object.keys(meta.profiles)[0];
-        meta.activeState        = structuredClone(meta.profiles[meta.currentProfileName]);
-        saveSettingsDebounced();
-        refreshProfileDropdown();
-        refreshSettingsUI();
-    });
-
-    $('#cnz-inspect-chain').on('click', function () {
-        openDnaChainInspector();
-    });
-
-
-    $('#cnz-purge-chain').on('click', function () { purgeAndRebuild(); });
-}
-
-/**
- * Shows/hides the RAG AI controls subgroup based on current ragContents and
- * ragSummarySource settings. Called on init and on dropdown changes.
- */
-function updateRagAiControlsVisibility() {
-    const s = getSettings();
-    const hasSummary    = (s.ragContents ?? 'summary+full') !== 'full';
-    const isDefinedHere = (s.ragSummarySource ?? 'defined') === 'defined';
-    $('#cnz-rag-ai-controls').toggleClass('cnz-disabled', !(hasSummary && isDefinedHere));
-}
-
-function injectSettingsPanel() {
-    if ($('#cnz-settings').length) return;
-    const meta = getMetaSettings();
-    $('#extensions_settings').append(
-        buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName),
-    );
-    bindSettingsHandlers();
-    refreshProfileDropdown();
-    updateRagAiControlsVisibility();
-}
 
 /**
  * @section Event Handlers and Init
@@ -1301,7 +531,7 @@ async function checkOrphans() {
 
     if (existing.length === 0) return;
 
-    _pendingOrphans = existing;
+    state._pendingOrphans = existing;
     const n = existing.length;
     toastr.warning(
         `CNZ: ${n} orphaned file${n !== 1 ? 's' : ''} from deleted character${n !== 1 ? 's' : ''}. ` +
@@ -1322,33 +552,33 @@ async function checkOrphans() {
  * on character switch.
  */
 function resetStagedState() {
-    _stagedProsePairs       = [];
-    _stagedPairOffset       = 0;
-    _splitPairIdx           = 0;
-    _ragChunks              = [];
+    state._stagedProsePairs       = [];
+    state._stagedPairOffset       = 0;
+    state._splitPairIdx           = 0;
+    state._ragChunks              = [];
     clearChunkChatLabels();
 }
 
 function resetSessionState() {
     invalidateAllJobs();
     resetScheduler();
-    _dnaChain               = null;
+    state._dnaChain               = null;
     setDnaChain(null);
-    _lorebookData           = null;
-    _draftLorebook          = null;
-    _lorebookName           = '';
-    _lorebookSuggestions    = [];
-    _parentNodeLorebook     = null;
-    _priorSituation         = '';
-    _beforeSituation        = '';
-    _lastRagUrl             = '';
+    state._lorebookData           = null;
+    state._draftLorebook          = null;
+    state._lorebookName           = '';
+    state._lorebookSuggestions    = [];
+    state._parentNodeLorebook     = null;
+    state._priorSituation         = '';
+    state._beforeSituation        = '';
+    state._lastRagUrl             = '';
     resetStagedState();
 }
 
 function onChatChanged() {
     const context = SillyTavern.getContext();
     if (!context || context.characterId == null) {
-        _lastKnownAvatar = null;
+        state._lastKnownAvatar = null;
         return;
     }
 
@@ -1356,13 +586,13 @@ function onChatChanged() {
     const chatFileName = char?.chat ?? null;
 
     // Character switched — reset all session state, then heal.
-    if (!char || char.avatar !== _lastKnownAvatar) {
-        _lastKnownAvatar = char?.avatar ?? null;
+    if (!char || char.avatar !== state._lastKnownAvatar) {
+        state._lastKnownAvatar = char?.avatar ?? null;
         resetSessionState();
         const chatMessages = SillyTavern.getContext().chat ?? [];
-        _dnaChain = readDnaChain(chatMessages);
-        setDnaChain(_dnaChain);
-        syncCnzSummaryOnCharacterSwitch(char, _dnaChain);
+        state._dnaChain = readDnaChain(chatMessages);
+        setDnaChain(state._dnaChain);
+        syncCnzSummaryOnCharacterSwitch(char, state._dnaChain);
         if (char) {
             runHealer(char, char.chat).catch(err =>
                 console.error('[CNZ] onChatChanged: healer failed:', err),
@@ -1450,7 +680,7 @@ async function onWandButtonClick() {
     // gap > chunkEveryN — ask the user how much to cover.
     // Check which middle turns are truly unRAGged vs already captured.
     const winSize       = settings.chunkEveryN ?? 20;
-    const lkgIdx        = _dnaChain?.lkgMsgIdx ?? -1;
+    const lkgIdx        = state._dnaChain?.lkgMsgIdx ?? -1;
     const lcb           = settings.liveContextBuffer ?? 5;
     const pairCount     = messages.filter(m => !m.is_system && m.is_user).length;
     const priorPairs    = lkgIdx >= 0
@@ -1525,7 +755,7 @@ async function init() {
     $(document).on('click', '.cnz-orphan-review', (e) => {
         e.preventDefault();
         toastr.clear();
-        openOrphanModal(_pendingOrphans);
+        openOrphanModal(state._pendingOrphans);
     });
     $(document).on('click', '.cnz-orphan-dismiss', (e) => {
         e.preventDefault();
@@ -1559,7 +789,7 @@ async function init() {
     // RAG fan-out: mark chunk in-flight when its contract is dispatched
     on(BUS_EVENTS.CONTRACT_DISPATCHED, ({ recipeId, inputs }) => {
         if (recipeId !== 'rag_classifier') return;
-        const chunk = _ragChunks[inputs?.chunkIndex];
+        const chunk = state._ragChunks[inputs?.chunkIndex];
         if (!chunk) return;
         chunk.status = 'in-flight';
         renderRagCard(inputs.chunkIndex);
@@ -1569,7 +799,7 @@ async function init() {
     on(BUS_EVENTS.CYCLE_STORE_UPDATED, ({ key, value }) => {
         if (key !== 'rag_chunk_results' || !value) return;
         for (const { chunkIndex, header } of value) {
-            const chunk = _ragChunks[chunkIndex];
+            const chunk = state._ragChunks[chunkIndex];
             if (!chunk) continue;
             if (header == null) {
                 // Failed chunk — leave as pending for retry

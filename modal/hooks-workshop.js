@@ -105,7 +105,7 @@ export function onRegenHooksClick() {
     const regenSettings = getSettings();
     const transcript    = buildSyncWindowTranscript(horizon, regenMessages, regenSettings);
 
-    import('../index.js').then(({ runHookseekerCall }) => {
+    import('../core/llm-calls.js').then(({ runHookseekerCall }) => {
         runHookseekerCall(transcript, state._priorSituation)
             .then(text => {
                 const trimmed = text.trim();
