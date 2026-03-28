@@ -102,7 +102,7 @@ export function countDraftChanges() {
     const draft = state._draftLorebook.entries ?? {};
     return Object.values(draft).filter(e => {
         const o = orig[String(e.uid)];
-        return !o || o.content !== e.content || JSON.stringify(o.key) !== JSON.stringify(e.key);
+        return !o || o.content !== e.content || JSON.stringify(o.key) !== JSON.stringify(e.key) || (o.comment ?? '') !== (e.comment ?? '');
     }).length;
 }
 
@@ -206,7 +206,7 @@ export async function onConfirmClick() {
                 lorebookChanged = true;
 
                 const changedNames = Object.values(state._draftLorebook.entries ?? {})
-                    .filter(e => { const o = preLorebook.entries[String(e.uid)]; return !o || o.content !== e.content || JSON.stringify(o.key) !== JSON.stringify(e.key); })
+                    .filter(e => { const o = preLorebook.entries[String(e.uid)]; return !o || o.content !== e.content || JSON.stringify(o.key) !== JSON.stringify(e.key) || (o.comment ?? '') !== (e.comment ?? ''); })
                     .map(e => e.comment || String(e.uid));
                 upsertReceiptItem('cnz-receipt-lorebook', receiptSuccess(
                     `Lorebook committed: ${changedNames.length ? changedNames.map(n => `"${n}"`).join(', ') : '(no changes staged)'}`,
@@ -289,5 +289,8 @@ export async function onConfirmClick() {
         }
     }
 
+    // Reset session guard so the next openReviewModal starts fresh from the
+    // newly-committed anchor state rather than reusing this now-stale draft.
+    state._modalOpenHeadUuid = null;
     import('./orchestrator.js').then(({ closeModal }) => closeModal());
 }

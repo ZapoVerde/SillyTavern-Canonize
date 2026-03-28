@@ -208,19 +208,28 @@ export function renderLbIngesterDetail(suggestion) {
     $('#cnz-lb-editor-keys').val(suggestion.keys.join(', '));
     $('#cnz-lb-editor-content').val(suggestion.content);
     $('#cnz-lb-error-ingester').addClass('cnz-hidden').text('');
-    // ← Latest: disabled if the AI never generated anything for this entry
+
+    const isDeleted = !!suggestion._deleted;
+
+    // Editor is readonly for deleted entries — there is nothing to edit
+    $('#cnz-lb-editor-name, #cnz-lb-editor-keys, #cnz-lb-editor-content').prop('readonly', isDeleted);
+
+    // ← Latest / Regen: meaningless once the entry is marked for deletion
     const hasAiSnapshot = !!(suggestion._aiSnapshot?.content);
-    $('#cnz-lb-btn-latest').prop('disabled', !hasAiSnapshot);
-    // ← Prev: disabled for brand-new entries; enabled on deleted entries with a prior version
+    $('#cnz-lb-btn-latest').prop('disabled', !hasAiSnapshot || isDeleted);
+    $('#cnz-lb-btn-regen').prop('disabled', isDeleted);
+
+    // ← Prev: the only way to un-delete — enabled when a parent-node baseline exists
     const hasPrev = suggestion.linkedUid !== null &&
         !!(state._parentNodeLorebook?.entries?.[String(suggestion.linkedUid)]);
     $('#cnz-lb-btn-prev').prop('disabled', !hasPrev);
-    // Verdict buttons: whichever verdict is active is disabled; the others are enabled
-    const isDeleted  = !!suggestion._deleted;
+
+    // Verdict buttons: Apply and Reject are both disabled for deleted entries.
+    // Use ← Prev to restore the entry to its parent-node state.
     const isApplied  = !!suggestion._applied  && !isDeleted;
     const isRejected = !!suggestion._rejected && !isDeleted;
-    $('#cnz-lb-apply-one').prop('disabled',  isApplied);
-    $('#cnz-lb-reject-one').prop('disabled', isRejected);
+    $('#cnz-lb-apply-one').prop('disabled',  isApplied  || isDeleted);
+    $('#cnz-lb-reject-one').prop('disabled', isRejected || isDeleted);
     $('#cnz-lb-delete-one').prop('disabled', isDeleted);
     updateLbDiff();
 }
@@ -235,7 +244,7 @@ export function onLbSuggestionSelectChange() {
 
 export function onLbIngesterEditorInput() {
     const s = state._lorebookSuggestions[state._lbActiveIngesterIndex];
-    if (s) {
+    if (s && !s._deleted) {
         const newName = $('#cnz-lb-editor-name').val();
         s.name    = newName;
         s.keys    = $('#cnz-lb-editor-keys').val().split(',').map(k => k.trim()).filter(Boolean);
@@ -370,7 +379,7 @@ export function onLbIngesterNext() {
     if (!total) return;
     for (let offset = 1; offset < total; offset++) {
         const i = (state._lbActiveIngesterIndex + offset) % total;
-        if (!state._lorebookSuggestions[i]._applied && !state._lorebookSuggestions[i]._rejected) {
+        if (!state._lorebookSuggestions[i]._applied && !state._lorebookSuggestions[i]._rejected && !state._lorebookSuggestions[i]._deleted) {
             state._lbActiveIngesterIndex = i;
             $('#cnz-lb-suggestion-select').val(i);
             renderLbIngesterDetail(state._lorebookSuggestions[i]);
@@ -411,7 +420,7 @@ export function onLbIngesterReject() {
 }
 
 export async function onLbApplyAllUnresolved() {
-    const unresolved = state._lorebookSuggestions.filter(s => !s._applied && !s._rejected);
+    const unresolved = state._lorebookSuggestions.filter(s => !s._applied && !s._rejected && !s._deleted);
     if (!unresolved.length) { toastr.info('No unresolved lorebook suggestions to apply.'); return; }
     const count     = unresolved.length;
     const $overlay  = $('#cnz-overlay');

@@ -364,7 +364,7 @@ export function updateLbDiff() {
 }
 
 /**
- * Returns true if draft lorebook differs from base (content or keys changed).
+ * Returns true if draft lorebook differs from base (content, keys, or comment changed).
  * @param {object} draft
  * @param {object} base
  * @returns {boolean}
@@ -379,6 +379,7 @@ export function isDraftDirty(draft, base) {
         if (!orig) return true;
         if (orig.content !== entry.content) return true;
         if (JSON.stringify(orig.key) !== JSON.stringify(entry.key)) return true;
+        if ((orig.comment ?? '') !== (entry.comment ?? '')) return true;
     }
     return false;
 }
@@ -485,8 +486,12 @@ export function revertLbSuggestion(idx) {
 // avoid circular dependencies at module evaluation time.
 
 async function renderLbIngesterDetail(suggestion) {
-    const { renderLbIngesterDetail: fn } = await import('../modal/lb-workshop.js');
-    fn(suggestion);
+    try {
+        const { renderLbIngesterDetail: fn } = await import('../modal/lb-workshop.js');
+        fn(suggestion);
+    } catch (err) {
+        console.error('[CNZ] renderLbIngesterDetail deferred import failed:', err);
+    }
 }
 
 /**

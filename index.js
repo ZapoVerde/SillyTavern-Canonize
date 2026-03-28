@@ -174,7 +174,7 @@ async function processLorebookUpdate(rawText) {
         if (s.linkedUid !== null) {
             const entry = state._draftLorebook?.entries?.[String(s.linkedUid)];
             if (entry) {
-                if (s.comment  !== undefined) entry.comment = s.comment;
+                if (s.name     !== undefined) entry.comment = s.name;
                 if (s.keys     !== undefined) entry.key     = s.keys;
                 if (s.content  !== undefined) entry.content = s.content;
             }

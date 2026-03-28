@@ -314,9 +314,15 @@ export async function openReviewModal() {
     const headRef   = state._dnaChain.lkg ? { anchor: state._dnaChain.lkg, msgIdx: state._dnaChain.lkgMsgIdx } : null;
     const parentRef = headRef ? (state._dnaChain.anchors[state._dnaChain.anchors.length - 2] ?? null) : null;
 
+    // True when the user is reopening the modal within the same sync cycle — the
+    // anchor UUID matches the one captured at the last open, meaning no new sync has
+    // committed since. In this case we preserve _draftLorebook and _lorebookSuggestions
+    // (including any applied/rejected/edited state) so edits survive modal close/reopen.
+    const isSameSession = !!headRef && state._modalOpenHeadUuid === headRef.anchor.uuid && !!state._draftLorebook;
+
     if (headRef) {
         state._lorebookData  = structuredClone(headRef.anchor.lorebook ?? { entries: {} });
-        state._draftLorebook = structuredClone(state._lorebookData);
+        if (!isSameSession) state._draftLorebook = structuredClone(state._lorebookData);
         state._lorebookName  = headRef.anchor.lorebook?.name || state._lorebookName;
 
         // Restore RAG state from the last committed anchor when no sync has run this session.
@@ -351,8 +357,8 @@ export async function openReviewModal() {
         state._parentNodeLorebook = null;
     }
 
-    state._lorebookSuggestions = headRef ? deriveSuggestionsFromAnchorDiff(state._parentNodeLorebook, state._draftLorebook) : [];
-    state._modalOpenHeadUuid   = headRef?.anchor?.uuid ?? null;
+    if (!isSameSession) state._lorebookSuggestions = headRef ? deriveSuggestionsFromAnchorDiff(state._parentNodeLorebook, state._draftLorebook) : [];
+    state._modalOpenHeadUuid = headRef?.anchor?.uuid ?? null;
 
     // Link lorebook to character if not already set.
     const freshChar = ctx?.characters?.[ctx?.characterId];
