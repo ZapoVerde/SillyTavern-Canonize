@@ -75,6 +75,22 @@ export function buildProsePairsSlice(pairs, start, end) {
 }
 
 /**
+ * Formats an array of prose pairs as a bracketed transcript string.
+ * Each turn is rendered as `[NAME]\ntext`, turns separated by double newlines.
+ * @param {object[]} pairs
+ * @returns {string}
+ */
+export function formatPairsAsTranscript(pairs) {
+    return pairs
+        .map(p => {
+            const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
+            for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
+            return parts.join('\n\n');
+        })
+        .join('\n\n');
+}
+
+/**
  * Slices `pairs` so the total UTF-8 byte size of all message text stays under
  * `maxBytes`. Counts from the end (most recent pairs kept).
  * @param {object[]} pairs

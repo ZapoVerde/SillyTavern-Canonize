@@ -35,6 +35,7 @@
 // Static declarations. Never modified at runtime.
 // buildPrompt is the only function allowed here — pure, no side effects.
 
+import { formatPairsAsTranscript } from './core/transcript.js';
 import { interpolate,
          DEFAULT_HOOKSEEKER_PROMPT,
          DEFAULT_LOREBOOK_SYNC_PROMPT,
@@ -116,26 +117,14 @@ export const Recipes = {
                 if (targetPairs.length === 0) continue;
 
                 // Build transcript (mirrors buildRagChunks content assembly)
-                const transcript = targetPairs
-                    .map(p => {
-                        const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
-                        for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
-                        return parts.join('\n\n');
-                    })
-                    .join('\n\n');
+                const transcript = formatPairsAsTranscript(targetPairs);
 
                 // Build history (mirrors resolveClassifierHistory)
                 let history = '';
                 if (historyN > 0 && fullPairs?.length) {
                     const absStart = (stagedPairOffset ?? 0) + pairStart;
                     const fromIdx  = Math.max(0, absStart - historyN);
-                    history = fullPairs.slice(fromIdx, absStart)
-                        .map(p => {
-                            const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
-                            for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
-                            return parts.join('\n\n');
-                        })
-                        .join('\n\n');
+                    history = formatPairsAsTranscript(fullPairs.slice(fromIdx, absStart));
                 }
 
                 inputSets.push({ chunkIndex: chunk.chunkIndex, transcript, scenario_hooks, history });

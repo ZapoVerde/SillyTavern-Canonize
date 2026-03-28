@@ -15,7 +15,7 @@
  * @contract
  *   assertions:
  *     purity: mutates
- *     state_ownership: [state._hooksLoading, state._priorSituation]
+ *     state_ownership: [state._hooksLoading, state._priorSituation, state._hooksRegenGen]
  *     external_io: [generateRaw]
  */
 
@@ -100,6 +100,7 @@ export function updateHooksDiff() {
 export function onRegenHooksClick() {
     setHooksLoading(true);
     $('#cnz-error-1').addClass('cnz-hidden').text('');
+    const thisGen       = ++state._hooksRegenGen;
     const horizon       = getSettings().hookseekerHorizon ?? 40;
     const regenMessages = SillyTavern.getContext().chat ?? [];
     const regenSettings = getSettings();
@@ -108,6 +109,7 @@ export function onRegenHooksClick() {
     import('../core/llm-calls.js').then(({ runHookseekerCall }) => {
         runHookseekerCall(transcript, state._priorSituation)
             .then(text => {
+                if (state._hooksRegenGen !== thisGen) return;
                 const trimmed = text.trim();
                 state._priorSituation = trimmed;
                 $('#cnz-situation-text').val(trimmed);

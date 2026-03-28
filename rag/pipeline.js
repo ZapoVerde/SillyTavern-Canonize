@@ -28,7 +28,7 @@
 import { state } from '../state.js';
 import { on, off, BUS_EVENTS } from '../bus.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
-import { buildProsePairs } from '../core/transcript.js';
+import { buildProsePairs, formatPairsAsTranscript } from '../core/transcript.js';
 import { getSettings } from '../core/settings.js';
 import { interpolate } from '../defaults.js';
 import { uploadRagFile, registerCharacterAttachment, cnzAvatarKey, cnzFileName } from './api.js';
@@ -98,13 +98,7 @@ export function buildRagChunks(pairs, pairOffset = 0, settings) {
             const turnB     = pairOffset + Math.min(i + chunkSize, pairs.length);
             const turnRange = turnA === turnB ? `Turn ${turnA}` : `Turns ${turnA}–${turnB}`;
 
-            const content = window
-                .map(p => {
-                    const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
-                    for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
-                    return parts.join('\n\n');
-                })
-                .join('\n\n');
+            const content = formatPairsAsTranscript(window);
 
             const qvinkText = useQvink ? (pairs[i].messages[0]?.extra?.qvink_memory?.memory || null) : null;
 
@@ -127,13 +121,7 @@ export function buildRagChunks(pairs, pairOffset = 0, settings) {
             const turnB     = pairOffset + i + 1;
             const turnRange = turnA === turnB ? `Turn ${turnA}` : `Turns ${turnA}–${turnB}`;
 
-            const content = window
-                .map(p => {
-                    const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
-                    for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
-                    return parts.join('\n\n');
-                })
-                .join('\n\n');
+            const content = formatPairsAsTranscript(window);
 
             chunks.push({
                 chunkIndex: chunks.length,
@@ -353,13 +341,7 @@ export function resolveClassifierHistory(pairStart, historyN, fullPairs, stagedP
 
     if (!historyPairs.length) return '';
 
-    return historyPairs
-        .map(p => {
-            const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
-            for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
-            return parts.join('\n\n');
-        })
-        .join('\n\n');
+    return formatPairsAsTranscript(historyPairs);
 }
 
 // ─── Full Sync Pipeline ───────────────────────────────────────────────────────

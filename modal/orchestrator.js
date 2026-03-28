@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/modal/orchestrator.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
+ * @version 1.0.17
  * @architectural-role UI Builder
  * @description
  * Owns the four-step review wizard lifecycle: injectModal (DOM construction and
@@ -17,7 +17,7 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: [state._currentStep, state._lorebookLoading, state._hooksLoading,
- *                       state._lbActiveIngesterIndex, state._lbDebounceTimer,
+ *                       state._lbActiveIngesterIndex, state._lbPendingWrite,
  *                       state._ragRawDetached, state._modalOpenHeadUuid,
  *                       state._lorebookData, state._draftLorebook, state._lorebookName,
  *                       state._lorebookSuggestions, state._parentNodeLorebook,
@@ -58,7 +58,7 @@ import {
     onLbIngesterEditorInput, onLbIngesterNext, onLbIngesterLoadLatest,
     onLbIngesterLoadPrev, onLbIngesterRegenerate, onLbIngesterReject,
     onLbIngesterApply, onLbApplyAllUnresolved, onTargetedGenerateClick,
-    onLbRegenClick, setLbLoading,
+    onLbRegenClick, setLbLoading, flushLbEditorToDraft,
 } from './lb-workshop.js';
 import { onConfirmClick } from './commit.js';
 import { deleteLbEntry } from '../lorebook/utils.js';
@@ -97,6 +97,8 @@ export function injectModal() {
     $('#cnz-lb-editor-name').on('input',          onLbIngesterEditorInput);
     $('#cnz-lb-editor-keys').on('input',          onLbIngesterEditorInput);
     $('#cnz-lb-editor-content').on('input',       onLbIngesterEditorInput);
+    // Flush captured keystroke values to _draftLorebook as soon as focus leaves the field.
+    $('#cnz-lb-editor-name, #cnz-lb-editor-keys, #cnz-lb-editor-content').on('blur', flushLbEditorToDraft);
     $('#cnz-lb-ingester-next').on('click',        onLbIngesterNext);
     $('#cnz-lb-btn-latest').on('click',           onLbIngesterLoadLatest);
     $('#cnz-lb-btn-prev').on('click',             onLbIngesterLoadPrev);
@@ -129,15 +131,12 @@ export function injectModal() {
             const name    = entry.comment || String(entry.uid ?? uid);
             const keys    = Array.isArray(entry.key) ? [...entry.key] : [];
             const content = entry.content ?? '';
+            // Content lives in _draftLorebook; suggestion carries only label + snapshot.
             const newSuggestion = {
                 type:        'UPDATE',
                 name,
-                keys,
-                content,
                 linkedUid:   uidNum,
-                _applied:    true,
-                _rejected:   false,
-                _deleted:    false,
+                status:      'applied',
                 _aiSnapshot: { name, keys: [...keys], content },
             };
             state._lorebookSuggestions.push(newSuggestion);
@@ -191,11 +190,12 @@ export function closeModal() {
     state._hooksLoading               = false;
     state._lorebookLoading            = false;
     state._lbActiveIngesterIndex      = 0;
-    clearTimeout(state._lbDebounceTimer);
-    state._lbDebounceTimer            = null;
+    state._lbPendingWrite             = null;
     state._ragRawDetached             = false;
     state._currentStep                = 1;
     state._modalOpenHeadUuid          = null;
+    state._hooksRegenGen              = 0;
+    state._lbRegenGen                 = 0;
 }
 
 /**
@@ -376,7 +376,7 @@ export async function openReviewModal() {
     $('#cnz-hooks-new-display').text(state._priorSituation);
     $('#cnz-hooks-old-display').text(state._beforeSituation);
     updateHooksDiff();
-    $('#cnz-lb-freeform').val(serialiseSuggestionsToFreeform(state._lorebookSuggestions));
+    $('#cnz-lb-freeform').val(serialiseSuggestionsToFreeform(state._lorebookSuggestions, state._draftLorebook));
     if (state._lorebookSuggestions.length) {
         populateLbIngesterDropdown();
         renderLbIngesterDetail(state._lorebookSuggestions[0]);

@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/modal/commit.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
+ * @version 1.0.17
  * @architectural-role UI Builder
  * @description
  * Owns Step 4 of the review modal (Finalize / Commit). Handles the receipts
@@ -131,7 +131,7 @@ export function populateRagPanel() {
 export function populateStep4Summary() {
     const loreCount   = countDraftChanges();
     const loreLabel   = loreCount === 1 ? '1 entry' : `${loreCount} entries`;
-    const pendingLb   = state._lorebookSuggestions.filter(s => !s._applied && !s._rejected).length;
+    const pendingLb   = state._lorebookSuggestions.filter(s => s.status === 'pending').length;
     const pendingText = pendingLb > 0
         ? ` \u26a0 ${pendingLb} suggestion${pendingLb !== 1 ? 's' : ''} pending review`
         : '';
@@ -148,12 +148,154 @@ export function abortCommitWithError(message) {
     showRecoveryGuide();
 }
 
+// ─── Commit: IO Executor ──────────────────────────────────────────────────────
+
 /**
- * Handles the modal Confirm button. Conditionally writes back only what changed:
- * hooks (if textarea diverged from `_priorSituation`), lorebook (if `isDraftDirty`),
- * RAG (if any chunk header was manually edited or raw mode is detached).
- * Updates the head anchor in place — never writes a new anchor.
- * Closes the modal on completion.
+ * Runs all four commit steps unconditionally and collects results.
+ * No DOM access. Returns a results array for renderReceipts to consume.
+ * status values: 'success' | 'failed' | 'skipped' | 'partial' (anchor-only, non-fatal)
+ */
+async function commitChanges(char, hooksText) {
+    const results = [];
+
+    let hooksChanged    = false;
+    let lorebookChanged = false;
+    let ragChanged      = false;
+    let newRagUrl       = null;
+    let newRagFileName  = null;
+
+    // ── Step 1: Hooks save ───────────────────────────────────────────────────
+    if (hooksText !== state._priorSituation) {
+        try {
+            writeCnzSummaryPrompt(char.avatar, hooksText, state._dnaChain.lkg?.uuid ?? null);
+            state._priorSituation = hooksText;
+            hooksChanged = true;
+            results.push({ task: 'hooks', status: 'success', detail: 'Narrative Hooks updated in CNZ Summary prompt' });
+        } catch (err) {
+            console.error('[CNZ] Hooks save failed:', err);
+            results.push({ task: 'hooks', status: 'failed', error: `Hooks save failed: ${err.message}` });
+        }
+    } else {
+        results.push({ task: 'hooks', status: 'skipped' });
+    }
+
+    // ── Step 2: Lorebook save ────────────────────────────────────────────────
+    if (isDraftDirty(state._draftLorebook, state._lorebookData) && state._draftLorebook && state._lorebookName) {
+        try {
+            const preLorebook = structuredClone(state._lorebookData ?? { entries: {} });
+            await lbSaveLorebook(state._lorebookName, state._draftLorebook);
+            state._lorebookData = structuredClone(state._draftLorebook);
+            lorebookChanged = true;
+            const changedNames = Object.values(state._draftLorebook.entries ?? {})
+                .filter(e => { const o = preLorebook.entries[String(e.uid)]; return !o || o.content !== e.content || JSON.stringify(o.key) !== JSON.stringify(e.key) || (o.comment ?? '') !== (e.comment ?? ''); })
+                .map(e => e.comment || String(e.uid));
+            results.push({ task: 'lorebook', status: 'success', detail: `Lorebook committed: ${changedNames.length ? changedNames.map(n => `"${n}"`).join(', ') : '(no changes staged)'}` });
+        } catch (err) {
+            results.push({ task: 'lorebook', status: 'failed', error: `Lorebook save failed: ${err.message}` });
+        }
+    } else {
+        results.push({ task: 'lorebook', status: 'skipped' });
+    }
+
+    // Reverts are saved immediately but the head anchor still needs updating
+    if (!lorebookChanged && state._lorebookSuggestions.some(s => s.status === 'rejected')) {
+        lorebookChanged = true;
+    }
+
+    // ── Step 3: RAG upload ───────────────────────────────────────────────────
+    const hasManualChunks  = state._ragChunks.some(c => c.status === 'manual');
+    const hasSettledChunks = state._ragChunks.some(c => c.status === 'complete' || c.status === 'manual');
+    const ragAttachments   = ext_settings.character_attachments?.[char.avatar] ?? [];
+    const ragFileMissing   = hasSettledChunks && ragAttachments.length === 0;
+    if (hasManualChunks || state._ragRawDetached || ragFileMissing) {
+        try {
+            const _ragCtx      = SillyTavern.getContext();
+            const _ragCharName = _ragCtx?.characters?.[_ragCtx?.characterId]?.name ?? '';
+            const ragText = state._ragRawDetached ? $('#cnz-rag-raw').val() : buildRagDocument(state._ragChunks, getSettings(), _ragCharName);
+            if (ragText.trim()) {
+                newRagFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name);
+                newRagUrl      = await uploadRagFile(ragText, newRagFileName);
+                state._lastRagUrl = newRagUrl;
+                const byteSize = new TextEncoder().encode(ragText).length;
+                registerCharacterAttachment(char.avatar, newRagUrl, newRagFileName, byteSize);
+                ragChanged = true;
+                results.push({ task: 'rag', status: 'success', detail: `Narrative Memory saved: "${newRagFileName}" (${state._ragChunks.length} chunks)` });
+            } else {
+                results.push({ task: 'rag', status: 'skipped' });
+            }
+        } catch (err) {
+            results.push({ task: 'rag', status: 'failed', error: `RAG upload failed: ${err.message}` });
+        }
+    } else {
+        results.push({ task: 'rag', status: 'skipped' });
+    }
+
+    // ── Step 4: Patch DNA anchor in chat ─────────────────────────────────────
+    if (hooksChanged || lorebookChanged || ragChanged) {
+        try {
+            const liveChain = readDnaChain(SillyTavern.getContext().chat ?? []);
+            const lkgRef    = liveChain.lkg ? { anchor: liveChain.lkg, msgIdx: liveChain.lkgMsgIdx } : null;
+            if (!lkgRef) {
+                console.warn('[CNZ] commitChanges: no lkg anchor to patch — skipping DNA update');
+                results.push({ task: 'anchor', status: 'skipped' });
+            } else {
+                const chatMsgs  = SillyTavern.getContext().chat ?? [];
+                const anchorMsg = chatMsgs[lkgRef.msgIdx];
+                if (!anchorMsg) {
+                    console.warn('[CNZ] commitChanges: anchor message not found at index', lkgRef.msgIdx);
+                    results.push({ task: 'anchor', status: 'skipped' });
+                } else {
+                    const existing      = lkgRef.anchor;
+                    const ragHeadersNew = state._ragChunks
+                        .filter(c => c.status === 'complete' || c.status === 'manual')
+                        .map(c => ({ chunkIndex: c.chunkIndex, header: c.header, turnRange: c.turnRange, pairStart: state._stagedPairOffset + c.pairStart, pairEnd: state._stagedPairOffset + c.pairEnd }));
+                    anchorMsg.extra.cnz = Object.assign({}, existing, {
+                        hooks:      hooksChanged    ? state._priorSituation                                                               : existing.hooks,
+                        lorebook:   lorebookChanged ? Object.assign({ name: state._lorebookName }, structuredClone(state._draftLorebook)) : existing.lorebook,
+                        ragUrl:     ragChanged      ? newRagUrl     : existing.ragUrl,
+                        ragHeaders: ragChanged      ? ragHeadersNew : existing.ragHeaders,
+                    });
+                    try {
+                        await SillyTavern.getContext().saveChat();
+                        results.push({ task: 'anchor', status: 'success', detail: 'DNA anchor updated' });
+                    } catch (saveErr) {
+                        console.error('[CNZ] commitChanges: saveChat failed:', saveErr);
+                        results.push({ task: 'anchor', status: 'partial', error: `DNA anchor save failed: ${saveErr.message} (content saved)` });
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('[CNZ] DNA anchor update failed:', err);
+            results.push({ task: 'anchor', status: 'partial', error: `DNA anchor update failed: ${err.message} (content saved)` });
+        }
+    } else {
+        results.push({ task: 'anchor', status: 'skipped' });
+    }
+
+    return results;
+}
+
+// ─── Commit: UI Renderer ──────────────────────────────────────────────────────
+
+/** Reads a results array from commitChanges and paints the receipts panel. No IO. */
+function renderReceipts(results) {
+    for (const r of results) {
+        if (r.status === 'skipped') continue;
+        const id = `cnz-receipt-${r.task}`;
+        if (r.status === 'success') {
+            upsertReceiptItem(id, receiptSuccess(r.detail));
+        } else {
+            upsertReceiptItem(id, receiptFailure(r.error));
+        }
+    }
+}
+
+// ─── Commit: Orchestrator ─────────────────────────────────────────────────────
+
+/**
+ * Handles the modal Confirm button. Runs the freshness check, delegates all IO
+ * to commitChanges, delegates all DOM updates to renderReceipts, then closes or
+ * surfaces the recovery guide depending on the results.
  */
 export async function onConfirmClick() {
     const hooksText = $('#cnz-situation-text').val().trim();
@@ -173,120 +315,13 @@ export async function onConfirmClick() {
         return;
     }
 
-    let hooksChanged    = false;
-    let lorebookChanged = false;
-    let ragChanged      = false;
-    let newRagUrl       = null;
-    let newRagFileName  = null;
+    const results = await commitChanges(char, hooksText);
+    renderReceipts(results);
 
-    // ── Step 1: Hooks save ───────────────────────────────────────────────────
-    if (hooksText !== state._priorSituation) {
-        try {
-            // UUID unchanged — Confirm patches the head anchor in-place
-            writeCnzSummaryPrompt(char.avatar, hooksText, state._dnaChain.lkg?.uuid ?? null);
-            state._priorSituation = hooksText;
-            hooksChanged = true;
-            upsertReceiptItem('cnz-receipt-hooks', receiptSuccess('Narrative Hooks updated in CNZ Summary prompt'));
-        } catch (err) {
-            console.error('[CNZ] Hooks save failed:', err);
-            upsertReceiptItem('cnz-receipt-hooks', receiptFailure(`Hooks save failed: ${err.message}`));
-            abortCommitWithError(err.message);
-            return;
-        }
-    }
-
-    // ── Step 2: Lorebook save ────────────────────────────────────────────────
-    if (isDraftDirty(state._draftLorebook, state._lorebookData)) {
-        if (state._draftLorebook && state._lorebookName) {
-            try {
-                const preLorebook = structuredClone(state._lorebookData ?? { entries: {} });
-                await lbSaveLorebook(state._lorebookName, state._draftLorebook);
-                state._lorebookData = structuredClone(state._draftLorebook);
-
-                lorebookChanged = true;
-
-                const changedNames = Object.values(state._draftLorebook.entries ?? {})
-                    .filter(e => { const o = preLorebook.entries[String(e.uid)]; return !o || o.content !== e.content || JSON.stringify(o.key) !== JSON.stringify(e.key) || (o.comment ?? '') !== (e.comment ?? ''); })
-                    .map(e => e.comment || String(e.uid));
-                upsertReceiptItem('cnz-receipt-lorebook', receiptSuccess(
-                    `Lorebook committed: ${changedNames.length ? changedNames.map(n => `"${n}"`).join(', ') : '(no changes staged)'}`,
-                ));
-            } catch (err) {
-                upsertReceiptItem('cnz-receipt-lorebook', receiptFailure(`Lorebook save failed: ${err.message}`));
-                abortCommitWithError(err.message);
-                return;
-            }
-        }
-    }
-
-    // Reverts are saved immediately but the head anchor still needs updating
-    if (!lorebookChanged && state._lorebookSuggestions.some(s => s._rejected)) {
-        lorebookChanged = true;
-    }
-
-    // ── Step 3: RAG upload ───────────────────────────────────────────────────
-    const hasManualChunks    = state._ragChunks.some(c => c.status === 'manual');
-    const hasSettledChunks   = state._ragChunks.some(c => c.status === 'complete' || c.status === 'manual');
-    const ragAttachments     = ext_settings.character_attachments?.[char.avatar] ?? [];
-    const ragFileMissing     = hasSettledChunks && ragAttachments.length === 0;
-    if (hasManualChunks || state._ragRawDetached || ragFileMissing) {
-        try {
-            const _ragCtx      = SillyTavern.getContext();
-            const _ragCharName = _ragCtx?.characters?.[_ragCtx?.characterId]?.name ?? '';
-            const ragText = state._ragRawDetached ? $('#cnz-rag-raw').val() : buildRagDocument(state._ragChunks, getSettings(), _ragCharName);
-            if (ragText.trim()) {
-                newRagFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name);
-                newRagUrl      = await uploadRagFile(ragText, newRagFileName);
-                state._lastRagUrl    = newRagUrl;
-                const byteSize = new TextEncoder().encode(ragText).length;
-                registerCharacterAttachment(char.avatar, newRagUrl, newRagFileName, byteSize);
-                ragChanged = true;
-                upsertReceiptItem('cnz-receipt-rag', receiptSuccess(`Narrative Memory saved: "${newRagFileName}" (${state._ragChunks.length} chunks)`));
-            }
-        } catch (err) {
-            upsertReceiptItem('cnz-receipt-rag', receiptFailure(`RAG save failed: ${err.message}`));
-            abortCommitWithError(`RAG upload failed: ${err.message}`);
-            return;
-        }
-    }
-
-    // ── Step 4: Patch DNA anchor in chat ─────────────────────────────────────
-    if (hooksChanged || lorebookChanged || ragChanged) {
-        try {
-            const liveChain = readDnaChain(SillyTavern.getContext().chat ?? []);
-            const lkgRef    = liveChain.lkg ? { anchor: liveChain.lkg, msgIdx: liveChain.lkgMsgIdx } : null;
-            if (!lkgRef) {
-                console.warn('[CNZ] onConfirmClick: no lkg anchor to patch — skipping DNA update');
-            } else {
-                const chatMsgs  = SillyTavern.getContext().chat ?? [];
-                const anchorMsg = chatMsgs[lkgRef.msgIdx];
-                if (!anchorMsg) {
-                    console.warn('[CNZ] onConfirmClick: anchor message not found at index', lkgRef.msgIdx);
-                } else {
-                    const existing      = lkgRef.anchor;
-                    const ragHeadersNew = state._ragChunks
-                        .filter(c => c.status === 'complete' || c.status === 'manual')
-                        .map(c => ({ chunkIndex: c.chunkIndex, header: c.header, turnRange: c.turnRange, pairStart: state._stagedPairOffset + c.pairStart, pairEnd: state._stagedPairOffset + c.pairEnd }));
-                    anchorMsg.extra.cnz = Object.assign({}, existing, {
-                        hooks:      hooksChanged    ? state._priorSituation                                                          : existing.hooks,
-                        lorebook:   lorebookChanged ? Object.assign({ name: state._lorebookName }, structuredClone(state._draftLorebook)) : existing.lorebook,
-                        ragUrl:     ragChanged      ? newRagUrl     : existing.ragUrl,
-                        ragHeaders: ragChanged      ? ragHeadersNew : existing.ragHeaders,
-                    });
-                    try {
-                        await SillyTavern.getContext().saveChat();
-                        upsertReceiptItem('cnz-receipt-anchor', receiptSuccess('DNA anchor updated'));
-                    } catch (saveErr) {
-                        console.error('[CNZ] onConfirmClick: saveChat failed:', saveErr);
-                        upsertReceiptItem('cnz-receipt-anchor', receiptFailure(`DNA anchor save failed: ${saveErr.message} (content saved)`));
-                    }
-                }
-            }
-        } catch (err) {
-            console.error('[CNZ] DNA anchor update failed:', err);
-            upsertReceiptItem('cnz-receipt-anchor', receiptFailure(`DNA anchor update failed: ${err.message} (content saved)`));
-            // Non-fatal
-        }
+    const firstFailure = results.find(r => r.status === 'failed');
+    if (firstFailure) {
+        abortCommitWithError(firstFailure.error);
+        return;
     }
 
     // Reset session guard so the next openReviewModal starts fresh from the

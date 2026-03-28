@@ -30,7 +30,7 @@ import { callPopup } from '../../../../../script.js';
 import { state } from '../state.js';
 import { readDnaChain, findLkgAnchorByPosition, buildNodeFileFromAnchor } from './dna-chain.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
-import { buildProsePairs } from './transcript.js';
+import { buildProsePairs, formatPairsAsTranscript } from './transcript.js';
 import { buildRagChunks } from '../rag/pipeline.js';
 import { setDnaChain } from '../scheduler.js';
 import { lbSaveLorebook } from '../lorebook/api.js';
@@ -300,11 +300,7 @@ export async function purgeAndRebuild() {
                 const pairStart = prevPairEnd;
                 const pairEnd   = i + 1;
                 const window    = allPairs.slice(pairStart, pairEnd);
-                const content   = window.map(p => {
-                    const parts = [`[${p.user.name.toUpperCase()}]\n${p.user.mes}`];
-                    for (const m of p.messages) parts.push(`[${m.name.toUpperCase()}]\n${m.mes}`);
-                    return parts.join('\n\n');
-                }).join('\n\n');
+                const content   = formatPairsAsTranscript(window);
                 combinedChunks.push({
                     chunkIndex: combinedChunks.length,
                     header:     lastMsg.extra.cnz_chunk_header,

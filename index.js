@@ -30,9 +30,8 @@
  *    does not re-commit the sync.
  * 2. MODAL STAGES ONLY: All edits in the modal mutate state._draftLorebook in memory.
  *    Nothing writes to disk until the user clicks Finalize.
- *    Suggestion objects carry three mutually exclusive verdict flags (_applied,
- *    _rejected, _deleted); all three start false so every suggestion opens
- *    unresolved for user review. Deleted entries are absent from
+ *    Suggestion objects carry a single verdict status ('pending' | 'applied' |
+ *    'rejected' | 'deleted'); all suggestions open as 'pending' for user review. Deleted entries are absent from
  *    state._draftLorebook.entries and are therefore not written by Finalize.
  * 3. ANCHOR IS SOURCE OF TRUTH: Before-states for all modal diffs come from
  *    the DNA chain's head anchor, never from ephemeral sync-cycle variables.
@@ -76,7 +75,7 @@
  *       state._lastKnownAvatar,
  *       state._currentStep, state._modalOpenHeadUuid,
  *       state._lorebookLoading, state._lbActiveIngesterIndex,
- *       state._lbDebounceTimer,
+ *       state._lbPendingWrite,
  *       state._ragRawDetached, state._pendingOrphans, state._dnaChain,
  *       extension_settings.cnz]
  *     external_io: [
@@ -177,16 +176,18 @@ async function processLorebookUpdate(rawText) {
         if (s.linkedUid !== null) {
             const entry = state._draftLorebook?.entries?.[String(s.linkedUid)];
             if (entry) {
-                if (s.name     !== undefined) entry.comment = s.name;
-                if (s.keys     !== undefined) entry.key     = s.keys;
-                if (s.content  !== undefined) entry.content = s.content;
+                entry.comment = s.name;
+                entry.key     = s._aiSnapshot.keys;
+                entry.content = s._aiSnapshot.content;
             }
         } else {
             const uid = nextLorebookUid();
-            state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(uid, s.name, s.keys, s.content);
+            state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(
+                uid, s.name, s._aiSnapshot.keys, s._aiSnapshot.content,
+            );
             s.linkedUid = uid;
         }
-        s._applied = false;
+        s.status = 'pending';
     }
     await lbSaveLorebook(state._lorebookName, state._draftLorebook);
     state._lorebookData = structuredClone(state._draftLorebook);

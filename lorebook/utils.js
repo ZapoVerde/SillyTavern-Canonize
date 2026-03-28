@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/lorebook/utils.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
+ * @version 1.0.17
  * @architectural-role Pure Functions
  * @description
  * Pure data manipulation functions for lorebook state. Covers parsing AI
@@ -81,17 +81,21 @@ export function parseLbSuggestions(rawText) {
  * standard **UPDATE:** / **NEW:** block format used by the Freeform overview.
  * Deleted entries emit a single `**DELETE: name**` tombstone line.
  * Rejected suggestions are excluded entirely.
+ * Entry content is read from `draftLorebook` (the single source of truth).
  * @param {object[]} suggestions
+ * @param {object}   draftLorebook
  * @returns {string}
  */
-export function serialiseSuggestionsToFreeform(suggestions) {
+export function serialiseSuggestionsToFreeform(suggestions, draftLorebook) {
     return suggestions
         .map(s => {
-            if (s._deleted)  return `**DELETE: ${s.name}**`;
-            if (s._rejected) return null;
-            const lines = [`**${s.type}: ${s.name}**`];
-            if (s.keys?.length) lines.push(`Keys: ${s.keys.join(', ')}`);
-            lines.push(s.content ?? '');
+            if (s.status === 'deleted')  return `**DELETE: ${s.name}**`;
+            if (s.status === 'rejected') return null;
+            const entry = draftLorebook?.entries?.[String(s.linkedUid)];
+            if (!entry) return null;
+            const lines = [`**${s.type}: ${entry.comment || s.name}**`];
+            if (entry.key?.length) lines.push(`Keys: ${entry.key.join(', ')}`);
+            lines.push(entry.content ?? '');
             return lines.join('\n');
         })
         .filter(Boolean)
@@ -103,7 +107,7 @@ export function serialiseSuggestionsToFreeform(suggestions) {
  * Called after any action that changes the suggestion list or editor content.
  */
 export function syncFreeformFromSuggestions() {
-    $('#cnz-lb-freeform').val(serialiseSuggestionsToFreeform(state._lorebookSuggestions));
+    $('#cnz-lb-freeform').val(serialiseSuggestionsToFreeform(state._lorebookSuggestions, state._draftLorebook));
 }
 
 /**
@@ -188,8 +192,8 @@ export function toVirtualDoc(name, keys, content) {
 /**
  * Reconciles a freshly-parsed suggestion list against the existing
  * state._lorebookSuggestions array, preserving UID anchors and verdict flags.
- * All returned objects initialise _applied, _rejected, and _deleted to false
- * except when carrying forward a previously applied state from an existing entry.
+ * All returned objects initialise status to 'pending'
+ * except when carrying forward a previously rejected state from an existing entry.
  */
 export function enrichLbSuggestions(freshParsed) {
     const enriched = freshParsed.map(fresh => {
@@ -198,37 +202,23 @@ export function enrichLbSuggestions(freshParsed) {
         );
 
         if (existing) {
-            if (existing._applied) {
+            if (existing.status === 'applied') {
+                // Preserve user-edited name; keys/content in draft are the source of truth.
+                // _aiSnapshot updated to fresh so ← Latest reflects the new AI output.
                 return {
                     type:        fresh.type,
                     name:        existing.name,
-                    keys:        [...existing.keys],
-                    content:     existing.content,
                     linkedUid:   existing.linkedUid,
-                    _applied:    false,
-                    _rejected:   false,
-                    _deleted:    false,
-                    _aiSnapshot: {
-                        name:    existing._aiSnapshot.name,
-                        keys:    [...existing._aiSnapshot.keys],
-                        content: existing._aiSnapshot.content,
-                    },
+                    status:      'pending',
+                    _aiSnapshot: { name: fresh.name, keys: [...fresh.keys], content: fresh.content },
                 };
             } else {
                 return {
                     type:        fresh.type,
                     name:        fresh.name,
-                    keys:        [...fresh.keys],
-                    content:     fresh.content,
                     linkedUid:   existing.linkedUid,
-                    _applied:    false,
-                    _rejected:   existing._rejected,
-                    _deleted:    false,
-                    _aiSnapshot: {
-                        name:    fresh.name,
-                        keys:    [...fresh.keys],
-                        content: fresh.content,
-                    },
+                    status:      existing.status === 'rejected' ? 'rejected' : 'pending',
+                    _aiSnapshot: { name: fresh.name, keys: [...fresh.keys], content: fresh.content },
                 };
             }
         } else {
@@ -237,17 +227,9 @@ export function enrichLbSuggestions(freshParsed) {
             return {
                 type:        fresh.type,
                 name:        fresh.name,
-                keys:        [...fresh.keys],
-                content:     fresh.content,
                 linkedUid,
-                _applied:    false,
-                _rejected:   false,
-                _deleted:    false,
-                _aiSnapshot: {
-                    name:    fresh.name,
-                    keys:    [...fresh.keys],
-                    content: fresh.content,
-                },
+                status:      'pending',
+                _aiSnapshot: { name: fresh.name, keys: [...fresh.keys], content: fresh.content },
             };
         }
     });
@@ -271,11 +253,11 @@ export function enrichLbSuggestions(freshParsed) {
  * Used by openReviewModal to reconstruct what changed in the last sync
  * entirely from the head anchor — no ephemeral sync-cycle variables needed.
  *
- * Entries present in `after` but not in `before` → type NEW, _applied false.
- * Entries present in both but with changed content/keys → type UPDATE, _applied false.
+ * Entries present in `after` but not in `before` → type NEW, status 'pending'.
+ * Entries present in both but with changed content/keys → type UPDATE, status 'pending'.
  * Entries present in `before` but removed from `after` → skipped (deletions not surfaced).
  *
- * All returned suggestions are marked _applied = false so the user can review
+ * All returned suggestions are marked status 'pending' so the user can review
  * them via Apply/Reject. The underlying lorebook data is already committed to
  * disk; Apply/Reject only set the UI label and control Next Unresolved skipping.
  *
@@ -295,16 +277,12 @@ export function deriveSuggestionsFromAnchorDiff(before, after) {
         const content = afterEntry.content ?? '';
 
         if (!beforeEntry) {
-            // New entry
+            // New entry — content lives in _draftLorebook; _aiSnapshot is the reference copy.
             suggestions.push({
                 type:        'NEW',
                 name,
-                keys,
-                content,
                 linkedUid:   parseInt(uid, 10),
-                _applied:    false,
-                _rejected:   false,
-                _deleted:    false,
+                status:      'pending',
                 _aiSnapshot: { name, keys: [...keys], content },
             });
         } else {
@@ -316,12 +294,8 @@ export function deriveSuggestionsFromAnchorDiff(before, after) {
                 suggestions.push({
                     type:        'UPDATE',
                     name,
-                    keys,
-                    content,
                     linkedUid:   parseInt(uid, 10),
-                    _applied:    false,
-                    _rejected:   false,
-                    _deleted:    false,
+                    status:      'pending',
                     _aiSnapshot: { name, keys: [...keys], content },
                 });
             }
@@ -387,7 +361,7 @@ export function isDraftDirty(draft, base) {
 /**
  * Marks the suggestion at `idx` as deleted: removes the entry from
  * state._draftLorebook.entries so Finalize will not write it, clears keys and content
- * on the suggestion object, and sets _deleted = true. s.name is preserved as a
+ * on the suggestion object, and sets status to 'deleted'. s.name is preserved as a
  * display label. Memory-only — no disk write.
  * @param {number} idx  Index into state._lorebookSuggestions.
  */
@@ -402,13 +376,8 @@ export function deleteLbEntry(idx) {
         }
     }
 
-    // Update suggestion state
-    s._deleted  = true;
-    s._applied  = false;
-    s._rejected = false;
-    s.keys      = [];
-    s.content   = '';
-    // s.name preserved as label
+    // Update suggestion state — name preserved as dropdown label
+    s.status = 'deleted';
 
     // Update dropdown
     $('#cnz-lb-suggestion-select option')
@@ -426,9 +395,8 @@ export function deleteLbEntry(idx) {
 /**
  * Reverts the suggestion at `idx` to its parent-node state in state._draftLorebook.
  * Restores entry content/keys in the draft if the entry existed before the sync;
- * removes it from the draft if it didn't. Also syncs s.name/s.keys/s.content on
- * the suggestion object so the editor and freeform reflect the reverted state
- * before rendering. Memory-only — no disk write.
+ * removes it from the draft if it didn't. Syncs s.name to the parent entry's
+ * comment so the dropdown label stays accurate. Memory-only — no disk write.
  * @param {number} idx  Index into state._lorebookSuggestions.
  */
 export function revertLbSuggestion(idx) {
@@ -455,19 +423,12 @@ export function revertLbSuggestion(idx) {
 
     if (uidStr !== null) {
         const parentEntry = state._parentNodeLorebook?.entries?.[uidStr];
-        if (parentEntry) {
-            s.name    = parentEntry.comment || '';
-            s.keys    = Array.isArray(parentEntry.key) ? [...parentEntry.key] : [];
-            s.content = parentEntry.content || '';
-        } else {
-            // New entry — no prior version, clear content
-            s.keys    = [];
-            s.content = '';
-        }
+        // Keep s.name in sync with what the draft now shows (for the dropdown label).
+        // keys/content live in _draftLorebook; no fields to clear here.
+        if (parentEntry) s.name = parentEntry.comment || '';
     }
 
-    s._rejected = true;
-    s._applied  = false;
+    s.status = 'rejected';
 
     // Update ingester dropdown label
     $('#cnz-lb-suggestion-select option')

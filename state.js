@@ -23,8 +23,8 @@
  *       _lastRagUrl, _priorSituation, _beforeSituation, _parentNodeLorebook,
  *       _pendingOrphans, _dnaChain,
  *       _currentStep, _lorebookLoading, _hooksLoading,
- *       _lbActiveIngesterIndex, _lbDebounceTimer,
- *       _ragRawDetached, _modalOpenHeadUuid]
+ *       _lbActiveIngesterIndex, _lbPendingWrite,
+ *       _ragRawDetached, _modalOpenHeadUuid, _hooksRegenGen, _lbRegenGen]
  *     external_io: [none]
  */
 
@@ -139,8 +139,13 @@ export const state = {
     _lorebookLoading:       false,
     _hooksLoading:          false,
     _lbActiveIngesterIndex: 0,
-    _lbDebounceTimer:       null,
+    /** {uid, name, keys, content} captured at last keystroke; flushed to draft on blur */
+    _lbPendingWrite:        null,
     _ragRawDetached:        false,
     /** lkg anchor uuid captured at modal open; concurrent-sync guard */
     _modalOpenHeadUuid:     null,
+    /** monotonic counter incremented on each hookseeker dispatch; stale resolves are dropped */
+    _hooksRegenGen:         0,
+    /** monotonic counter incremented on each lorebook regen dispatch; stale resolves are dropped */
+    _lbRegenGen:            0,
 };
