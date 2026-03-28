@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
- * @version 1.1.1
+ * @version 1.1.2
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — extension entry point and session
@@ -111,6 +111,8 @@ import { runRagPipeline, writeChunkHeaderToChat, renderRagCard,
 import { patchCharacterWorld } from './modal/commit.js';
 import { injectModal, openReviewModal, openOrphanModal } from './modal/orchestrator.js';
 import { injectSettingsPanel } from './settings/panel.js';
+
+console.log('[CNZ] index.js: Module loaded (all imports resolved).');
 
 // ─── Mobile Debug Panel ───────────────────────────────────────────────────────
 const MDP = false; // set true to enable on-screen console overlay for mobile debugging
@@ -722,7 +724,13 @@ async function onWandButtonClick() {
 }
 
 function injectWandButton() {
+    console.log('[CNZ] injectWandButton: Checking for #extensionsMenu...');
     if ($('#cnz-wand-btn').length) return;
+    const $menu = $('#extensionsMenu');
+    if ($menu.length === 0) {
+        console.warn('[CNZ] injectWandButton: #extensionsMenu not found in DOM!');
+        return;
+    }
     const btn = $(
         '<div id="cnz-wand-btn" class="list-group-item flex-container flexGap5" title="Run Canonize">' +
         '<i class="fa-solid fa-book-open"></i>' +
@@ -733,17 +741,25 @@ function injectWandButton() {
         console.error('[CNZ] Wand button error:', err);
         toastr.error(`CNZ: ${err.message}`);
     }));
-    $('#extensionsMenu').append(btn);
+    $menu.append(btn);
+    console.log('[CNZ] injectWandButton: Success.');
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 async function init() {
+    console.log('[CNZ] init: Starting sequence...');
+    try {
     initSettings();
+    console.log('[CNZ] init: Settings initialized.');
     initScheduler(Triggers, getSettings);
+    console.log('[CNZ] init: Scheduler initialized.');
     injectModal();
+    console.log('[CNZ] init: Modal injected.');
     injectSettingsPanel();
+    console.log('[CNZ] init: Settings panel injected.');
     injectWandButton();
+    console.log('[CNZ] init: Wand button injected.');
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
 
     // Delegated click handler for the review toast link (registered once — not per-sync)
@@ -876,6 +892,10 @@ async function init() {
         }
     };
 
+    console.log('[CNZ] init: Full sequence complete.');
+    } catch (err) {
+        console.error('[CNZ] CRITICAL FAILURE during init:', err);
+    }
 }
 
-await init();
+await init().catch(err => console.error('[CNZ] init() top-level rejection:', err));

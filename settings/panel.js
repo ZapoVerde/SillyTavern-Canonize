@@ -442,12 +442,19 @@ function updateRagAiControlsVisibility() {
 }
 
 export function injectSettingsPanel() {
+    console.log('[CNZ] injectSettingsPanel: Checking for #extensions_settings...');
     if ($('#cnz-settings').length) return;
+    const $parent = $('#extensions_settings');
+    if ($parent.length === 0) {
+        console.warn('[CNZ] injectSettingsPanel: #extensions_settings not found in DOM!');
+        return;
+    }
     const meta = getMetaSettings();
-    $('#extensions_settings').append(
+    $parent.append(
         buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName),
     );
     bindSettingsHandlers();
     refreshProfileDropdown();
     updateRagAiControlsVisibility();
+    console.log('[CNZ] injectSettingsPanel: Success.');
 }
