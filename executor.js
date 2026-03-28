@@ -57,10 +57,22 @@ async function _fireCall({ recipeId, inputs, settings, maxTokens }) {
     const tokens    = maxTokens ?? null;
 
     if (profileId) {
-        const result = await ConnectionManagerRequestService.sendRequest(
-            profileId, inputs._prompt, tokens
-        );
-        return result.content;
+        let profileLabel = profileId;
+        try {
+            const profile = ConnectionManagerRequestService.getProfile(profileId);
+            profileLabel  = `${profile.name ?? profileId} (model: ${profile.model ?? 'unknown'}, api: ${profile.api ?? 'unknown'})`;
+        } catch { /* profile lookup is best-effort */ }
+
+        try {
+            const result = await ConnectionManagerRequestService.sendRequest(
+                profileId, inputs._prompt, tokens
+            );
+            return result.content;
+        } catch (err) {
+            const cause   = err.cause?.message ?? err.cause ?? null;
+            const detail  = cause ? `${err.message} — ${cause}` : err.message;
+            throw Object.assign(new Error(detail), { cause: err.cause, _profile: profileLabel });
+        }
     }
     return generateRaw({ prompt: inputs._prompt, trimNames: false, responseLength: tokens });
 }

@@ -293,7 +293,8 @@ on(BUS_EVENTS.JOB_FAILED, ({ jobId, cycleId, recipeId, error, inputs }) => {
         _activeJobsByKey[key].delete(jobId);
         _inFlightByKey[key] = Math.max(0, (_inFlightByKey[key] ?? 0) - 1);
 
-        console.error(`[CNZ] Fan-out job failed: ${recipeId} chunk ${inputs?.chunkIndex} (job ${jobId})`, error);
+        const _profileLabel = error?._profile ? ` [profile: ${error._profile}]` : '';
+        console.error(`[CNZ] Fan-out job failed: ${recipeId} chunk ${inputs?.chunkIndex} (job ${jobId})${_profileLabel}`, error);
 
         const fanOutState = _fanOutResults[cycleId]?.[key];
         if (fanOutState) {
@@ -314,7 +315,8 @@ on(BUS_EVENTS.JOB_FAILED, ({ jobId, cycleId, recipeId, error, inputs }) => {
 
     // Single-job path
     if (_activeJobByKey[recipe.stalenessKey] !== jobId) return;
-    console.error(`[CNZ] Job failed: ${recipeId} (job ${jobId})`, error);
+    const _profileLabel = error?._profile ? ` [profile: ${error._profile}]` : '';
+    console.error(`[CNZ] Job failed: ${recipeId} (job ${jobId})${_profileLabel}`, error);
     emit(BUS_EVENTS.CYCLE_STORE_UPDATED, {
         cycleId,
         key:   recipe.produces,

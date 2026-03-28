@@ -301,13 +301,6 @@ export async function openReviewModal() {
         }
     }
 
-    // Read current hooks from the CNZ Summary prompt (source of truth after a sync).
-    const _pm          = getCnzPromptManager();
-    const _cnzPrompt   = _pm?.getPromptById(CNZ_SUMMARY_ID);
-    state._priorSituation    = (_cnzPrompt && _cnzPrompt.cnz_avatar === char.avatar)
-        ? (_cnzPrompt.content ?? '')
-        : '';
-
     // Derive before/after states from DNA chain — no network fetches needed.
     state._dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
     setDnaChain(state._dnaChain);
@@ -316,9 +309,19 @@ export async function openReviewModal() {
 
     // True when the user is reopening the modal within the same sync cycle — the
     // anchor UUID matches the one captured at the last open, meaning no new sync has
-    // committed since. In this case we preserve _draftLorebook and _lorebookSuggestions
-    // (including any applied/rejected/edited state) so edits survive modal close/reopen.
+    // committed since. In this case we preserve _draftLorebook, _lorebookSuggestions,
+    // and _priorSituation (including any regen result) so edits survive modal close/reopen.
     const isSameSession = !!headRef && state._modalOpenHeadUuid === headRef.anchor.uuid && !!state._draftLorebook;
+
+    // Read current hooks from the CNZ Summary prompt (source of truth after a sync).
+    // Skipped on same-session reopen so an in-modal regen is not clobbered.
+    if (!isSameSession) {
+        const _pm        = getCnzPromptManager();
+        const _cnzPrompt = _pm?.getPromptById(CNZ_SUMMARY_ID);
+        state._priorSituation = (_cnzPrompt && _cnzPrompt.cnz_avatar === char.avatar)
+            ? (_cnzPrompt.content ?? '')
+            : '';
+    }
 
     if (headRef) {
         state._lorebookData  = structuredClone(headRef.anchor.lorebook ?? { entries: {} });
