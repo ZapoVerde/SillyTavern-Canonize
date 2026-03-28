@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
- * @version 1.1.3
+ * @version 1.1.4
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — extension entry point and session
@@ -106,10 +106,11 @@ import { runHealer } from './core/healer.js';
 import { lbEnsureLorebook, lbSaveLorebook } from './lorebook/api.js';
 import { parseLbSuggestions, enrichLbSuggestions,
          nextLorebookUid, makeLbDraftEntry } from './lorebook/utils.js';
-import { runRagPipeline, writeChunkHeaderToChat, renderRagCard,
+import { runRagPipeline, writeChunkHeaderToChat,
          renderChunkChatLabel, clearChunkChatLabels } from './rag/pipeline.js';
 import { patchCharacterWorld } from './modal/commit.js';
 import { injectModal, openReviewModal, openOrphanModal } from './modal/orchestrator.js';
+import { renderRagCard } from './modal/rag-workshop.js';
 import { injectSettingsPanel } from './settings/panel.js';
 
 console.log('[CNZ] index.js: Module loaded (all imports resolved).');
