@@ -24,7 +24,8 @@
  *                   promptManager.saveServiceSettings]
  */
 
-import { extension_settings, saveSettingsDebounced } from '../../../../extensions.js';
+import { extension_settings } from '../../../../extensions.js';
+import { saveSettingsDebounced } from '../../../../../script.js';
 import { callPopup } from '../../../../../script.js';
 import { state } from '../state.js';
 import { readDnaChain, findLkgAnchorByPosition, buildNodeFileFromAnchor } from './dna-chain.js';
