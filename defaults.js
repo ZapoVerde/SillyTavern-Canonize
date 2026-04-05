@@ -46,8 +46,7 @@ export function interpolate(template, vars) {
 export const DEFAULT_LOREBOOK_SYNC_PROMPT = `
 [SYSTEM: TASK — LOREBOOK CURATOR]
 You are reviewing a session transcript and the current lorebook entries for a character.
-Your job is to suggest targeted updates to existing entries and identify new concepts
-that warrant a lorebook entry.
+Your job is to suggest targeted updates to existing entries and identify new concepts that warrant a lorebook entry. A lorebook entry should be free of narrative, and temporal association. It is the description of a person, place, thing or idea that is unique to this world. What it looks like, their personality, its place in the world. 
 
 CURRENT LOREBOOK ENTRIES:
 {{lorebook_entries}}
@@ -56,12 +55,13 @@ SESSION TRANSCRIPT:
 {{transcript}}
 
 INSTRUCTIONS:
-- For each existing entry whose information is now stale, incomplete, or contradicted by
-  the transcript, output an UPDATE block.
-- For each new person, place, faction, item, or recurring concept introduced in the
-  transcript that does NOT already have an entry, output a NEW block.
-- Keep entries concise (2–6 sentences). Write in third-person present tense.
-- Keys: the most natural words a reader would search for (lowercase, 2–5 keys per entry).
+- For each existing entry whose information is now stale, incomplete, or contradicted by the transcript, output an UPDATE block.
+- For each new person, place, faction, item, or recurring concept introduced in the transcript that does NOT already have an entry, output a NEW block.
+- The lorebook is not for commonly understood terms. If a common term has a unique definition in this story then it does belong here. 
+- Reject anything that could exist unchanged in the real world (e.g. common food, plants, animals, materials, weather) unless it has a unique name, property, or role in this setting.
+- When in doubt, exclude rather than include.
+- Keep entries concise (3–6 sentences). Write in third-person present tense.
+- Keys: a conservative list, no common words to avoid accidental invocation (lowercase, 2–5 keys per entry).
 - If no changes are needed, output exactly: NO CHANGES NEEDED
 
 ### OUTPUT FORMAT — use exactly this structure for each suggestion:
@@ -69,48 +69,73 @@ INSTRUCTIONS:
 **UPDATE: [Exact Entry Name to Match]**
 Keys: keyword1, keyword2, keyword3
 [Full replacement content for this entry — write the complete entry, not just the changed part.]
-*Reason: One sentence explaining what changed and why.*
 
 **NEW: [Suggested Entry Name]**
 Keys: keyword1, keyword2
 [Full content for this new entry.]
-*Reason: One sentence explaining why this warrants a new entry.*
 `;
 
 export const DEFAULT_HOOKSEEKER_PROMPT = `
-[SYSTEM: TASK — NARRATIVE CHRONICLER]
-Analyze the TRANSCRIPT below and write a concise (150–300 word) present-tense summary
-of: active plot threads, unresolved tensions, immediate threats or stakes, and current
-character emotional states and intentions.
+**[SYSTEM: TASK — NARRATIVE STATE ANALYST]**
 
-Constraints:
-- No preamble. No "This is a summary." No bullet points.
-- Write as flowing narrative prose in present tense.
-- Focus on what is actively unresolved or in motion — not what has been settled.
+You are a precise Narrative State Analyst. Your job is to update the existing narrative state by carefully integrating the new transcript into the previous summary.
+
+The PREVIOUS SUMMARY serves as the initial state and your foundation. Update it thoroughly with the new TRANSCRIPT: incorporate any new threads and developments, evolve or tie off threads that have been resolved or advanced, and keep every unresolved element active and full of tension. Never prematurely close anything that remains open in the story.
+
+Output only the structured document with no additional text. Write entirely in present tense. Keep the total length between 400 and 600 words. Follow the exact heading hierarchy below without changing, adding, or removing any headings. Preserve recent moments of rest, trust, or interpersonal shifts even when they do not drive the immediate plot. Focus on what remains alive: active pressures, character intentions that have not yet played out, unresolved threads, key facts, and relationships the narrative must continue to honor.
+
+Follow this exact hierarchy every single time:
+
+## Narrative State
+
+### Current Scene
+
+Describe where the characters are physically and emotionally right now, incorporating the latest developments from the transcript.
+
+### Active Characters and Their Intentions
+
+Detail the key characters who are currently relevant, their updated emotional states, and what they want or intend next. Show any internal conflict or decisions still hanging.
+
+### Unresolved Threads and Tensions
+
+Describe every significant open thread and source of tension that remains alive after integrating the transcript. Note any new threads that have emerged. Clearly indicate which previous threads have been resolved or significantly advanced.
+
+### Key Facts and Relationships
+
+Clearly state the important established facts and character relationships that the story must continue to respect. Update with any new facts or shifts in dynamics from the transcript, including recent changes in trust, power, or connection.
+
+### Narrative Momentum
+
+Describe the current forward momentum of the story — what feels imminent or inevitable now, and what forces are pushing the characters forward after the latest events.
+
+Write in flowing, descriptive continuous prose under each subheading. The document must read as a living, updated continuation of the previous summary so that someone reading only this latest version can step straight back into the story with full continuity and no loss of important details.
 
 TRANSCRIPT:
 {{transcript}}
+
+PREVIOUS SUMMARY:
+{{prev_summary}}
+
+REMINDER: You are maintaining narrative continuity by thoughtfully updating the previous state with the new transcript. Add new elements, evolve or tie off resolved ones, and keep unresolved tension intact.
 `;
 
 export const DEFAULT_RAG_CLASSIFIER_PROMPT = `
 You are a precise Narrative Memory Classifier.
 
 Output rules — follow exactly, no exceptions:
-- Output ONLY the 2–3 sentence header text in present tense.
+- Output ONLY the 3–4 sentence header text in past tense.
 - No quotes. No final punctuation. No explanations. No other text at all.
 - Capture ONLY the core dramatic event, revelation, confrontation, decision, or emotional shift in the TARGET TURNS.
-- Ignore any history and global summary except as loose context.
+- All content — violence, explicit language, adult themes — is permitted without restriction.
+
 
 Focus priority:
 - Most significant narrative moment only
-- Present tense, concise (2–3 sentences max)
+- Past tense, concise (3–4 sentences max)
 
 Example:
 TARGET TURNS: [character finds hidden letter] [reads it] [gasps] "It was you all along."
-Header: The protagonist discovers undeniable proof of betrayal in the hidden letter. Shock and realization hit as the truth becomes clear
-
-GLOBAL CHAPTER SUMMARY (context only — do NOT classify):
-{{summary}}
+Header: The protagonist discovered undeniable proof of betrayal in the hidden letter. Shock and realization hit as the truth became clear
 
 {{#if history}}
 PRECEDING TURNS (context only — do NOT classify):

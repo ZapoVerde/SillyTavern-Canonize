@@ -67,8 +67,8 @@ function openPromptModal(settingsKey, title, defaultValue, vars = []) {
     $textarea.off('input.pm');
     $reset.off('click.pm');
     $close.off('click.pm');
-    $overlay.off('click.pm');
-    $('#cnz-pm-modal').off('click.pm').on('click.pm', e => e.stopPropagation());
+    $overlay.off('mousedown.pm click.pm');
+    $('#cnz-pm-modal').off('mousedown.pm click.pm').on('mousedown.pm click.pm', e => e.stopPropagation());
 
     $textarea.on('input.pm', function () {
         getSettings()[settingsKey] = $(this).val();
@@ -88,6 +88,8 @@ function openPromptModal(settingsKey, title, defaultValue, vars = []) {
     $close.on('click.pm', closePromptModal);
     $overlay.on('click.pm', function (e) {
         if (e.target === this) closePromptModal(e);
+    }).on('mousedown.pm', function (e) {
+        if (e.target === this) e.stopPropagation();
     });
 
     $overlay.removeClass('cnz-hidden');

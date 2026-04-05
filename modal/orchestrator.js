@@ -74,6 +74,10 @@ export function injectModal() {
     $('body').append(buildDnaChainInspectorHTML());
     $('body').append(buildOrphanModalHTML());
 
+    $('#cnz-modal, #cnz-pm-modal, #cnz-li-modal, #cnz-orphan-modal').on('mousedown click', (e) => {
+        e.stopPropagation();
+    });
+
     // Step 1 — Hooks Workshop
     $('#cnz-modal').on('click', '#cnz-hooks-tab-bar .cnz-tab-btn', function () {
         onHooksTabSwitch($(this).data('tab'));
