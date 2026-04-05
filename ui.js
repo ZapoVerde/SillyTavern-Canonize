@@ -1,5 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/ui.js
+ * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role HTML Builder
  * @description
  * Builds and returns HTML strings for the Canonize wizard modal, the
@@ -372,18 +374,20 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
           </label>
         </div>
 
-        <div class="cnz-settings-row cnz-settings-prompt-row">
-          <button id="cnz-edit-summary-prompt"  class="cnz-btn cnz-btn-secondary"
-                  title="Edit the prompt template sent to the AI when generating the narrative hook / scenario summary.">Edit Summary Prompt</button>
-          <button id="cnz-edit-lorebook-prompt" class="cnz-btn cnz-btn-secondary"
-                  title="Edit the prompt template used when asking the AI to suggest lorebook entry updates and new entries.">Edit Lorebook Sync Prompt</button>
+        <div class="cnz-setting-row">
+          <label class="cnz-label">Summary Prompt ${tip('Sent to the AI each sync to produce the narrative hook — a flowing prose summary of unresolved tensions and active plot threads written into the Character Scenario.')}</label>
+          <button id="cnz-edit-summary-prompt" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
         </div>
         <div class="cnz-setting-row">
-          <label class="cnz-label">Targeted Update Prompt</label>
+          <label class="cnz-label">Lorebook Sync Prompt ${tip('Sent to the AI each sync to audit the transcript against the current lorebook and suggest entry updates or new entries.')}</label>
+          <button id="cnz-edit-lorebook-prompt" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
+        </div>
+        <div class="cnz-setting-row">
+          <label class="cnz-label">Targeted Update Prompt ${tip('Sent to the AI when you click Regen on an existing lorebook entry in the Lorebook Workshop ingester. Should instruct the AI to revise the entry in light of the current transcript.')}</label>
           <button id="cnz-edit-targeted-update-prompt" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
         </div>
         <div class="cnz-setting-row">
-          <label class="cnz-label">Targeted New Entry Prompt</label>
+          <label class="cnz-label">Targeted New Entry Prompt ${tip('Sent to the AI when you type a concept name and click Generate in the Lorebook Workshop. Should instruct the AI to draft a lorebook entry for that concept from scratch.')}</label>
           <button id="cnz-edit-targeted-new-prompt" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
         </div>
 
@@ -470,9 +474,9 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
                      value="${escapeHtml(String(s.ragMaxRetries ?? 1))}">
             </div>
 
-            <div class="cnz-settings-row cnz-settings-prompt-row">
-              <button id="cnz-edit-classifier-prompt" class="cnz-btn cnz-btn-secondary"
-                      title="Edit the prompt used to generate a semantic header for each memory chunk.">Edit Classifier Prompt</button>
+            <div class="cnz-setting-row">
+              <label class="cnz-label">Classifier Prompt ${tip('Sent to the AI once per memory chunk to produce a 2–3 sentence semantic header. Accurate headers improve vector retrieval relevance at query time.')}</label>
+              <button id="cnz-edit-classifier-prompt" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
             </div>
 
           </div><!-- /cnz-rag-ai-controls -->

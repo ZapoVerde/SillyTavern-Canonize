@@ -7,6 +7,9 @@
  * Console logger for LLM call lifecycle. Sits on the event bus and emits one
  * line per LLM call: dispatch, completion, and failure. No business logic.
  *
+ * @api-declaration
+ * (no exports — self-registers on import)
+ *
  * @contract
  *   assertions:
  *     purity: IO
