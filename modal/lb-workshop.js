@@ -49,7 +49,7 @@ import { getSettings } from '../core/settings.js';
 import {
     parseLbSuggestions, enrichLbSuggestions, matchEntryByComment, nextLorebookUid,
     makeLbDraftEntry, updateLbDiff, syncFreeformFromSuggestions, revertLbSuggestion,
-    deleteLbEntry, getPlzAnchor, PLZ_DELIMITER,
+    deleteLbEntry, stripPlzAnchor,
 } from '../lorebook/utils.js';
 import { buildModalTranscript, buildSyncWindowTranscript } from './hooks-workshop.js';
 
@@ -136,9 +136,6 @@ export async function onLbRegenClick() {
                 state._lorebookSuggestions = enrichLbSuggestions(suggestions);
 
                 for (const s of state._lorebookSuggestions) {
-                    // --- PULL PLZ ANCHOR ---
-                    const anchor = getPlzAnchor(s.name);
-                    const suffix = anchor ? `${PLZ_DELIMITER}${anchor}` : '';
                     const narrative = s._aiSnapshot.content.trim();
 
                     if (s.linkedUid !== null) {
@@ -146,12 +143,12 @@ export async function onLbRegenClick() {
                         if (entry) {
                             entry.comment = s.name;
                             entry.key     = [...s._aiSnapshot.keys];
-                            entry.content = narrative + suffix;
+                            entry.content = narrative;
                         }
                     } else {
                         const uid = nextLorebookUid();
                         state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(
-                            uid, s.name, s._aiSnapshot.keys, narrative + suffix,
+                            uid, s.name, s._aiSnapshot.keys, narrative,
                         );
                         s.linkedUid = uid;
                     }
@@ -252,7 +249,7 @@ export function renderLbIngesterDetail(suggestion) {
         const entry = state._draftLorebook?.entries?.[String(suggestion.linkedUid)];
         $('#cnz-lb-editor-name').val(entry?.comment ?? suggestion.name);
         $('#cnz-lb-editor-keys').val(entry?.key?.join(', ') ?? '');
-        $('#cnz-lb-editor-content').val(entry?.content ?? '');
+        $('#cnz-lb-editor-content').val(stripPlzAnchor(entry?.content ?? ''));
     }
     $('#cnz-lb-error-ingester').addClass('cnz-hidden').text('');
 
@@ -323,7 +320,7 @@ export function onLbIngesterLoadLatest() {
     if (entry) {
         entry.comment = s._aiSnapshot.name;
         entry.key     = [...s._aiSnapshot.keys];
-        entry.content = s._aiSnapshot.content;
+        entry.content = stripPlzAnchor(s._aiSnapshot.content);
     }
     renderLbIngesterDetail(s);
     const prefix = s.status === 'applied' ? '\u2713 ' : s.status === 'rejected' ? '\u2717 ' : '';
@@ -356,7 +353,7 @@ export function onLbIngesterLoadPrev() {
     }
     entry.comment = parentEntry.comment || '';
     entry.key     = Array.isArray(parentEntry.key) ? [...parentEntry.key] : [];
-    entry.content = parentEntry.content || '';
+    entry.content = stripPlzAnchor(parentEntry.content || '');
     s.name   = entry.comment;
     s.status = 'pending';
 
@@ -409,21 +406,17 @@ export function onLbIngesterRegenerate() {
                 if (!parsed.length) { toastr.warning('CNZ: Could not parse AI response.'); return; }
 
                 const fresh = parsed[0];
-                
-                // --- PULL PLZ ANCHOR ---
-                const anchor = getPlzAnchor(fresh.name || s.name);
-                const suffix = anchor ? `${PLZ_DELIMITER}${anchor}` : '';
                 const narrative = fresh.content.trim();
 
                 s.name        = fresh.name;
-                s._aiSnapshot = { name: fresh.name, keys: [...fresh.keys], content: narrative + suffix };
+                s._aiSnapshot = { name: fresh.name, keys: [...fresh.keys], content: narrative };
                 s.status      = 'pending';
 
                 const draftEntry = state._draftLorebook?.entries?.[String(s.linkedUid)];
                 if (draftEntry) {
                     draftEntry.comment = fresh.name;
                     draftEntry.key     = [...fresh.keys];
-                    draftEntry.content = narrative + suffix;
+                    draftEntry.content = narrative;
                 }
 
                 renderLbIngesterDetail(s);
@@ -559,21 +552,17 @@ export function onTargetedGenerateClick() {
 
                 const fresh = parsed[0];
                 const name  = fresh.name || keyword;
-
-                // --- PULL PLZ ANCHOR ---
-                const anchor = getPlzAnchor(name);
-                const suffix = anchor ? `${PLZ_DELIMITER}${anchor}` : '';
                 const narrative = fresh.content.trim();
 
                 const uid = nextLorebookUid();
-                state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(uid, name, fresh.keys, narrative + suffix);
+                state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(uid, name, fresh.keys, narrative);
 
                 const newSuggestion = {
                     type:        fresh.type || 'NEW',
                     name,
                     linkedUid:   uid,
                     status:      'pending',
-                    _aiSnapshot: { name, keys: [...fresh.keys], content: narrative + suffix },
+                    _aiSnapshot: { name, keys: [...fresh.keys], content: narrative },
                 };
 
                 state._lorebookSuggestions.push(newSuggestion);

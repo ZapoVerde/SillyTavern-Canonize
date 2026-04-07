@@ -17,7 +17,8 @@
  * deriveSuggestionsFromAnchorDiff, matchEntryByComment, nextLorebookUid,
  * makeLbDraftEntry, toVirtualDoc, updateLbDiff, isDraftDirty,
  * deleteLbEntry, revertLbSuggestion, serialiseSuggestionsToFreeform,
- * syncFreeformFromSuggestions, PLZ_DELIMITER, stripPlzAnchor, getPlzAnchor
+ * syncFreeformFromSuggestions, PLZ_DELIMITER, stripPlzAnchor, getPlzAnchor,
+ * stitchPlzAnchor
  *
  * @contract
  *   assertions:
@@ -86,6 +87,20 @@ export function getPlzAnchor(entryName) {
     }
 
     return '';
+}
+
+/**
+ * Combines a narrative text with the fresh PLZ anchor for the given character.
+ * Returns the combined string (narrative + delimiter + anchor), or just the
+ * narrative if no anchor is found.
+ * @param {string} entryName
+ * @param {string} narrative  Pure narrative text (no PLZ block).
+ * @returns {string}
+ */
+export function stitchPlzAnchor(entryName, narrative) {
+    const anchor = getPlzAnchor(entryName);
+    if (!anchor) return narrative;
+    return `${narrative}${PLZ_DELIMITER}${anchor}`;
 }
 
 // ─── Lorebook Utilities ───────────────────────────────────────────────────────
@@ -381,7 +396,7 @@ export function updateLbDiff() {
 
     const name    = $('#cnz-lb-editor-name').val();
     const keys    = $('#cnz-lb-editor-keys').val().split(',').map(k => k.trim()).filter(Boolean);
-    const content = $('#cnz-lb-editor-content').val();
+    const content = stripPlzAnchor($('#cnz-lb-editor-content').val());
     const proposed = toVirtualDoc(name, keys, content);
 
     let base = '';
@@ -391,7 +406,7 @@ export function updateLbDiff() {
             base = toVirtualDoc(
                 parentEntry.comment || '',
                 Array.isArray(parentEntry.key) ? parentEntry.key : [],
-                parentEntry.content || '',
+                stripPlzAnchor(parentEntry.content || ''),
             );
         }
         // no parentEntry → entry is new this sync → base stays ''

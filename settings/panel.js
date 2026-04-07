@@ -126,6 +126,7 @@ function refreshSettingsUI() {
     $('#cnz-set-gap-snooze').val(s.gapSnoozeTurns ?? 5);
     $('#cnz-set-hookseeker-horizon').val(s.hookseekerHorizon ?? 40);
     $('#cnz-set-lorebook-sync-start').val(s.lorebookSyncStart ?? 'syncPoint');
+    $('#cnz-set-enable-personalyze').prop('checked', s.enablePersonalyze ?? false);
     $('#cnz-set-auto-advance-mask').prop('checked', s.autoAdvanceMask ?? false);
     $('#cnz-set-enable-rag').prop('checked', s.enableRag ?? false);
     $('#cnz-rag-settings-body').toggleClass('cnz-disabled', !(s.enableRag ?? false));
@@ -201,6 +202,11 @@ function bindSettingsHandlers() {
 
     $('#cnz-set-lorebook-sync-start').on('change', function () {
         getSettings().lorebookSyncStart = $(this).val();
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-enable-personalyze').on('change', function () {
+        getSettings().enablePersonalyze = $(this).prop('checked');
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
