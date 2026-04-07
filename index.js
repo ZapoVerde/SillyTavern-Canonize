@@ -104,7 +104,8 @@ import { writeCnzSummaryPrompt, syncCnzSummaryOnCharacterSwitch } from './core/s
 import { runHealer } from './core/healer.js';
 import { lbEnsureLorebook, lbSaveLorebook } from './lorebook/api.js';
 import { parseLbSuggestions, enrichLbSuggestions,
-         nextLorebookUid, makeLbDraftEntry } from './lorebook/utils.js';
+         nextLorebookUid, makeLbDraftEntry,
+         getPlzAnchor, stripPlzAnchor, PLZ_DELIMITER } from './lorebook/utils.js';
 import { runRagPipeline, writeChunkHeaderToChat,
          renderChunkChatLabel, clearChunkChatLabels } from './rag/pipeline.js';
 import { patchCharacterWorld } from './modal/commit.js';
@@ -159,36 +160,69 @@ function logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN) {
     );
 }
 
+/**
+ * Global Sweep: iterates through a lorebook draft and applies the fresh
+ * PersonaLyze Identity Anchor for any matching characters.
+ * @param {object} draft The lorebook object to update.
+ */
+function syncPlzAnchorsToDraft(draft) {
+    if (!draft?.entries) return;
+    for (const entry of Object.values(draft.entries)) {
+        const anchor = getPlzAnchor(entry.comment || '');
+        if (!anchor) continue;
+
+        const currentNarrative = stripPlzAnchor(entry.content);
+        const newContent = currentNarrative + PLZ_DELIMITER + anchor;
+
+        if (entry.content !== newContent) {
+            console.log(`[CNZ] Pulled PLZ Anchor for lorebook entry: ${entry.comment}`);
+            entry.content = newContent;
+        }
+    }
+}
+
 
 // ─── CNZ Core ────────────────────────────────────────────────────────────────
 
 /**
- * Parses raw lorebook AI output and applies all suggestions to _draftLorebook,
- * then saves to disk. Silent — no modal interaction.
+ * Parses raw lorebook AI output and applies all suggestions to _draftLorebook.
+ * Stitches fresh PersonaLyze anchors into any matching entries.
  * @param {string} rawText  Raw AI output from runLorebookSyncCall.
  * @returns {Promise<void>}
  */
 async function processLorebookUpdate(rawText) {
-    if (!rawText.trim() || rawText.trim() === 'NO CHANGES NEEDED') return;
-    const suggestions = parseLbSuggestions(rawText);
-    state._lorebookSuggestions = enrichLbSuggestions(suggestions);
-    for (const s of state._lorebookSuggestions) {
-        if (s.linkedUid !== null) {
-            const entry = state._draftLorebook?.entries?.[String(s.linkedUid)];
-            if (entry) {
-                entry.comment = s.name;
-                entry.key     = s._aiSnapshot.keys;
-                entry.content = s._aiSnapshot.content;
+    // 1. Parse and update AI suggestions if they exist
+    if (rawText.trim() && rawText.trim() !== 'NO CHANGES NEEDED') {
+        const suggestions = parseLbSuggestions(rawText);
+        state._lorebookSuggestions = enrichLbSuggestions(suggestions);
+
+        for (const s of state._lorebookSuggestions) {
+            const anchor = getPlzAnchor(s.name);
+            const suffix = anchor ? `${PLZ_DELIMITER}${anchor}` : '';
+            const narrative = s._aiSnapshot.content.trim();
+
+            if (s.linkedUid !== null) {
+                const entry = state._draftLorebook?.entries?.[String(s.linkedUid)];
+                if (entry) {
+                    entry.comment = s.name;
+                    entry.key     = s._aiSnapshot.keys;
+                    entry.content = narrative + suffix;
+                }
+            } else {
+                const uid = nextLorebookUid();
+                state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(
+                    uid, s.name, s._aiSnapshot.keys, narrative + suffix,
+                );
+                s.linkedUid = uid;
             }
-        } else {
-            const uid = nextLorebookUid();
-            state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(
-                uid, s.name, s._aiSnapshot.keys, s._aiSnapshot.content,
-            );
-            s.linkedUid = uid;
+            s.status = 'pending';
         }
-        s.status = 'pending';
     }
+
+    // 2. Perform the global PLZ pull sweep (catches matches the AI didn't edit)
+    syncPlzAnchorsToDraft(state._draftLorebook);
+
+    // 3. Save the result
     await lbSaveLorebook(state._lorebookName, state._draftLorebook);
     state._lorebookData = structuredClone(state._draftLorebook);
 }
@@ -399,11 +433,15 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
             const text = await runLorebookSyncCall(lbTranscript, state._lorebookData);
             await processLorebookUpdate(text);
             console.log('[CNZ] Lane 1 (lorebook): ✓ ok');
-            return true;
         } catch (e) {
-            console.error('[CNZ] Lane 1 (lorebook): ✗ failed —', e.message ?? e, e);
+            console.error('[CNZ] Lane 1 (lorebook) failed:', e.message ?? e);
+            // If AI failed, we still run the sweep on the existing draft
+            if (state._draftLorebook) {
+                await processLorebookUpdate(''); // Trigger sweep and save
+            }
             return false;
         }
+        return true;
     })();
 
     // --- LANE 2: HOOKS (Independent) ---

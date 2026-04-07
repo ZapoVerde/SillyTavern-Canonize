@@ -1,13 +1,16 @@
 /**
  * @file data/default-user/extensions/canonize/core/llm-calls.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
+ * @version 1.0.17
  * @architectural-role Prompt Assembly and Generation
  * @description
  * Owns the three sync AI calls and the bus dispatch that backs them.
  * No parsing, no state mutation — just prompt assembly and raw text generation
  * routed through the bus/executor pipeline. Each call receives pre-assembled
  * context from the caller and returns raw model output for downstream parsing.
+ *
+ * Updated to support PersonaLyze "Pull-from-Sync" rules by stripping protected
+ * visual data before sending entries to the LLM.
  *
  * @api-declaration
  * runLorebookSyncCall, runHookseekerCall, runTargetedLbCall
@@ -23,7 +26,7 @@ import { state } from '../state.js';
 import { on, off, BUS_EVENTS } from '../bus.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
 import { getSettings } from './settings.js';
-import { formatLorebookEntries } from '../lorebook/utils.js';
+import { formatLorebookEntries, stripPlzAnchor } from '../lorebook/utils.js';
 
 // ─── Bus Dispatch ─────────────────────────────────────────────────────────────
 
@@ -70,6 +73,7 @@ function _waitForRecipe(recipeId, extraInputs = {}) {
 
 /**
  * Fires the Lorebook Sync AI call via the bus.
+ * formatLorebookEntries internally strips PLZ Identity Anchors.
  * @param {string}      transcript  Prose transcript to analyse.
  * @param {object|null} lorebook    Lorebook state to use as context. Defaults to `state._lorebookData` if null.
  * @returns {Promise<string>}
@@ -96,6 +100,9 @@ export function runHookseekerCall(transcript, prevSummary = '') {
 
 /**
  * Fires a targeted lorebook AI call for a single entry (update or new) via the bus.
+ * Strips the PLZ Identity Anchor from existing content to ensure the AI doesn't
+ * attempt to modify protected visual descriptions.
+ *
  * @param {'update'|'new'} mode
  * @param {string} entryName     Entry name or freeform keyword.
  * @param {string} entryKeys     Comma-separated existing keys (empty string for new).
@@ -108,7 +115,7 @@ export function runTargetedLbCall(mode, entryName, entryKeys, entryContent, tran
     return _waitForRecipe(recipeId, {
         entry_name:    entryName,
         entry_keys:    entryKeys,
-        entry_content: entryContent,
+        entry_content: stripPlzAnchor(entryContent),
         transcript,
     });
 }

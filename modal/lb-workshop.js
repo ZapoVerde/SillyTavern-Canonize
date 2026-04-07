@@ -49,7 +49,7 @@ import { getSettings } from '../core/settings.js';
 import {
     parseLbSuggestions, enrichLbSuggestions, matchEntryByComment, nextLorebookUid,
     makeLbDraftEntry, updateLbDiff, syncFreeformFromSuggestions, revertLbSuggestion,
-    deleteLbEntry,
+    deleteLbEntry, getPlzAnchor, PLZ_DELIMITER,
 } from '../lorebook/utils.js';
 import { buildModalTranscript, buildSyncWindowTranscript } from './hooks-workshop.js';
 
@@ -92,17 +92,15 @@ export function flushLbEditorToDraft() {
 /**
  * Freeform Regen: fires a full lorebook sync AI call, resets the draft to the
  * parent node baseline, and rebuilds the suggestion list from scratch.
- * Asks for confirmation because it discards any corrections already made.
  */
 export async function onLbRegenClick() {
     setLbLoading(true);
-    // Lower CNZ overlay z-index temporarily so callPopup renders above it.
     const $overlay = $('#cnz-overlay');
     $overlay.css('z-index', '1');
     let confirmed;
     try {
         confirmed = await callPopup(
-            'This will run a fresh lorebook AI call and rebuild the suggestion list from scratch, resetting to the parent node baseline and discarding any corrections or previously committed lorebook changes made in this session. Continue?',
+            'This will run a fresh lorebook AI call and rebuild the suggestion list from scratch, resetting to the parent node baseline and discarding any corrections. Continue?',
             'confirm',
         );
     } finally {
@@ -114,8 +112,6 @@ export async function onLbRegenClick() {
     }
     $('#cnz-lb-error').addClass('cnz-hidden').text('');
 
-    // preSyncLorebook = parent anchor's lorebook — set by openReviewModal from DNA chain.
-    // Falls back to state._lorebookData if no parent anchor exists (first sync).
     const preSyncLorebook = state._parentNodeLorebook
         ? structuredClone(state._parentNodeLorebook)
         : structuredClone(state._lorebookData ?? { entries: {} });
@@ -132,34 +128,30 @@ export async function onLbRegenClick() {
             .then(text => {
                 if (state._lbRegenGen !== thisGen) return;
 
-                // Reset draft AND server-copy baseline to pre-sync state (captured before this
-                // async call).  Both must share the same reference point so isDraftDirty only
-                // fires when the AI actually produced changes — otherwise a regen that yields
-                // no suggestions would compare state._draftLorebook (A) against a stale state._lorebookData
-                // that reflects a previously-committed lorebook (B), producing a false dirty and
-                // overwriting B with A on Finalize.
                 state._draftLorebook = structuredClone(preSyncLorebook);
                 state._lorebookData  = structuredClone(preSyncLorebook);
                 state._lbPendingWrite = null;
 
-                // Parse and enrich suggestions (objects now carry no keys/content).
                 const suggestions = parseLbSuggestions(text);
                 state._lorebookSuggestions = enrichLbSuggestions(suggestions);
 
-                // Provision draft entries: update existing entries with AI content,
-                // create new draft entries for suggestions not yet in the lorebook.
                 for (const s of state._lorebookSuggestions) {
+                    // --- PULL PLZ ANCHOR ---
+                    const anchor = getPlzAnchor(s.name);
+                    const suffix = anchor ? `${PLZ_DELIMITER}${anchor}` : '';
+                    const narrative = s._aiSnapshot.content.trim();
+
                     if (s.linkedUid !== null) {
                         const entry = state._draftLorebook.entries[String(s.linkedUid)];
                         if (entry) {
                             entry.comment = s.name;
                             entry.key     = [...s._aiSnapshot.keys];
-                            entry.content = s._aiSnapshot.content;
+                            entry.content = narrative + suffix;
                         }
                     } else {
                         const uid = nextLorebookUid();
                         state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(
-                            uid, s.name, s._aiSnapshot.keys, s._aiSnapshot.content,
+                            uid, s.name, s._aiSnapshot.keys, narrative + suffix,
                         );
                         s.linkedUid = uid;
                     }
@@ -381,15 +373,14 @@ export function onLbIngesterLoadPrev() {
 
 /**
  * Regenerate: fires a fresh targeted AI call for the currently loaded entry.
- * Lands in the draft and editor, keeps the suggestion unresolved for review.
+ * Lands in the draft and editor, re-attaching PLZ anchors if found.
  */
 export function onLbIngesterRegenerate() {
     const s = state._lorebookSuggestions[state._lbActiveIngesterIndex];
     if (!s) return;
 
-    flushLbEditorToDraft(); // ensure draft is current before reading it for the AI call
+    flushLbEditorToDraft();
 
-    // Mode: 'new' for brand-new entries (no parent-node baseline), 'update' otherwise.
     const hasParent = !!(state._parentNodeLorebook?.entries?.[String(s.linkedUid)]);
     const mode      = (s.type === 'NEW' && !hasParent) ? 'new' : 'update';
 
@@ -418,16 +409,21 @@ export function onLbIngesterRegenerate() {
                 if (!parsed.length) { toastr.warning('CNZ: Could not parse AI response.'); return; }
 
                 const fresh = parsed[0];
+                
+                // --- PULL PLZ ANCHOR ---
+                const anchor = getPlzAnchor(fresh.name || s.name);
+                const suffix = anchor ? `${PLZ_DELIMITER}${anchor}` : '';
+                const narrative = fresh.content.trim();
+
                 s.name        = fresh.name;
-                s._aiSnapshot = { name: fresh.name, keys: [...fresh.keys], content: fresh.content };
+                s._aiSnapshot = { name: fresh.name, keys: [...fresh.keys], content: narrative + suffix };
                 s.status      = 'pending';
 
-                // Write AI result directly to draft (single source of truth).
                 const draftEntry = state._draftLorebook?.entries?.[String(s.linkedUid)];
                 if (draftEntry) {
                     draftEntry.comment = fresh.name;
                     draftEntry.key     = [...fresh.keys];
-                    draftEntry.content = fresh.content;
+                    draftEntry.content = narrative + suffix;
                 }
 
                 renderLbIngesterDetail(s);
@@ -523,10 +519,9 @@ export async function onLbApplyAllUnresolved() {
     toastr.success(`Applied ${count} lorebook suggestion${count !== 1 ? 's' : ''} — will be saved on Finalize.`);
 }
 
+
 /**
  * Lane 2 — Generate: fires a targeted NEW-entry AI call for the supplied keyword.
- * The result is provisioned immediately into _draftLorebook (uid assigned at once)
- * then loaded into the shared editor.
  */
 export function onTargetedGenerateClick() {
     const keyword = $('#cnz-targeted-keyword').val().trim();
@@ -565,16 +560,20 @@ export function onTargetedGenerateClick() {
                 const fresh = parsed[0];
                 const name  = fresh.name || keyword;
 
-                // Provision draft entry immediately — no suggestion ever lives without a uid.
+                // --- PULL PLZ ANCHOR ---
+                const anchor = getPlzAnchor(name);
+                const suffix = anchor ? `${PLZ_DELIMITER}${anchor}` : '';
+                const narrative = fresh.content.trim();
+
                 const uid = nextLorebookUid();
-                state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(uid, name, fresh.keys, fresh.content);
+                state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(uid, name, fresh.keys, narrative + suffix);
 
                 const newSuggestion = {
                     type:        fresh.type || 'NEW',
                     name,
                     linkedUid:   uid,
                     status:      'pending',
-                    _aiSnapshot: { name, keys: [...fresh.keys], content: fresh.content },
+                    _aiSnapshot: { name, keys: [...fresh.keys], content: narrative + suffix },
                 };
 
                 state._lorebookSuggestions.push(newSuggestion);

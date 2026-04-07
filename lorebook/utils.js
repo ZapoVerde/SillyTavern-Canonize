@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/lorebook/utils.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.17
+ * @version 1.0.18
  * @architectural-role Pure Functions
  * @description
  * Pure data manipulation functions for lorebook state. Covers parsing AI
@@ -10,22 +10,83 @@
  * defaults, and managing draft state (deleteLbEntry, revertLbSuggestion,
  * isDraftDirty). No fetch calls; callers supply all inputs via `state`.
  *
+ * Updated to support PersonaLyze "Pull-from-Sync" Identity Anchor protection.
+ *
  * @api-declaration
  * formatLorebookEntries, parseLbSuggestions, enrichLbSuggestions,
  * deriveSuggestionsFromAnchorDiff, matchEntryByComment, nextLorebookUid,
  * makeLbDraftEntry, toVirtualDoc, updateLbDiff, isDraftDirty,
  * deleteLbEntry, revertLbSuggestion, serialiseSuggestionsToFreeform,
- * syncFreeformFromSuggestions
+ * syncFreeformFromSuggestions, PLZ_DELIMITER, stripPlzAnchor, getPlzAnchor
  *
  * @contract
  *   assertions:
  *     purity: mutates
  *     state_ownership: [state._lorebookSuggestions, state._draftLorebook,
  *                       state._parentNodeLorebook, state._lbActiveIngesterIndex]
- *     external_io: [none]
+ *     external_io: [SillyTavern.getContext (for char mapping)]
  */
 
 import { state, escapeHtml } from '../state.js';
+import { extension_settings } from '../../../../extensions.js';
+
+// ─── PersonaLyze Integration ──────────────────────────────────────────────────
+
+export const PLZ_DELIMITER = '\n\n### Physical Identity\n';
+const PLZ_DELIMITER_REGEX = /(?:\r?\n)*### Physical Identity\b/i;
+
+/**
+ * Strips the protected PersonaLyze physical identity block from a lorebook entry.
+ * Ensures the AI curator only sees and edits the narrative portion.
+ * @param {string} content 
+ * @returns {string}
+ */
+export function stripPlzAnchor(content) {
+    if (!content) return '';
+    const parts = content.split(PLZ_DELIMITER_REGEX);
+    return parts[0].trim();
+}
+
+/**
+ * Reaches into PersonaLyze's settings to find a matching Identity Anchor.
+ * Uses strict avatar mapping first, falling back to case-insensitive slug and fuzzy matches.
+ * @param {string} entryName 
+ * @returns {string} The raw Identity Anchor text, or empty string if not found.
+ */
+export function getPlzAnchor(entryName) {
+    const plzRoot = extension_settings?.personalyze;
+    if (!plzRoot?.characters) return '';
+
+    const lowerName = String(entryName || '').trim().toLowerCase();
+    if (!lowerName) return '';
+
+    // 1. Try to match against live ST characters by name to get the exact PLZ avatar key
+    const ctx = typeof SillyTavern !== 'undefined' ? SillyTavern.getContext() : null;
+    const stChars = ctx?.characters || [];
+    const matchedChar = stChars.find(c => String(c.name || '').trim().toLowerCase() === lowerName);
+
+    if (matchedChar && matchedChar.avatar) {
+        const avatarSlug = matchedChar.avatar.replace(/[^a-zA-Z0-9_\-]/g, '_');
+        if (plzRoot.characters[avatarSlug]?.identityAnchor) {
+            return plzRoot.characters[avatarSlug].identityAnchor.trim();
+        }
+    }
+
+    // 2. Direct key match (slugified name)
+    const slug = lowerName.replace(/\s+/g, '_').replace(/[^a-z0-9_\-]/g, '');
+    if (plzRoot.characters[slug]?.identityAnchor) {
+        return plzRoot.characters[slug].identityAnchor.trim();
+    }
+
+    // 3. Fallback: fuzzy match against all PLZ keys
+    for (const [key, data] of Object.entries(plzRoot.characters)) {
+        if (key.toLowerCase() === slug || key.toLowerCase().replace(/_/g, ' ') === lowerName) {
+            if (data.identityAnchor) return data.identityAnchor.trim();
+        }
+    }
+
+    return '';
+}
 
 // ─── Lorebook Utilities ───────────────────────────────────────────────────────
 
@@ -36,7 +97,9 @@ export function formatLorebookEntries(data) {
     return items.map(e => {
         const label = e.comment || String(e.uid);
         const keys  = Array.isArray(e.key) ? e.key.join(', ') : (e.key || '');
-        return `--- Entry: ${label} ---\nKeys: ${keys}\n${e.content || ''}`;
+        // Strip the PLZ block before sending to the AI
+        const narrativeContent = stripPlzAnchor(e.content);
+        return `--- Entry: ${label} ---\nKeys: ${keys}\n${narrativeContent}`;
     }).join('\n\n');
 }
 
