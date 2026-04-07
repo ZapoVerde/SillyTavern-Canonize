@@ -189,31 +189,26 @@ async function commitChanges(char, hooksText) {
 
             // JIT stitch: build a save-ready copy with PLZ anchors reattached.
             // Draft remains narrative-only; only the copy sent to disk carries the block.
-            // Skipped entirely when enablePersonalyze is off.
+            // When enablePersonalyze is off: skip the fresh registry lookup but still
+            // preserve any Physical Identity block already present in the original entry.
+            const PLZ_PRESERVE_REGEX = /(?:\r?\n)*### Physical Identity\b/i;
             const stitchedLorebook = structuredClone(state._draftLorebook);
-            if (getSettings().enablePersonalyze) {
-                for (const entry of Object.values(stitchedLorebook.entries ?? {})) {
-                    const narrative = stripPlzAnchor(entry.content);
-                    const stitched  = stitchPlzAnchor(entry.comment || '', narrative);
-                    if (stitched === narrative) {
-                        // No PLZ anchor found — check if the original had one and preserve it
-                        const origEntry = preLorebook.entries?.[String(entry.uid)];
-                        if (origEntry) {
-                            const origContent = origEntry.content || '';
-                            const PLZ_DELIMITER_REGEX = /(?:\r?\n)*### Physical Identity\b/i;
-                            const origParts = origContent.split(PLZ_DELIMITER_REGEX);
-                            if (origParts.length > 1) {
-                                entry.content = narrative + '\n\n### Physical Identity\n' + origParts.slice(1).join('\n\n### Physical Identity\n');
-                            } else {
-                                entry.content = narrative;
-                            }
-                        } else {
-                            entry.content = narrative;
-                        }
-                    } else {
+            for (const entry of Object.values(stitchedLorebook.entries ?? {})) {
+                const narrative = stripPlzAnchor(entry.content);
+                if (getSettings().enablePersonalyze) {
+                    const stitched = stitchPlzAnchor(entry.comment || '', narrative);
+                    if (stitched !== narrative) {
                         entry.content = stitched;
+                        continue;
                     }
                 }
+                // Fallback (always runs when PLZ disabled, or when no registry match):
+                // preserve any existing Physical Identity block from the original entry.
+                const origEntry = preLorebook.entries?.[String(entry.uid)];
+                const origParts = origEntry ? (origEntry.content || '').split(PLZ_PRESERVE_REGEX) : null;
+                entry.content = (origParts && origParts.length > 1)
+                    ? narrative + '\n\n### Physical Identity\n' + origParts.slice(1).join('\n\n### Physical Identity\n')
+                    : narrative;
             }
 
             await lbSaveLorebook(state._lorebookName, stitchedLorebook);
