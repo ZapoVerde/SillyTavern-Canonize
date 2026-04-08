@@ -35,6 +35,7 @@ import {
 import { emit, BUS_EVENTS } from '../bus.js';
 import { setDnaChain } from '../scheduler.js';
 import { invalidateAllJobs } from '../cycleStore.js';
+import { warn, error } from '../log.js';
 import { state, escapeHtml } from '../state.js';
 import { getSettings } from '../core/settings.js';
 import { readDnaChain } from '../core/dna-chain.js';
@@ -299,7 +300,7 @@ export async function openReviewModal() {
             state._lorebookData  = await lbEnsureLorebook(state._lorebookName);
             state._draftLorebook = structuredClone(state._lorebookData);
         } catch (err) {
-            console.error('[CNZ] openReviewModal: lorebook load failed:', err);
+            error('Modal', 'openReviewModal: lorebook load failed:', err);
             state._lorebookData  = { entries: {} };
             state._draftLorebook = { entries: {} };
         }
@@ -372,7 +373,7 @@ export async function openReviewModal() {
     const charForLink = freshChar ?? char;
     if (state._lorebookName && charForLink?.data?.extensions?.world !== state._lorebookName) {
         patchCharacterWorld(charForLink, state._lorebookName).catch(e =>
-            console.error('[CNZ] openReviewModal: lorebook link failed:', e.message ?? e),
+            error('Modal', 'openReviewModal: lorebook link failed:', e.message ?? e),
         );
     }
 
@@ -479,7 +480,7 @@ export async function openDnaChainInspector() {
                     }
                 }
             } catch (err) {
-                console.warn('[CNZ] openDnaChainInspector: RAG verify failed:', err);
+                warn('Modal', 'openDnaChainInspector: RAG verify failed:', err);
             }
         }
 

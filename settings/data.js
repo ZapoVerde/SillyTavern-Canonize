@@ -21,6 +21,7 @@
 
 import { extension_settings } from '../../../../extensions.js';
 import { EXT_NAME, PROFILE_DEFAULTS } from '../state.js';
+import { warn } from '../log.js';
 import {
     DEFAULT_LOREBOOK_SYNC_PROMPT,
 } from '../defaults.js';
@@ -66,7 +67,7 @@ export function initSettings() {
 
         // syncFromTurn → liveContextBuffer (semantics inverted; discard old value, reset to default)
         if (root.syncFromTurn !== undefined) {
-            console.warn('[CNZ] syncFromTurn renamed to liveContextBuffer — semantics inverted, resetting to default of 5');
+            warn('Settings', 'syncFromTurn renamed to liveContextBuffer — semantics inverted, resetting to default of 5');
             delete root.syncFromTurn;
             root.liveContextBuffer = 5;
         }

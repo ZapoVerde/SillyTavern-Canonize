@@ -30,7 +30,7 @@
 
 import { state, escapeHtml } from '../state.js';
 import { extension_settings } from '../../../../extensions.js';
-import { log } from '../../personalyze/utils/logger.js';
+import { log, warn, error } from '../log.js';
 
 // ─── PersonaLyze Integration ──────────────────────────────────────────────────
 
@@ -344,7 +344,7 @@ export function enrichLbSuggestions(freshParsed) {
     for (const s of enriched) {
         if (s.linkedUid === null) continue;
         if (seenUids.has(s.linkedUid)) {
-            console.warn(`[CNZ] Two lorebook suggestions resolved to uid ${s.linkedUid}; treating second as NEW.`);
+            warn('LbUtils', `Two lorebook suggestions resolved to uid ${s.linkedUid}; treating second as NEW.`);
             s.linkedUid = null;
         } else {
             seenUids.add(s.linkedUid);
@@ -557,7 +557,7 @@ async function renderLbIngesterDetail(suggestion) {
         const { renderLbIngesterDetail: fn } = await import('../modal/lb-workshop.js');
         fn(suggestion);
     } catch (err) {
-        console.error('[CNZ] renderLbIngesterDetail deferred import failed:', err);
+        error('LbUtils', 'renderLbIngesterDetail deferred import failed:', err);
     }
 }
 

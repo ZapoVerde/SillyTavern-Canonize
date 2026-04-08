@@ -34,6 +34,7 @@ import { DEFAULT_LOREBOOK_SYNC_PROMPT, DEFAULT_HOOKSEEKER_PROMPT,
 import { getSettings, getMetaSettings } from './data.js';
 import { openDnaChainInspector } from '../modal/orchestrator.js';
 import { purgeAndRebuild } from '../core/healer.js';
+import { log, warn, error } from '../log.js';
 
 // ─── Local Constants ──────────────────────────────────────────────────────────
 
@@ -269,7 +270,7 @@ function bindSettingsHandlers() {
                 }
             }
             SillyTavern.getContext().saveChat().catch(err =>
-                console.error('[CNZ] saveChat after separator clear failed:', err),
+                error('Settings', 'saveChat after separator clear failed:', err),
             );
             // Mark any in-memory chunks as pending so they reclassify on next open
             for (const c of state._ragChunks) {
@@ -347,7 +348,7 @@ function bindSettingsHandlers() {
             },
         );
     } catch (e) {
-        console.warn('[CNZ] Could not initialize profile dropdown:', e);
+        warn('Settings', 'Could not initialize profile dropdown:', e);
     }
 
     try {
@@ -360,7 +361,7 @@ function bindSettingsHandlers() {
             },
         );
     } catch (e) {
-        console.warn('[CNZ] Could not initialize RAG profile dropdown:', e);
+        warn('Settings', 'Could not initialize RAG profile dropdown:', e);
     }
 
     // ── Profile management ────────────────────────────────────────────────────
@@ -450,11 +451,11 @@ function updateRagAiControlsVisibility() {
 }
 
 export function injectSettingsPanel() {
-    console.log('[CNZ] injectSettingsPanel: Checking for #extensions_settings...');
+    log('Init', 'injectSettingsPanel: Checking for #extensions_settings...');
     if ($('#cnz-settings').length) return;
     const $parent = $('#extensions_settings');
     if ($parent.length === 0) {
-        console.warn('[CNZ] injectSettingsPanel: #extensions_settings not found in DOM!');
+        warn('Init', 'injectSettingsPanel: #extensions_settings not found in DOM!');
         return;
     }
     const meta = getMetaSettings();
@@ -464,5 +465,5 @@ export function injectSettingsPanel() {
     bindSettingsHandlers();
     refreshProfileDropdown();
     updateRagAiControlsVisibility();
-    console.log('[CNZ] injectSettingsPanel: Success.');
+    log('Init', 'injectSettingsPanel: Success.');
 }

@@ -31,6 +31,7 @@ import { isDraftDirty, stripPlzAnchor, stitchPlzAnchor } from '../lorebook/utils
 import { lbSaveLorebook } from '../lorebook/api.js';
 import { buildRagDocument } from '../rag/pipeline.js';
 import { uploadRagFile, registerCharacterAttachment, cnzAvatarKey, cnzFileName } from '../rag/api.js';
+import { warn, error } from '../log.js';
 
 // ─── Character World Patch ────────────────────────────────────────────────────
 
@@ -175,7 +176,7 @@ async function commitChanges(char, hooksText) {
             hooksChanged = true;
             results.push({ task: 'hooks', status: 'success', detail: 'Narrative Hooks updated in CNZ Summary prompt' });
         } catch (err) {
-            console.error('[CNZ] Hooks save failed:', err);
+            error('Commit', 'Hooks save failed:', err);
             results.push({ task: 'hooks', status: 'failed', error: `Hooks save failed: ${err.message}` });
         }
     } else {
@@ -264,13 +265,13 @@ async function commitChanges(char, hooksText) {
             const liveChain = readDnaChain(SillyTavern.getContext().chat ?? []);
             const lkgRef    = liveChain.lkg ? { anchor: liveChain.lkg, msgIdx: liveChain.lkgMsgIdx } : null;
             if (!lkgRef) {
-                console.warn('[CNZ] commitChanges: no lkg anchor to patch — skipping DNA update');
+                warn('Commit', 'commitChanges: no lkg anchor to patch — skipping DNA update');
                 results.push({ task: 'anchor', status: 'skipped' });
             } else {
                 const chatMsgs  = SillyTavern.getContext().chat ?? [];
                 const anchorMsg = chatMsgs[lkgRef.msgIdx];
                 if (!anchorMsg) {
-                    console.warn('[CNZ] commitChanges: anchor message not found at index', lkgRef.msgIdx);
+                    warn('Commit', 'commitChanges: anchor message not found at index', lkgRef.msgIdx);
                     results.push({ task: 'anchor', status: 'skipped' });
                 } else {
                     const existing      = lkgRef.anchor;
@@ -287,13 +288,13 @@ async function commitChanges(char, hooksText) {
                         await SillyTavern.getContext().saveChat();
                         results.push({ task: 'anchor', status: 'success', detail: 'DNA anchor updated' });
                     } catch (saveErr) {
-                        console.error('[CNZ] commitChanges: saveChat failed:', saveErr);
+                        error('Commit', 'commitChanges: saveChat failed:', saveErr);
                         results.push({ task: 'anchor', status: 'partial', error: `DNA anchor save failed: ${saveErr.message} (content saved)` });
                     }
                 }
             }
         } catch (err) {
-            console.error('[CNZ] DNA anchor update failed:', err);
+            error('Commit', 'DNA anchor update failed:', err);
             results.push({ task: 'anchor', status: 'partial', error: `DNA anchor update failed: ${err.message} (content saved)` });
         }
     } else {

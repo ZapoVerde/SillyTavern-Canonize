@@ -22,6 +22,8 @@
  *     external_io: [/api/chats/saveChat]
  */
 
+import { warn, error } from '../log.js';
+
 // ─── Types (JSDoc only — no runtime impact) ───────────────────────────────────
 
 /**
@@ -94,7 +96,7 @@ export function readDnaChain(messages) {
         if (!msg.extra.cnz) continue;
         const cnz = msg.extra.cnz;
         if (!cnz.type) {
-            console.warn('[CNZ] readDnaChain: message at index', i, 'has malformed cnz object (missing type)');
+            warn('DnaChain', 'readDnaChain: message at index', i, 'has malformed cnz object (missing type)');
             continue;
         }
         if (cnz.type === 'anchor') {
@@ -160,7 +162,7 @@ export function buildAnchorPayload({ uuid, committedAt, hooks, lorebook, ragUrl,
 export async function writeDnaAnchor(pair, anchor) {
     const msg = findLastAiMessageInPair(pair);
     if (!msg) {
-        console.warn('[CNZ] writeDnaAnchor: no AI message in pair — skipping');
+        warn('DnaChain', 'writeDnaAnchor: no AI message in pair — skipping');
         return;
     }
     msg.extra ??= {};
@@ -168,7 +170,7 @@ export async function writeDnaAnchor(pair, anchor) {
     try {
         await SillyTavern.getContext().saveChat();
     } catch (err) {
-        console.error('[CNZ] writeDnaAnchor: saveChat failed:', err);
+        error('DnaChain', 'writeDnaAnchor: saveChat failed:', err);
     }
 }
 
@@ -201,7 +203,7 @@ export async function writeDnaLinks(pairs, anchorIdx, uuid, pairOffset) {
     try {
         await SillyTavern.getContext().saveChat();
     } catch (err) {
-        console.error('[CNZ] writeDnaLinks: saveChat failed:', err);
+        error('DnaChain', 'writeDnaLinks: saveChat failed:', err);
     }
 }
 

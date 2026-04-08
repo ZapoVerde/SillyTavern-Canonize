@@ -39,6 +39,7 @@ import { getSettings } from './settings.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
 import { waitForRagChunks } from '../rag/pipeline.js';
 import { buildRagDocument } from '../rag/pipeline.js';
+import { error } from '../log.js';
 
 // ─── Healer Utilities ─────────────────────────────────────────────────────────
 
@@ -176,7 +177,7 @@ export async function runHealer(char, _chatFileName) {
         try {
             await restoreRagToNode(char, nodeFile);
         } catch (err) {
-            console.error('[CNZ] Healer: RAG reconciliation failed:', err);
+            error('Healer', 'RAG reconciliation failed:', err);
             toastr.warning('CNZ: Branch healed but RAG reconciliation failed — vector index may be inconsistent.');
         }
 
@@ -185,7 +186,7 @@ export async function runHealer(char, _chatFileName) {
 
         toastr.warning(`CNZ: Branch detected — restored to message ${restorePoint}. Vector index rebuilt.`);
     } catch (err) {
-        console.error('[CNZ] Healer: restoration failed:', err);
+        error('Healer', 'Healer: restoration failed:', err);
         toastr.error('CNZ: Branch detected but restoration failed — lorebook may be inconsistent.');
     }
 }
@@ -340,7 +341,7 @@ export async function purgeAndRebuild() {
 
         toastr.success(`CNZ: Rebuild complete — ${combinedChunks.length} chunks re-indexed.`);
     } catch (err) {
-        console.error('[CNZ] purgeAndRebuild:', err);
+        error('Healer', 'purgeAndRebuild:', err);
         toastr.error(`CNZ: Rebuild failed: ${err.message}`);
     }
 }

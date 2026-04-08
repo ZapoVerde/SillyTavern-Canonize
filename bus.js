@@ -26,16 +26,18 @@
 // ─── CNZ Event Bus ────────────────────────────────────────────────────────────
 // Thin event emitter. No CNZ knowledge. No payload inspection. No routing.
 
+import { log, error } from './log.js';
+
 const _handlers = {};
 
 export function emit(eventName, payload = {}) {
-    if (_devMode) console.log(`[BUS] ${eventName}`, payload);
+    if (_devMode) log('Bus', `${eventName}`, payload);
     const handlers = _handlers[eventName] ?? [];
     for (const handler of handlers) {
         try {
             handler(payload);
         } catch (err) {
-            console.error(`[BUS] Handler error on ${eventName}:`, err);
+            error('Bus', `Handler error on ${eventName}:`, err);
         }
     }
 }

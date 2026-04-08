@@ -33,6 +33,7 @@
 // No business logic — all conditions live in Triggers (recipes.js).
 
 import { emit, on, BUS_EVENTS } from './bus.js';
+import { log } from './log.js';
 import { eventSource } from '../../../../script.js';
 
 // ── Module State ──────────────────────────────────────────────────────────────
@@ -87,7 +88,7 @@ export function isSyncInProgress() {
  */
 export function snooze(pairs, currentPairCount) {
     _snoozeUntilCount = currentPairCount + pairs;
-    console.log(`[CNZ] Scheduler: snooze until pair ${_snoozeUntilCount}.`);
+    log('Scheduler', `snooze until pair ${_snoozeUntilCount}`);
 }
 
 /**
@@ -176,5 +177,5 @@ function _logTurnStatus(state, settings) {
     else if (gap < every)                syncStatus = `gap=${gap}/${every} — waiting`;
     else                                 syncStatus = `gap=${gap}/${every} — TRIGGERING`;
 
-    console.log(`[CNZ] ▸ turn | pairs=${pairCount} | ${anchorPart} | ${syncStatus}`);
+    log('Scheduler', `▸ turn | pairs=${pairCount} | ${anchorPart} | ${syncStatus}`);
 }

@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
- * @version 1.1.10
+ * @version 1.1.11
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — extension entry point and session
@@ -88,6 +88,7 @@
 import { saveSettingsDebounced, getRequestHeaders, eventSource, event_types } from '../../../../script.js';
 import { extension_settings } from '../../../extensions.js';
 import { emit, on, off, enableDevMode, BUS_EVENTS } from './bus.js';
+import { log, warn, error } from './log.js';
 import { invalidateAllJobs } from './cycleStore.js';
 import { initScheduler, setSyncInProgress, isSyncInProgress,
          snooze, resetScheduler, setDnaChain, getGap } from './scheduler.js';
@@ -113,7 +114,7 @@ import { injectModal, openReviewModal, openOrphanModal } from './modal/orchestra
 import { renderRagCard } from './modal/rag-workshop.js';
 import { injectSettingsPanel } from './settings/panel.js';
 
-console.log('[CNZ] index.js: Module loaded (all imports resolved).');
+log('Module', 'index.js: Module loaded (all imports resolved).');
 
 // ─── Mobile Debug Panel ───────────────────────────────────────────────────────
 const MDP = false; // set true to enable on-screen console overlay for mobile debugging
@@ -152,8 +153,8 @@ function logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN) {
         ? `turns ${pairs[0].validIdx + 1}–${pairs[pairs.length - 1].validIdx + 1} (${pairs.length} pairs)`
         : '(none)';
     const lbLabel = lbPairs === hookPairs ? `${fmt(lbPairs)} [same as hookseeker]` : fmt(lbPairs);
-    console.log(
-        `[CNZ] ── SYNC START ── coverAll=${coverAll} window=${chunkEveryN}\n` +
+    log('Sync',
+        `── SYNC START ── coverAll=${coverAll} window=${chunkEveryN}\n` +
         `  hookseeker: ${fmt(hookPairs)}\n` +
         `  lorebook:   ${lbLabel}\n` +
         `  rag:        ${fmt(ragPairs)}`
@@ -245,7 +246,7 @@ function processHooksUpdate(hooksText) {
  */
 async function commitDnaAnchor(messages) {
     if (state._stagedProsePairs.length === 0) {
-        console.warn('[CNZ] commitDnaAnchor: no staged pairs — skipping anchor write');
+        warn('DnaChain', 'commitDnaAnchor: no staged pairs — skipping anchor write');
         return;
     }
 
@@ -274,7 +275,7 @@ async function commitDnaAnchor(messages) {
 
     state._dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
     setDnaChain(state._dnaChain);
-    console.log('[CNZ] commitDnaAnchor: anchor written uuid=' + anchor.uuid + ' pairs=' + state._stagedProsePairs.length);
+    log('DnaChain', 'commitDnaAnchor: anchor written uuid=' + anchor.uuid + ' pairs=' + state._stagedProsePairs.length);
 }
 
 /**
@@ -365,14 +366,14 @@ function deriveLastCommittedPairs(allPairs, messages, dnaChain) {
  * @param {boolean} coverAll true = full gap, false = standard window.
  */
 async function runCnzSync(char, messages, { coverAll = false } = {}) {
-    console.log(`[CNZ] ══ SYNC START ══ char="${char?.name}" coverAll=${coverAll} msgs=${messages.length}`);
+    log('Sync', `══ SYNC START ══ char="${char?.name}" coverAll=${coverAll} msgs=${messages.length}`);
     setSyncInProgress(true);
     const settings  = getSettings();
     const allPairs  = buildProsePairs(messages);
     const { syncPairs, syncPairOffset } = computeSyncWindow(allPairs, messages, settings, coverAll, state._dnaChain);
 
     if (syncPairs.length === 0) {
-        console.warn('[CNZ] runCnzSync: no uncommitted pairs in window — aborting');
+        warn('Sync', 'runCnzSync: no uncommitted pairs in window — aborting');
         setSyncInProgress(false);
         return;
     }
@@ -409,27 +410,27 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         state._lorebookName = lbName;
         state._lorebookData = await lbEnsureLorebook(state._lorebookName);
         state._draftLorebook = structuredClone(state._lorebookData);
-        console.log(`[CNZ] Lorebook lazy-loaded: "${state._lorebookName}" (${Object.keys(state._lorebookData.entries ?? {}).length} entries)`);
+        log('Lorebook', `Lorebook lazy-loaded: "${state._lorebookName}" (${Object.keys(state._lorebookData.entries ?? {}).length} entries)`);
     }
     // Link lorebook to character if not already set.
     if (char?.data?.extensions?.world !== state._lorebookName) {
         try {
             await patchCharacterWorld(char, state._lorebookName);
-            console.log(`[CNZ] Lorebook linked to character: "${char.name}" → "${state._lorebookName}"`);
+            log('Lorebook', `Lorebook linked to character: "${char.name}" → "${state._lorebookName}"`);
         } catch (e) {
-            console.error('[CNZ] Lorebook link failed:', e.message ?? e);
+            error('Lorebook', 'Lorebook link failed:', e.message ?? e);
         }
     }
 
     // --- LANE 1: LOREBOOK (Independent) ---
     const lbPromise = (async () => {
-        console.log('[CNZ] Lane 1 (lorebook): starting');
+        log('Lorebook', 'Lane 1: starting');
         try {
             const text = await runLorebookSyncCall(lbTranscript, state._lorebookData);
             await processLorebookUpdate(text);
-            console.log('[CNZ] Lane 1 (lorebook): ✓ ok');
+            log('Lorebook', 'Lane 1: ✓ ok');
         } catch (e) {
-            console.error('[CNZ] Lane 1 (lorebook) failed:', e.message ?? e);
+            error('Lorebook', 'Lane 1 failed:', e.message ?? e);
             // If AI failed, we still run the sweep on the existing draft
             if (state._draftLorebook) {
                 await processLorebookUpdate(''); // Trigger sweep and save
@@ -441,15 +442,15 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
     // --- LANE 2: HOOKS (Independent) ---
     const hooksPromise = (async () => {
-        console.log('[CNZ] Lane 2 (hooks): starting');
+        log('Hooks', 'Lane 2: starting');
         try {
             const text = await runHookseekerCall(hookTranscript, state._priorSituation);
             await processHooksUpdate(text);
             state._priorSituation = text;
-            console.log('[CNZ] Lane 2 (hooks): ✓ ok');
+            log('Hooks', 'Lane 2: ✓ ok');
             return true;
         } catch (e) {
-            console.error('[CNZ] Lane 2 (hooks): ✗ failed —', e.message ?? e, e);
+            error('Hooks', 'Lane 2: ✗ failed —', e.message ?? e, e);
             state._priorSituation = 'Current Action';
             return false;
         }
@@ -457,14 +458,14 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
     // --- LANE 3: RAG (Independent) ---
     const ragPromise = (async () => {
-        if (!settings.enableRag) { console.log('[CNZ] Lane 3 (RAG): skipped (disabled)'); return true; }
-        console.log('[CNZ] Lane 3 (RAG): starting');
+        if (!settings.enableRag) { log('Rag', 'Lane 3: skipped (disabled)'); return true; }
+        log('Rag', 'Lane 3: starting');
         try {
             await runRagPipeline();
-            console.log('[CNZ] Lane 3 (RAG): ✓ ok');
+            log('Rag', 'Lane 3: ✓ ok');
             return true;
         } catch (e) {
-            console.error('[CNZ] Lane 3 (RAG): ✗ failed —', e.message ?? e, e);
+            error('Rag', 'Lane 3: ✗ failed —', e.message ?? e, e);
             return false;
         }
     })();
@@ -472,17 +473,17 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     const [lbOk, hooksOk, ragOk] = await Promise.all([lbPromise, hooksPromise, ragPromise]);
 
     // Commit the DNA anchor regardless of individual lane success.
-    console.log('[CNZ] DNA chain: committing anchor');
+    log('DnaChain', 'committing anchor');
     let anchorOk = false;
     try {
         await commitDnaAnchor(messages);
         anchorOk = true;
-        console.log('[CNZ] DNA chain: ✓ ok');
+        log('DnaChain', '✓ ok');
         // Stamp the now-known anchor UUID onto the CNZ Summary prompt
         const newUuid = state._dnaChain.lkg?.uuid ?? null;
         if (newUuid) writeCnzSummaryPrompt(char.avatar, state._priorSituation, newUuid);
     } catch (e) {
-        console.error('[CNZ] DNA chain: ✗ failed —', e.message ?? e, e);
+        error('DnaChain', '✗ failed —', e.message ?? e, e);
     }
 
     setSyncInProgress(false);
@@ -495,10 +496,10 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     ].filter(Boolean);
 
     if (failures.length === 0) {
-        console.log('[CNZ] ══ SYNC COMPLETE ══ all lanes ok');
+        log('Sync', '══ SYNC COMPLETE ══ all lanes ok');
         toastr.success('Sync processed');
     } else {
-        console.warn(`[CNZ] ══ SYNC COMPLETE ══ failed: ${failures.join(', ')}`);
+        warn('Sync', `══ SYNC COMPLETE ══ failed: ${failures.join(', ')}`);
         toastr.warning(`Sync processed — failed: ${failures.join(', ')}`);
     }
 }
@@ -563,7 +564,7 @@ async function checkOrphans() {
             existing = orphanUrls.filter(url => verified[url] === true);
         }
     } catch (err) {
-        console.warn('[CNZ] checkOrphans: verify request failed:', err);
+        warn('Sync', 'checkOrphans: verify request failed:', err);
     }
 
     if (existing.length === 0) return;
@@ -632,10 +633,10 @@ function onChatChanged() {
         syncCnzSummaryOnCharacterSwitch(char, state._dnaChain);
         if (char) {
             runHealer(char, char.chat).catch(err =>
-                console.error('[CNZ] onChatChanged: healer failed:', err),
+                error('Sync', 'onChatChanged: healer failed:', err),
             );
             checkOrphans().catch(err =>
-                console.error('[CNZ] checkOrphans failed:', err),
+                error('Sync', 'checkOrphans failed:', err),
             );
         }
         return;
@@ -644,7 +645,7 @@ function onChatChanged() {
     // Same character, different chat — Healer territory
     if (chatFileName) {
         runHealer(char, chatFileName).catch(err =>
-            console.error('[CNZ] runHealer uncaught error:', err),
+            error('Sync', 'runHealer uncaught error:', err),
         );
     }
 }
@@ -759,11 +760,11 @@ async function onWandButtonClick() {
 }
 
 function injectWandButton() {
-    console.log('[CNZ] injectWandButton: Checking for #extensionsMenu...');
+    log('Init', 'injectWandButton: Checking for #extensionsMenu...');
     if ($('#cnz-wand-btn').length) return;
     const $menu = $('#extensionsMenu');
     if ($menu.length === 0) {
-        console.warn('[CNZ] injectWandButton: #extensionsMenu not found in DOM!');
+        warn('Init', 'injectWandButton: #extensionsMenu not found in DOM!');
         return;
     }
     const btn = $(
@@ -773,28 +774,28 @@ function injectWandButton() {
         '</div>'
     );
     btn.on('click', () => onWandButtonClick().catch(err => {
-        console.error('[CNZ] Wand button error:', err);
+        error('Init', 'Wand button error:', err);
         toastr.error(`CNZ: ${err.message}`);
     }));
     $menu.append(btn);
-    console.log('[CNZ] injectWandButton: Success.');
+    log('Init', 'injectWandButton: Success.');
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 async function init() {
-    console.log('[CNZ] init: Starting sequence...');
+    log('Init', 'Starting sequence...');
     try {
     initSettings();
-    console.log('[CNZ] init: Settings initialized.');
+    log('Init', 'Settings initialized.');
     initScheduler(Triggers, getSettings);
-    console.log('[CNZ] init: Scheduler initialized.');
+    log('Init', 'Scheduler initialized.');
     injectModal();
-    console.log('[CNZ] init: Modal injected.');
+    log('Init', 'Modal injected.');
     injectSettingsPanel();
-    console.log('[CNZ] init: Settings panel injected.');
+    log('Init', 'Settings panel injected.');
     injectWandButton();
-    console.log('[CNZ] init: Wand button injected.');
+    log('Init', 'Wand button injected.');
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
 
     // Delegated click handler for the review toast link (registered once — not per-sync)
@@ -821,7 +822,7 @@ async function init() {
         const char     = ctx.characters[ctx.characterId];
         const messages = ctx.chat ?? [];
         runCnzSync(char, messages, { coverAll: true }).catch(err =>
-            console.error('[CNZ] Gap sync-all failed:', err),
+            error('Sync', 'Gap sync-all failed:', err),
         );
     });
     $(document).on('click', '.cnz-gap-snooze', (e) => {
@@ -859,7 +860,7 @@ async function init() {
                 chunk.header = header.trim() || chunk.turnRange;
                 chunk.status = 'complete';
                 writeChunkHeaderToChat(chunkIndex).catch(err =>
-                    console.error('[CNZ] writeChunkHeaderToChat error:', err));
+                    error('Rag', 'writeChunkHeaderToChat error:', err));
             }
             renderRagCard(chunkIndex);
             renderChunkChatLabel(chunkIndex);
@@ -868,10 +869,10 @@ async function init() {
 
     // Auto-sync pump — fired by the auto_sync trigger in recipes.js
     on(BUS_EVENTS.SYNC_TRIGGERED, ({ char, messages, gap, every, trailingBoundary, largeGap }) => {
-        console.log(`[CNZ] ══ SYNC TRIGGERED ══ gap=${gap}/${every} largeGap=${largeGap} char="${char?.name}"`);
+        log('Sync', `══ SYNC TRIGGERED ══ gap=${gap}/${every} largeGap=${largeGap} char="${char?.name}"`);
         if (!largeGap) {
             runCnzSync(char, messages).catch(err =>
-                console.error('[CNZ] runCnzSync uncaught error:', err),
+                error('Sync', 'runCnzSync uncaught error:', err),
             );
             return;
         }
@@ -883,7 +884,7 @@ async function init() {
             try {
                 await runCnzSync(char, messages);
             } catch (err) {
-                console.error('[CNZ] runCnzSync uncaught error:', err);
+                error('Sync', 'runCnzSync uncaught error:', err);
                 return;
             }
 
@@ -927,10 +928,10 @@ async function init() {
         }
     };
 
-    console.log('[CNZ] init: Full sequence complete.');
+    log('Init', 'Full sequence complete.');
     } catch (err) {
-        console.error('[CNZ] CRITICAL FAILURE during init:', err);
+        error('Init', 'CRITICAL FAILURE during init:', err);
     }
 }
 
-await init().catch(err => console.error('[CNZ] init() top-level rejection:', err));
+await init().catch(err => error('Init', 'init() top-level rejection:', err));

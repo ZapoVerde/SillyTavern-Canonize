@@ -32,6 +32,7 @@ import { buildProsePairs, formatPairsAsTranscript } from '../core/transcript.js'
 import { getSettings } from '../core/settings.js';
 import { interpolate } from '../defaults.js';
 import { uploadRagFile, registerCharacterAttachment, cnzAvatarKey, cnzFileName } from './api.js';
+import { warn, error } from '../log.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -238,7 +239,7 @@ export async function writeChunkHeaderToChat(chunkIndex) {
     try {
         await SillyTavern.getContext().saveChat();
     } catch (err) {
-        console.error('[CNZ] writeChunkHeaderToChat: saveChat failed:', err);
+        error('Rag', 'writeChunkHeaderToChat: saveChat failed:', err);
     }
 }
 
@@ -306,7 +307,7 @@ export function waitForRagChunks(timeoutMs = 120_000) {
             for (const c of state._ragChunks) {
                 if (c.status === 'in-flight') c.status = 'pending';
             }
-            console.warn(`[CNZ] RAG chunk wait timed out after ${timeoutMs}ms — some chunks may be incomplete`);
+            warn('Rag', `RAG chunk wait timed out after ${timeoutMs}ms — some chunks may be incomplete`);
             resolve();
         }, timeoutMs);
 
