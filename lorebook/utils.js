@@ -30,6 +30,7 @@
 
 import { state, escapeHtml } from '../state.js';
 import { extension_settings } from '../../../../extensions.js';
+import { log } from '../../personalyze/utils/logger.js';
 
 // ─── PersonaLyze Integration ──────────────────────────────────────────────────
 
@@ -45,7 +46,9 @@ const PLZ_DELIMITER_REGEX = /(?:\r?\n)*### Physical Identity\b/i;
 export function stripPlzAnchor(content) {
     if (!content) return '';
     const parts = content.split(PLZ_DELIMITER_REGEX);
-    return parts[0].trim();
+    const stripped = parts[0].trim();
+    if (parts.length > 1) log('PlzAnchor', 'stripPlzAnchor: removed physical identity block from content');
+    return stripped;
 }
 
 /**
@@ -56,10 +59,18 @@ export function stripPlzAnchor(content) {
  */
 export function getPlzAnchor(entryName) {
     const plzRoot = extension_settings?.personalyze;
-    if (!plzRoot?.characters) return '';
+    if (!plzRoot?.characters) {
+        log('PlzAnchor', 'getPlzAnchor: PLZ settings or characters map not found — skipping');
+        return '';
+    }
 
     const lowerName = String(entryName || '').trim().toLowerCase();
-    if (!lowerName) return '';
+    if (!lowerName) {
+        log('PlzAnchor', 'getPlzAnchor: empty entryName — skipping');
+        return '';
+    }
+
+    log('PlzAnchor', `getPlzAnchor: resolving anchor for "${lowerName}"`);
 
     // 1. Try to match against live ST characters by name to get the exact PLZ avatar key
     const ctx = typeof SillyTavern !== 'undefined' ? SillyTavern.getContext() : null;
@@ -68,24 +79,36 @@ export function getPlzAnchor(entryName) {
 
     if (matchedChar && matchedChar.avatar) {
         const avatarSlug = matchedChar.avatar.replace(/[^a-zA-Z0-9_\-]/g, '_');
+        log('PlzAnchor', `getPlzAnchor: ST character matched — avatar slug "${avatarSlug}"`);
         if (plzRoot.characters[avatarSlug]?.identityAnchor) {
+            log('PlzAnchor', `getPlzAnchor: anchor found via avatar slug "${avatarSlug}"`);
             return plzRoot.characters[avatarSlug].identityAnchor.trim();
         }
+        log('PlzAnchor', `getPlzAnchor: ST character matched but no identityAnchor at slug "${avatarSlug}" — falling through`);
+    } else {
+        log('PlzAnchor', `getPlzAnchor: no ST character matched for "${lowerName}" — trying slug fallbacks`);
     }
 
     // 2. Direct key match (slugified name)
     const slug = lowerName.replace(/\s+/g, '_').replace(/[^a-z0-9_\-]/g, '');
+    log('PlzAnchor', `getPlzAnchor: trying direct slug match "${slug}"`);
     if (plzRoot.characters[slug]?.identityAnchor) {
+        log('PlzAnchor', `getPlzAnchor: anchor found via direct slug "${slug}"`);
         return plzRoot.characters[slug].identityAnchor.trim();
     }
 
     // 3. Fallback: fuzzy match against all PLZ keys
+    log('PlzAnchor', `getPlzAnchor: trying fuzzy match across ${Object.keys(plzRoot.characters).length} PLZ keys`);
     for (const [key, data] of Object.entries(plzRoot.characters)) {
         if (key.toLowerCase() === slug || key.toLowerCase().replace(/_/g, ' ') === lowerName) {
-            if (data.identityAnchor) return data.identityAnchor.trim();
+            if (data.identityAnchor) {
+                log('PlzAnchor', `getPlzAnchor: anchor found via fuzzy match on key "${key}"`);
+                return data.identityAnchor.trim();
+            }
         }
     }
 
+    log('PlzAnchor', `getPlzAnchor: no anchor found for "${lowerName}"`);
     return '';
 }
 
@@ -98,8 +121,13 @@ export function getPlzAnchor(entryName) {
  * @returns {string}
  */
 export function stitchPlzAnchor(entryName, narrative) {
+    log('PlzAnchor', `stitchPlzAnchor: stitching anchor for "${entryName}"`);
     const anchor = getPlzAnchor(entryName);
-    if (!anchor) return narrative;
+    if (!anchor) {
+        log('PlzAnchor', `stitchPlzAnchor: no anchor — returning narrative unchanged`);
+        return narrative;
+    }
+    log('PlzAnchor', `stitchPlzAnchor: appending ${anchor.length}-char anchor to narrative`);
     return `${narrative}${PLZ_DELIMITER}${anchor}`;
 }
 
