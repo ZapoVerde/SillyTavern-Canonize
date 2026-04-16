@@ -17,7 +17,7 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: [
- *       _lorebookData, _draftLorebook, _lastKnownAvatar, _lastKnownChatFile,
+ *       _lorebookData, _draftLorebook, _lastKnownAvatar,
  *       _lorebookName, _lorebookSuggestions,
  *       _ragChunks, _stagedProsePairs, _stagedPairOffset, _splitPairIdx,
  *       _lastRagUrl, _priorSituation, _beforeSituation, _parentNodeLorebook,
@@ -106,7 +106,6 @@ export const state = {
 
     // ── Healer tracking — updated on CHAT_CHANGED ──────────────────────────────
     _lastKnownAvatar:     null,
-    _lastKnownChatFile:   null,
 
     // ── Engine State ────────────────────────────────────────────────────────────
     _lorebookName:        '',

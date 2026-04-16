@@ -356,7 +356,7 @@ export function resolveClassifierHistory(pairStart, historyN, fullPairs, stagedP
  *
  * @returns {Promise<void>}
  */
-export async function runRagPipeline() {
+export async function runRagPipeline(anchorUuid = null) {
     const ctx  = SillyTavern.getContext();
     const char = ctx.characters[ctx.characterId];
     if (!char) throw new Error('No character selected');
@@ -393,8 +393,9 @@ export async function runRagPipeline() {
     const ragText   = buildRagDocument(state._ragChunks, getSettings(), charName2);
     if (!ragText.trim()) return;
 
-    const charName   = char.name;
-    const ragFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), charName);
+    const charName    = char.name;
+    const anchorHash  = anchorUuid ? anchorUuid.slice(0, 8) : '';
+    const ragFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), charName, anchorHash);
     state._lastRagUrl      = await uploadRagFile(ragText, ragFileName);
 
     const byteSize = new TextEncoder().encode(ragText).length;

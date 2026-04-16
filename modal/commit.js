@@ -212,6 +212,7 @@ async function commitChanges(char, hooksText) {
                     : narrative;
             }
 
+            stitchedLorebook.extensions = { ...(stitchedLorebook.extensions ?? {}), cnz_anchor_uuid: state._dnaChain?.lkg?.uuid ?? null };
             await lbSaveLorebook(state._lorebookName, stitchedLorebook);
             state._lorebookData = structuredClone(state._draftLorebook);
             lorebookChanged = true;

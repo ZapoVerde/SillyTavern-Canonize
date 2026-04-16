@@ -33,7 +33,7 @@ import { writeCnzSummaryPrompt } from './summary-prompt.js';
 import { buildProsePairs, formatPairsAsTranscript } from './transcript.js';
 import { buildRagChunks } from '../rag/pipeline.js';
 import { setDnaChain } from '../scheduler.js';
-import { lbSaveLorebook } from '../lorebook/api.js';
+import { lbSaveLorebook, lbGetLorebook } from '../lorebook/api.js';
 import { cnzAvatarKey, cnzFileName, uploadRagFile, registerCharacterAttachment } from '../rag/api.js';
 import { getSettings } from './settings.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
@@ -52,8 +52,9 @@ import { error } from '../log.js';
 export async function restoreLorebookToNode(_char, node, nodeFile = null) {
     const nodeFile_ = nodeFile;
     if (!nodeFile_?.state?.lorebook) throw new Error(`[CNZ] No lorebook state in node ${node.nodeId}`);
-    const lbData = nodeFile_.state.lorebook;
+    const lbData = structuredClone(nodeFile_.state.lorebook);
     const lbName = lbData.name || state._lorebookName;
+    lbData.extensions = { ...(lbData.extensions ?? {}), cnz_anchor_uuid: nodeFile_?.state?.uuid ?? null };
     await lbSaveLorebook(lbName, lbData);
     state._lorebookName  = lbName;
     state._lorebookData  = structuredClone(lbData);
@@ -108,6 +109,80 @@ export async function restoreRagToNode(char, nodeFile) {
 }
 
 /**
+ * Called when the DNA chain head is intact (same timeline). Checks whether the
+ * lorebook on disk and the character's RAG attachments match the head anchor.
+ * If either is stale (e.g. left behind by a different chat's sync), restores
+ * silently from the head anchor — no user confirmation needed since the anchor
+ * is the source of truth and the timeline is known-good.
+ * @param {object} char        Current character object from context.
+ * @param {object} headAnchor  The head CnzAnchor from the DNA chain.
+ */
+async function reconcileWorldState(char, headAnchor) {
+    // ── Check lorebook ────────────────────────────────────────────────────────
+    let lorebookStale = false;
+    const lorebookName = char?.data?.extensions?.world || char?.name;
+    if (lorebookName) {
+        try {
+            const lbData  = await lbGetLorebook(lorebookName);
+            lorebookStale = lbData?.extensions?.cnz_anchor_uuid !== headAnchor.uuid;
+        } catch (_) { /* unreachable lorebook — skip */ }
+    }
+
+    // ── Check RAG attachments ─────────────────────────────────────────────────
+    const cnzRagPrefix   = `cnz_${cnzAvatarKey(char.avatar)}_rag_`;
+    const allAttachments = extension_settings.character_attachments?.[char.avatar] ?? [];
+    const cnzAttachments = allAttachments.filter(a => a.name?.startsWith(cnzRagPrefix));
+    const expectedRag    = headAnchor.ragUrl ? headAnchor.ragUrl.split('/').pop() : null;
+    const ragStale       = expectedRag
+        ? cnzAttachments.length !== 1 || cnzAttachments[0].name !== expectedRag
+        : cnzAttachments.length > 0;
+
+    if (!lorebookStale && !ragStale) return;
+
+    // ── Restore from head anchor ──────────────────────────────────────────────
+    try {
+        const nodeFile  = buildNodeFileFromAnchor(headAnchor);
+        const nodeDummy = { nodeId: headAnchor.uuid };
+
+        if (lorebookStale) {
+            await restoreLorebookToNode(char, nodeDummy, nodeFile);
+            restoreHooksToNode(char, nodeDummy, nodeFile);
+        }
+        if (ragStale) {
+            try {
+                await restoreRagToNode(char, nodeFile);
+            } catch (err) {
+                error('Healer', 'reconcileWorldState: RAG reconciliation failed:', err);
+                toastr.warning('CNZ: World state partially corrected — RAG index may be inconsistent.');
+                return;
+            }
+        }
+        toastr.info('CNZ: World state corrected to match current chat.');
+    } catch (err) {
+        error('Healer', 'reconcileWorldState failed:', err);
+        toastr.warning('CNZ: World state may not match current chat — use Purge & Rebuild if needed.');
+    }
+}
+
+/**
+ * Checks whether the lorebook on disk carries a CNZ anchor UUID that does not
+ * match the current (anchor-free) chat. If it does, the lorebook was left behind
+ * by a previous session and the user is offered a cleanup via runNewChatCleanup.
+ * Handles both cold-start and same-session new-chat scenarios.
+ * @param {object} char  Current character object from context.
+ */
+async function maybePromptLorebookCleanup(char) {
+    const lorebookName = char?.data?.extensions?.world || char?.name;
+    if (!lorebookName) return;
+    let lbData;
+    try { lbData = await lbGetLorebook(lorebookName); }
+    catch (_) { return; }
+    if (!lbData?.extensions?.cnz_anchor_uuid) return;
+    state._lorebookName = lorebookName;
+    await runNewChatCleanup(char);
+}
+
+/**
  * Fires on CHAT_CHANGED for same-character chat switches (and once at startup).
  * Walks the DNA chain against the current chat history to detect branches.
  * If a branch is found, restores the lorebook and hooks block to the last valid
@@ -125,15 +200,24 @@ export async function restoreRagToNode(char, nodeFile) {
 export async function runHealer(char, _chatFileName) {
     const context  = SillyTavern.getContext();
     const messages = context.chat ?? [];
-    if (!messages.length) return;
 
     state._dnaChain = readDnaChain(messages);
     setDnaChain(state._dnaChain);
-    if (state._dnaChain.anchors.length === 0) return;
+
+    if (state._dnaChain.anchors.length === 0) {
+        await maybePromptLorebookCleanup(char);
+        return;
+    }
+
+    if (!messages.length) return;
 
     // ── Head check — same timeline? ───────────────────────────────────────────
     const headRef = state._dnaChain.anchors[state._dnaChain.anchors.length - 1];
-    if (messages[headRef.msgIdx]?.extra?.cnz?.uuid === headRef.anchor.uuid) return;
+    if (messages[headRef.msgIdx]?.extra?.cnz?.uuid === headRef.anchor.uuid) {
+        // Timeline intact — silently reconcile world state to head anchor if stale.
+        await reconcileWorldState(char, headRef.anchor);
+        return;
+    }
 
     // ── Find deepest still-valid anchor ──────────────────────────────────────
     const lkgRef = findLkgAnchorByPosition(state._dnaChain.anchors, messages);
@@ -321,7 +405,8 @@ export async function purgeAndRebuild() {
         // ── 5. Upload, register, patch LKG anchor, save ───────────────────────────
         const charName    = char.name ?? '';
         const ragText     = buildRagDocument(combinedChunks, ragSettings, charName);
-        const ragFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name);
+        const anchorHash  = chain.lkg.uuid?.slice(0, 8) ?? '';
+        const ragFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name, anchorHash);
         const ragUrl      = await uploadRagFile(ragText, ragFileName);
         const byteSize    = new TextEncoder().encode(ragText).length;
         registerCharacterAttachment(char.avatar, ragUrl, ragFileName, byteSize);
@@ -422,7 +507,7 @@ export async function purgeCnzFiles() {
             <li>Purge the vector index</li>
         </ul>
         <p>The lorebook and hooks will not be changed.</p>
-        <p>This cannot be undone.</p>`,
+        <p>RAG files can be rebuilt at any time by switching back to the original chat and using Purge &amp; Rebuild.</p>`,
         'confirm',
     );
     if (!confirmed) return;

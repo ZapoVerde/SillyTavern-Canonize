@@ -119,8 +119,9 @@ export function cnzFileName(avatarKey, type, ...args) {
         case 'node':
             return `cnz_${avatarKey}_node_${args[0]}.json`;
         case 'rag': {
-            const safeName = String(args[1] ?? '').replace(/[^a-zA-Z0-9_\-]/g, '_');
-            return `cnz_${avatarKey}_rag_${args[0]}_${safeName}.txt`;
+            const safeName    = String(args[1] ?? '').replace(/[^a-zA-Z0-9_\-]/g, '_');
+            const anchorSuffix = args[2] ? `_${args[2]}` : '';
+            return `cnz_${avatarKey}_rag_${args[0]}_${safeName}${anchorSuffix}.txt`;
         }
         default:
             throw new Error(`[CNZ] Unknown file type: ${type}`);

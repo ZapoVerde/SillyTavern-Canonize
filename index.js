@@ -102,7 +102,7 @@ import { runLorebookSyncCall, runHookseekerCall } from './core/llm-calls.js';
 import { readDnaChain, getLkgAnchor, buildAnchorPayload,
          writeDnaAnchor, writeDnaLinks } from './core/dna-chain.js';
 import { writeCnzSummaryPrompt, syncCnzSummaryOnCharacterSwitch } from './core/summary-prompt.js';
-import { runHealer, runNewChatCleanup } from './core/healer.js';
+import { runHealer } from './core/healer.js';
 import { lbEnsureLorebook, lbSaveLorebook } from './lorebook/api.js';
 import { parseLbSuggestions, enrichLbSuggestions,
          nextLorebookUid, makeLbDraftEntry,
@@ -171,7 +171,7 @@ function logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN) {
  * @param {string} rawText  Raw AI output from runLorebookSyncCall.
  * @returns {Promise<void>}
  */
-async function processLorebookUpdate(rawText) {
+async function processLorebookUpdate(rawText, anchorUuid = null) {
     // 1. Parse and update AI suggestions if they exist
     if (rawText.trim() && rawText.trim() !== 'NO CHANGES NEEDED') {
         const suggestions = parseLbSuggestions(rawText);
@@ -219,6 +219,7 @@ async function processLorebookUpdate(rawText) {
             ? narrative + '\n\n### Physical Identity\n' + origParts.slice(1).join('\n\n### Physical Identity\n')
             : narrative;
     }
+    stitchedLorebook.extensions = { ...(stitchedLorebook.extensions ?? {}), cnz_anchor_uuid: anchorUuid };
     await lbSaveLorebook(state._lorebookName, stitchedLorebook);
     state._lorebookData = structuredClone(state._draftLorebook);
 }
@@ -244,7 +245,7 @@ function processHooksUpdate(hooksText) {
  * @param {object[]} messages  Full chat message array.
  * @returns {Promise<void>}
  */
-async function commitDnaAnchor(messages) {
+async function commitDnaAnchor(messages, anchorUuid) {
     if (state._stagedProsePairs.length === 0) {
         warn('DnaChain', 'commitDnaAnchor: no staged pairs — skipping anchor write');
         return;
@@ -261,7 +262,7 @@ async function commitDnaAnchor(messages) {
         .map(c => ({ chunkIndex: c.chunkIndex, header: c.header, turnRange: c.turnRange, pairStart: state._stagedPairOffset + c.pairStart, pairEnd: state._stagedPairOffset + c.pairEnd }));
 
     const anchor = buildAnchorPayload({
-        uuid:        crypto.randomUUID(),
+        uuid:        anchorUuid,
         committedAt: new Date().toISOString(),
         hooks:       state._priorSituation,
         lorebook:    Object.assign({ name: state._lorebookName }, structuredClone(state._draftLorebook ?? { entries: {} })),
@@ -422,18 +423,21 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         }
     }
 
+    // Pre-generate the anchor UUID so the RAG filename can carry it before commitDnaAnchor runs.
+    const anchorUuid = crypto.randomUUID();
+
     // --- LANE 1: LOREBOOK (Independent) ---
     const lbPromise = (async () => {
         log('Lorebook', 'Lane 1: starting');
         try {
             const text = await runLorebookSyncCall(lbTranscript, state._lorebookData);
-            await processLorebookUpdate(text);
+            await processLorebookUpdate(text, anchorUuid);
             log('Lorebook', 'Lane 1: ✓ ok');
         } catch (e) {
             error('Lorebook', 'Lane 1 failed:', e.message ?? e);
             // If AI failed, we still run the sweep on the existing draft
             if (state._draftLorebook) {
-                await processLorebookUpdate(''); // Trigger sweep and save
+                await processLorebookUpdate('', anchorUuid); // Trigger sweep and save
             }
             return false;
         }
@@ -461,7 +465,7 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
         if (!settings.enableRag) { log('Rag', 'Lane 3: skipped (disabled)'); return true; }
         log('Rag', 'Lane 3: starting');
         try {
-            await runRagPipeline();
+            await runRagPipeline(anchorUuid);
             log('Rag', 'Lane 3: ✓ ok');
             return true;
         } catch (e) {
@@ -476,7 +480,7 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     log('DnaChain', 'committing anchor');
     let anchorOk = false;
     try {
-        await commitDnaAnchor(messages);
+        await commitDnaAnchor(messages, anchorUuid);
         anchorOk = true;
         log('DnaChain', '✓ ok');
         // Stamp the now-known anchor UUID onto the CNZ Summary prompt
@@ -610,7 +614,6 @@ function resetSessionState() {
     state._priorSituation         = '';
     state._beforeSituation        = '';
     state._lastRagUrl             = '';
-    state._lastKnownChatFile      = null;
     resetStagedState();
 }
 
@@ -626,8 +629,7 @@ function onChatChanged() {
 
     // Character switched — reset all session state, then heal.
     if (!char || char.avatar !== state._lastKnownAvatar) {
-        state._lastKnownAvatar   = char?.avatar ?? null;
-        state._lastKnownChatFile = chatFileName;
+        state._lastKnownAvatar = char?.avatar ?? null;
         resetSessionState();
         const chatMessages = SillyTavern.getContext().chat ?? [];
         state._dnaChain = readDnaChain(chatMessages);
@@ -646,27 +648,6 @@ function onChatChanged() {
 
     // Same character, different chat — Healer territory
     if (chatFileName) {
-        const prevChatFile = state._lastKnownChatFile;
-        state._lastKnownChatFile = chatFileName;
-
-        if (prevChatFile !== null && chatFileName !== prevChatFile) {
-            const messages = SillyTavern.getContext().chat ?? [];
-            const chain    = readDnaChain(messages);
-            if (chain.anchors.length === 0 && messages.length <= 2) {
-                (async () => {
-                    try {
-                        await runNewChatCleanup(char);
-                    } catch (err) {
-                        error('Sync', 'runNewChatCleanup uncaught error:', err);
-                    }
-                    runHealer(char, chatFileName).catch(err =>
-                        error('Sync', 'runHealer uncaught error:', err),
-                    );
-                })();
-                return;
-            }
-        }
-
         runHealer(char, chatFileName).catch(err =>
             error('Sync', 'runHealer uncaught error:', err),
         );
