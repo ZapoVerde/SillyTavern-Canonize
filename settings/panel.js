@@ -34,7 +34,7 @@ import { DEFAULT_LOREBOOK_SYNC_PROMPT, DEFAULT_HOOKSEEKER_PROMPT,
 import { getSettings, getMetaSettings } from './data.js';
 import { openDnaChainInspector } from '../modal/orchestrator.js';
 import { purgeAndRebuild, purgeCnzFiles } from '../core/healer.js';
-import { log, warn, error } from '../log.js';
+import { log, warn, error, setVerbose } from '../log.js';
 
 // ─── Local Constants ──────────────────────────────────────────────────────────
 
@@ -161,6 +161,7 @@ function refreshSettingsUI() {
         );
     } catch (e) { /* silent */ }
 
+    $('#cnz-set-verbose-logging').prop('checked', getMetaSettings().verboseLogging ?? false);
     updateDirtyIndicator();
 }
 
@@ -432,6 +433,13 @@ function bindSettingsHandlers() {
         refreshSettingsUI();
     });
 
+    $('#cnz-set-verbose-logging').on('change', function () {
+        const enabled = $(this).prop('checked');
+        getMetaSettings().verboseLogging = enabled;
+        setVerbose(enabled);
+        saveSettingsDebounced();
+    });
+
     $('#cnz-inspect-chain').on('click', function () {
         openDnaChainInspector();
     });
@@ -461,8 +469,9 @@ export function injectSettingsPanel() {
     }
     const meta = getMetaSettings();
     $parent.append(
-        buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName),
+        buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName, meta.verboseLogging ?? false),
     );
+    setVerbose(meta.verboseLogging ?? false);
     bindSettingsHandlers();
     refreshProfileDropdown();
     updateRagAiControlsVisibility();

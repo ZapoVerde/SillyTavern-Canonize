@@ -294,7 +294,7 @@ export function buildPromptModalHTML() {
  * @param {string}   currentProfile  Name of the currently active profile.
  * @returns {string}
  */
-export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default'], currentProfile = 'Default') {
+export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default'], currentProfile = 'Default', verboseLogging = false) {
     const s = settings;
     const ragContents      = s.ragContents      ?? 'summary+full';
     const ragSummarySource = s.ragSummarySource ?? 'defined';
@@ -494,6 +494,12 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
 
       <!-- ── Danger zone ── -->
       <div class="cnz-settings-group">
+        <div class="cnz-settings-row">
+          <label class="cnz-checkbox-label">
+            <input id="cnz-set-verbose-logging" type="checkbox" ${verboseLogging ? 'checked' : ''}>
+            <span>Verbose logging ${tip('When enabled, informational log messages are printed to the browser console. Errors always appear regardless of this setting.')}</span>
+          </label>
+        </div>
         <div class="cnz-settings-row">
           <button id="cnz-inspect-chain" class="cnz-btn cnz-btn-secondary cnz-btn-sm" title="Inspect the CNZ DNA chain for the current character">Inspect Chain</button>
           <button id="cnz-purge-chain" class="cnz-btn cnz-btn-danger cnz-btn-sm" title="Delete RAG files, restore lorebook and hooks from last anchor, rebuild RAG from chain">Purge &amp; Rebuild</button>
