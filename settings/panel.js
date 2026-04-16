@@ -33,7 +33,7 @@ import { DEFAULT_LOREBOOK_SYNC_PROMPT, DEFAULT_HOOKSEEKER_PROMPT,
          DEFAULT_TARGETED_UPDATE_PROMPT, DEFAULT_TARGETED_NEW_PROMPT } from '../defaults.js';
 import { getSettings, getMetaSettings } from './data.js';
 import { openDnaChainInspector } from '../modal/orchestrator.js';
-import { purgeAndRebuild } from '../core/healer.js';
+import { purgeAndRebuild, purgeCnzFiles } from '../core/healer.js';
 import { log, warn, error } from '../log.js';
 
 // ─── Local Constants ──────────────────────────────────────────────────────────
@@ -437,6 +437,7 @@ function bindSettingsHandlers() {
     });
 
     $('#cnz-purge-chain').on('click', function () { purgeAndRebuild(); });
+    $('#cnz-purge-files').on('click', function () { purgeCnzFiles(); });
 }
 
 /**

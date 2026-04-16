@@ -497,6 +497,7 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
         <div class="cnz-settings-row">
           <button id="cnz-inspect-chain" class="cnz-btn cnz-btn-secondary cnz-btn-sm" title="Inspect the CNZ DNA chain for the current character">Inspect Chain</button>
           <button id="cnz-purge-chain" class="cnz-btn cnz-btn-danger cnz-btn-sm" title="Delete RAG files, restore lorebook and hooks from last anchor, rebuild RAG from chain">Purge &amp; Rebuild</button>
+          <button id="cnz-purge-files" class="cnz-btn cnz-btn-danger cnz-btn-sm" title="Delete all CNZ RAG files and purge the vector index — does not touch lorebook or hooks">Purge</button>
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
- * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
- * @version 1.1.11
+ * @stamp {"utc":"2026-04-16T00:00:00.000Z"}
+ * @version 1.1.12
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) — extension entry point and session
@@ -102,7 +102,7 @@ import { runLorebookSyncCall, runHookseekerCall } from './core/llm-calls.js';
 import { readDnaChain, getLkgAnchor, buildAnchorPayload,
          writeDnaAnchor, writeDnaLinks } from './core/dna-chain.js';
 import { writeCnzSummaryPrompt, syncCnzSummaryOnCharacterSwitch } from './core/summary-prompt.js';
-import { runHealer } from './core/healer.js';
+import { runHealer, runNewChatCleanup } from './core/healer.js';
 import { lbEnsureLorebook, lbSaveLorebook } from './lorebook/api.js';
 import { parseLbSuggestions, enrichLbSuggestions,
          nextLorebookUid, makeLbDraftEntry,
@@ -610,6 +610,7 @@ function resetSessionState() {
     state._priorSituation         = '';
     state._beforeSituation        = '';
     state._lastRagUrl             = '';
+    state._lastKnownChatFile      = null;
     resetStagedState();
 }
 
@@ -625,7 +626,8 @@ function onChatChanged() {
 
     // Character switched — reset all session state, then heal.
     if (!char || char.avatar !== state._lastKnownAvatar) {
-        state._lastKnownAvatar = char?.avatar ?? null;
+        state._lastKnownAvatar   = char?.avatar ?? null;
+        state._lastKnownChatFile = chatFileName;
         resetSessionState();
         const chatMessages = SillyTavern.getContext().chat ?? [];
         state._dnaChain = readDnaChain(chatMessages);
@@ -644,6 +646,27 @@ function onChatChanged() {
 
     // Same character, different chat — Healer territory
     if (chatFileName) {
+        const prevChatFile = state._lastKnownChatFile;
+        state._lastKnownChatFile = chatFileName;
+
+        if (prevChatFile !== null && chatFileName !== prevChatFile) {
+            const messages = SillyTavern.getContext().chat ?? [];
+            const chain    = readDnaChain(messages);
+            if (chain.anchors.length === 0 && messages.length <= 2) {
+                (async () => {
+                    try {
+                        await runNewChatCleanup(char);
+                    } catch (err) {
+                        error('Sync', 'runNewChatCleanup uncaught error:', err);
+                    }
+                    runHealer(char, chatFileName).catch(err =>
+                        error('Sync', 'runHealer uncaught error:', err),
+                    );
+                })();
+                return;
+            }
+        }
+
         runHealer(char, chatFileName).catch(err =>
             error('Sync', 'runHealer uncaught error:', err),
         );

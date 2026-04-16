@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/state.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
+ * @stamp {"utc":"2026-04-16T00:00:00.000Z"}
+ * @version 1.0.17
  * @architectural-role Stateful Owner
  * @description
  * Central mutable state container for all CNZ engine variables. Exports a
@@ -17,7 +17,7 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: [
- *       _lorebookData, _draftLorebook, _lastKnownAvatar,
+ *       _lorebookData, _draftLorebook, _lastKnownAvatar, _lastKnownChatFile,
  *       _lorebookName, _lorebookSuggestions,
  *       _ragChunks, _stagedProsePairs, _stagedPairOffset, _splitPairIdx,
  *       _lastRagUrl, _priorSituation, _beforeSituation, _parentNodeLorebook,
@@ -106,6 +106,7 @@ export const state = {
 
     // ── Healer tracking — updated on CHAT_CHANGED ──────────────────────────────
     _lastKnownAvatar:     null,
+    _lastKnownChatFile:   null,
 
     // ── Engine State ────────────────────────────────────────────────────────────
     _lorebookName:        '',
