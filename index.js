@@ -424,7 +424,13 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     }
 
     // Pre-generate the anchor UUID so the RAG filename can carry it before commitDnaAnchor runs.
-    const anchorUuid = crypto.randomUUID();
+    // crypto.randomUUID() requires a secure context (HTTPS/localhost); fall back for plain HTTP LAN access.
+    const anchorUuid = (typeof crypto?.randomUUID === 'function')
+        ? crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = Math.random() * 16 | 0;
+            return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+        });
 
     // --- LANE 1: LOREBOOK (Independent) ---
     const lbPromise = (async () => {
