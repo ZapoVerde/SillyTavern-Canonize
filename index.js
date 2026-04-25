@@ -359,6 +359,9 @@ function deriveLastCommittedPairs(allPairs, messages, dnaChain) {
 async function runCnzSync(char, messages, { coverAll = false } = {}) {
     log('Sync', `══ SYNC START ══ char="${char?.name}" coverAll=${coverAll} msgs=${messages.length}`);
     setSyncInProgress(true);
+    document.dispatchEvent(new CustomEvent('cnz:sync-started', {
+        detail: { lorebookName: state._lorebookName, charName: char?.name ?? null },
+    }));
     const settings  = getSettings();
     const allPairs  = buildProsePairs(messages);
     const { syncPairs, syncPairOffset } = computeSyncWindow(allPairs, messages, settings, coverAll, state._dnaChain);
@@ -487,6 +490,9 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     }
 
     setSyncInProgress(false);
+    document.dispatchEvent(new CustomEvent('cnz:sync-completed', {
+        detail: { lorebookName: state._lorebookName, charName: char?.name ?? null },
+    }));
 
     const failures = [
         !lbOk    && 'lorebook',
