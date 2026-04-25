@@ -97,5 +97,9 @@ export function initSettings() {
         root.activeState = Object.assign({}, PROFILE_DEFAULTS, root.activeState);
     }
 
-    // (no meta-state keys require initialisation at this time)
+    // Clean up legacy keys no longer part of any profile.
+    delete root.activeState.enablePersonalyze;
+    for (const profile of Object.values(root.profiles ?? {})) {
+        delete profile.enablePersonalyze;
+    }
 }

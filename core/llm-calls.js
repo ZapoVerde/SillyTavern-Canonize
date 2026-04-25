@@ -9,8 +9,7 @@
  * routed through the bus/executor pipeline. Each call receives pre-assembled
  * context from the caller and returns raw model output for downstream parsing.
  *
- * Updated to support PersonaLyze "Pull-from-Sync" rules by stripping protected
- * visual data before sending entries to the LLM.
+ * Strips the protected block (below -\*-\*-) before sending entries to the LLM.
  *
  * @api-declaration
  * runLorebookSyncCall, runHookseekerCall, runTargetedLbCall
@@ -26,7 +25,7 @@ import { state } from '../state.js';
 import { on, off, BUS_EVENTS } from '../bus.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
 import { getSettings } from './settings.js';
-import { formatLorebookEntries, stripPlzAnchor } from '../lorebook/utils.js';
+import { formatLorebookEntries, stripProtectedBlock } from '../lorebook/utils.js';
 
 // ─── Bus Dispatch ─────────────────────────────────────────────────────────────
 
@@ -73,7 +72,7 @@ function _waitForRecipe(recipeId, extraInputs = {}) {
 
 /**
  * Fires the Lorebook Sync AI call via the bus.
- * formatLorebookEntries internally strips PLZ Identity Anchors.
+ * formatLorebookEntries internally strips protected blocks.
  * @param {string}      transcript  Prose transcript to analyse.
  * @param {object|null} lorebook    Lorebook state to use as context. Defaults to `state._lorebookData` if null.
  * @returns {Promise<string>}
@@ -100,8 +99,7 @@ export function runHookseekerCall(transcript, prevSummary = '') {
 
 /**
  * Fires a targeted lorebook AI call for a single entry (update or new) via the bus.
- * Strips the PLZ Identity Anchor from existing content to ensure the AI doesn't
- * attempt to modify protected visual descriptions.
+ * Strips the protected block from existing content before sending to the AI.
  *
  * @param {'update'|'new'} mode
  * @param {string} entryName     Entry name or freeform keyword.
@@ -115,7 +113,7 @@ export function runTargetedLbCall(mode, entryName, entryKeys, entryContent, tran
     return _waitForRecipe(recipeId, {
         entry_name:    entryName,
         entry_keys:    entryKeys,
-        entry_content: stripPlzAnchor(entryContent),
+        entry_content: stripProtectedBlock(entryContent),
         transcript,
     });
 }

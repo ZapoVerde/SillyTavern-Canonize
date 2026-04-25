@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/lorebook/utils.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.18
+ * @stamp {"utc":"2026-04-25T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role Pure Functions
  * @description
  * Pure data manipulation functions for lorebook state. Covers parsing AI
@@ -10,125 +10,59 @@
  * defaults, and managing draft state (deleteLbEntry, revertLbSuggestion,
  * isDraftDirty). No fetch calls; callers supply all inputs via `state`.
  *
- * Updated to support PersonaLyze "Pull-from-Sync" Identity Anchor protection.
+ * Implements the push-based protected space model: any text below the
+ * PROTECTED_DELIMITER marker (-*-*-) is hidden from the AI and UI, and is
+ * blindly re-attached whenever an entry is written back to disk. External
+ * extensions (PersonaLyze, Localyze, etc.) own that space; Canonize never
+ * reads or modifies it.
  *
  * @api-declaration
  * formatLorebookEntries, parseLbSuggestions, enrichLbSuggestions,
  * deriveSuggestionsFromAnchorDiff, matchEntryByComment, nextLorebookUid,
  * makeLbDraftEntry, toVirtualDoc, updateLbDiff, isDraftDirty,
  * deleteLbEntry, revertLbSuggestion, serialiseSuggestionsToFreeform,
- * syncFreeformFromSuggestions, PLZ_DELIMITER, stripPlzAnchor, getPlzAnchor,
- * stitchPlzAnchor
+ * syncFreeformFromSuggestions, stripProtectedBlock, stitchProtectedBlock
  *
  * @contract
  *   assertions:
  *     purity: mutates
  *     state_ownership: [state._lorebookSuggestions, state._draftLorebook,
  *                       state._parentNodeLorebook, state._lbActiveIngesterIndex]
- *     external_io: [SillyTavern.getContext (for char mapping)]
+ *     external_io: [none]
  */
 
 import { state, escapeHtml } from '../state.js';
-import { extension_settings } from '../../../../extensions.js';
 import { log, warn, error } from '../log.js';
 
-// ─── PersonaLyze Integration ──────────────────────────────────────────────────
+// ─── Protected Space ──────────────────────────────────────────────────────────
 
-export const PLZ_DELIMITER = '\n\n### Physical Identity\n';
-const PLZ_DELIMITER_REGEX = /(?:\r?\n)*### Physical Identity\b/i;
+const PROTECTED_DELIMITER_REGEX = /[ \t]*-\*-\*-[ \t]*/;
 
 /**
- * Strips the protected PersonaLyze physical identity block from a lorebook entry.
- * Ensures the AI curator only sees and edits the narrative portion.
- * @param {string} content 
+ * Strips the protected block from a lorebook entry, returning only the narrative
+ * portion above the -\*-\*- marker. Safe to call on content that has no marker.
+ * @param {string} content
  * @returns {string}
  */
-export function stripPlzAnchor(content) {
+export function stripProtectedBlock(content) {
     if (!content) return '';
-    const parts = content.split(PLZ_DELIMITER_REGEX);
-    const stripped = parts[0].trim();
-    if (parts.length > 1) log('PlzAnchor', 'stripPlzAnchor: removed physical identity block from content');
-    return stripped;
+    const parts = content.split(PROTECTED_DELIMITER_REGEX);
+    return parts[0].trimEnd();
 }
 
 /**
- * Reaches into PersonaLyze's settings to find a matching Identity Anchor.
- * Uses strict avatar mapping first, falling back to case-insensitive slug and fuzzy matches.
- * @param {string} entryName 
- * @returns {string} The raw Identity Anchor text, or empty string if not found.
- */
-export function getPlzAnchor(entryName) {
-    const plzRoot = extension_settings?.personalyze;
-    if (!plzRoot?.characters) {
-        log('PlzAnchor', 'getPlzAnchor: PLZ settings or characters map not found — skipping');
-        return '';
-    }
-
-    const lowerName = String(entryName || '').trim().toLowerCase();
-    if (!lowerName) {
-        log('PlzAnchor', 'getPlzAnchor: empty entryName — skipping');
-        return '';
-    }
-
-    log('PlzAnchor', `getPlzAnchor: resolving anchor for "${lowerName}"`);
-
-    // 1. Try to match against live ST characters by name to get the exact PLZ avatar key
-    const ctx = typeof SillyTavern !== 'undefined' ? SillyTavern.getContext() : null;
-    const stChars = ctx?.characters || [];
-    const matchedChar = stChars.find(c => String(c.name || '').trim().toLowerCase() === lowerName);
-
-    if (matchedChar && matchedChar.avatar) {
-        const avatarSlug = matchedChar.avatar.replace(/[^a-zA-Z0-9_\-]/g, '_');
-        log('PlzAnchor', `getPlzAnchor: ST character matched — avatar slug "${avatarSlug}"`);
-        if (plzRoot.characters[avatarSlug]?.identityAnchor) {
-            log('PlzAnchor', `getPlzAnchor: anchor found via avatar slug "${avatarSlug}"`);
-            return plzRoot.characters[avatarSlug].identityAnchor.trim();
-        }
-        log('PlzAnchor', `getPlzAnchor: ST character matched but no identityAnchor at slug "${avatarSlug}" — falling through`);
-    } else {
-        log('PlzAnchor', `getPlzAnchor: no ST character matched for "${lowerName}" — trying slug fallbacks`);
-    }
-
-    // 2. Direct key match (slugified name)
-    const slug = lowerName.replace(/\s+/g, '_').replace(/[^a-z0-9_\-]/g, '');
-    log('PlzAnchor', `getPlzAnchor: trying direct slug match "${slug}"`);
-    if (plzRoot.characters[slug]?.identityAnchor) {
-        log('PlzAnchor', `getPlzAnchor: anchor found via direct slug "${slug}"`);
-        return plzRoot.characters[slug].identityAnchor.trim();
-    }
-
-    // 3. Fallback: fuzzy match against all PLZ keys
-    log('PlzAnchor', `getPlzAnchor: trying fuzzy match across ${Object.keys(plzRoot.characters).length} PLZ keys`);
-    for (const [key, data] of Object.entries(plzRoot.characters)) {
-        if (key.toLowerCase() === slug || key.toLowerCase().replace(/_/g, ' ') === lowerName) {
-            if (data.identityAnchor) {
-                log('PlzAnchor', `getPlzAnchor: anchor found via fuzzy match on key "${key}"`);
-                return data.identityAnchor.trim();
-            }
-        }
-    }
-
-    log('PlzAnchor', `getPlzAnchor: no anchor found for "${lowerName}"`);
-    return '';
-}
-
-/**
- * Combines a narrative text with the fresh PLZ anchor for the given character.
- * Returns the combined string (narrative + delimiter + anchor), or just the
- * narrative if no anchor is found.
- * @param {string} entryName
- * @param {string} narrative  Pure narrative text (no PLZ block).
+ * Re-attaches the protected block from `originalFullText` onto `newNarrative`.
+ * If `originalFullText` contains no -\*-\*- marker, returns `newNarrative` unchanged.
+ * The exact marker text and everything below it are preserved verbatim.
+ * @param {string} newNarrative       Updated narrative (no protected block).
+ * @param {string} originalFullText   The original entry content as it exists on disk.
  * @returns {string}
  */
-export function stitchPlzAnchor(entryName, narrative) {
-    log('PlzAnchor', `stitchPlzAnchor: stitching anchor for "${entryName}"`);
-    const anchor = getPlzAnchor(entryName);
-    if (!anchor) {
-        log('PlzAnchor', `stitchPlzAnchor: no anchor — returning narrative unchanged`);
-        return narrative;
-    }
-    log('PlzAnchor', `stitchPlzAnchor: appending ${anchor.length}-char anchor to narrative`);
-    return `${narrative}${PLZ_DELIMITER}${anchor}`;
+export function stitchProtectedBlock(newNarrative, originalFullText) {
+    if (!originalFullText) return newNarrative;
+    const markerMatch = originalFullText.match(/\n\n-\*-\*-[\s\S]*/);
+    if (!markerMatch) return newNarrative;
+    return newNarrative + markerMatch[0];
 }
 
 // ─── Lorebook Utilities ───────────────────────────────────────────────────────
@@ -140,8 +74,7 @@ export function formatLorebookEntries(data) {
     return items.map(e => {
         const label = e.comment || String(e.uid);
         const keys  = Array.isArray(e.key) ? e.key.join(', ') : (e.key || '');
-        // Strip the PLZ block before sending to the AI
-        const narrativeContent = stripPlzAnchor(e.content);
+        const narrativeContent = stripProtectedBlock(e.content);
         return `--- Entry: ${label} ---\nKeys: ${keys}\n${narrativeContent}`;
     }).join('\n\n');
 }
@@ -424,7 +357,7 @@ export function updateLbDiff() {
 
     const name    = $('#cnz-lb-editor-name').val();
     const keys    = $('#cnz-lb-editor-keys').val().split(',').map(k => k.trim()).filter(Boolean);
-    const content = stripPlzAnchor($('#cnz-lb-editor-content').val());
+    const content = stripProtectedBlock($('#cnz-lb-editor-content').val());
     const proposed = toVirtualDoc(name, keys, content);
 
     let base = '';
@@ -434,7 +367,7 @@ export function updateLbDiff() {
             base = toVirtualDoc(
                 parentEntry.comment || '',
                 Array.isArray(parentEntry.key) ? parentEntry.key : [],
-                stripPlzAnchor(parentEntry.content || ''),
+                stripProtectedBlock(parentEntry.content || ''),
             );
         }
         // no parentEntry → entry is new this sync → base stays ''

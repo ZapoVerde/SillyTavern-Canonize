@@ -27,7 +27,7 @@ import { state, escapeHtml } from '../state.js';
 import { getSettings } from '../core/settings.js';
 import { readDnaChain } from '../core/dna-chain.js';
 import { writeCnzSummaryPrompt } from '../core/summary-prompt.js';
-import { isDraftDirty, stripPlzAnchor, stitchPlzAnchor } from '../lorebook/utils.js';
+import { isDraftDirty, stripProtectedBlock, stitchProtectedBlock } from '../lorebook/utils.js';
 import { lbSaveLorebook } from '../lorebook/api.js';
 import { buildRagDocument } from '../rag/pipeline.js';
 import { uploadRagFile, registerCharacterAttachment, cnzAvatarKey, cnzFileName } from '../rag/api.js';
@@ -104,7 +104,7 @@ export function countDraftChanges() {
     return Object.values(draft).filter(e => {
         const o = orig[String(e.uid)];
         return !o
-            || stripPlzAnchor(o.content) !== stripPlzAnchor(e.content)
+            || stripProtectedBlock(o.content) !== stripProtectedBlock(e.content)
             || JSON.stringify(o.key) !== JSON.stringify(e.key)
             || (o.comment ?? '') !== (e.comment ?? '');
     }).length;
@@ -188,28 +188,15 @@ async function commitChanges(char, hooksText) {
         try {
             const preLorebook = structuredClone(state._lorebookData ?? { entries: {} });
 
-            // JIT stitch: build a save-ready copy with PLZ anchors reattached.
+            // Blindly re-attach any protected block from the prior saved state.
             // Draft remains narrative-only; only the copy sent to disk carries the block.
-            // When enablePersonalyze is off: skip the fresh registry lookup but still
-            // preserve any Physical Identity block already present in the original entry.
-            const PLZ_PRESERVE_REGEX = /(?:\r?\n)*### Physical Identity\b/i;
             const stitchedLorebook = structuredClone(state._draftLorebook);
             for (const entry of Object.values(stitchedLorebook.entries ?? {})) {
-                const narrative = stripPlzAnchor(entry.content);
-                if (getSettings().enablePersonalyze) {
-                    const stitched = stitchPlzAnchor(entry.comment || '', narrative);
-                    if (stitched !== narrative) {
-                        entry.content = stitched;
-                        continue;
-                    }
-                }
-                // Fallback (always runs when PLZ disabled, or when no registry match):
-                // preserve any existing Physical Identity block from the original entry.
                 const origEntry = preLorebook.entries?.[String(entry.uid)];
-                const origParts = origEntry ? (origEntry.content || '').split(PLZ_PRESERVE_REGEX) : null;
-                entry.content = (origParts && origParts.length > 1)
-                    ? narrative + '\n\n### Physical Identity\n' + origParts.slice(1).join('\n\n### Physical Identity\n')
-                    : narrative;
+                entry.content = stitchProtectedBlock(
+                    stripProtectedBlock(entry.content),
+                    origEntry?.content ?? '',
+                );
             }
 
             stitchedLorebook.extensions = { ...(stitchedLorebook.extensions ?? {}), cnz_anchor_uuid: state._dnaChain?.lkg?.uuid ?? null };
@@ -217,7 +204,7 @@ async function commitChanges(char, hooksText) {
             state._lorebookData = structuredClone(state._draftLorebook);
             lorebookChanged = true;
             const changedNames = Object.values(state._draftLorebook.entries ?? {})
-                .filter(e => { const o = preLorebook.entries[String(e.uid)]; return !o || stripPlzAnchor(o.content) !== stripPlzAnchor(e.content) || JSON.stringify(o.key) !== JSON.stringify(e.key) || (o.comment ?? '') !== (e.comment ?? ''); })
+                .filter(e => { const o = preLorebook.entries[String(e.uid)]; return !o || stripProtectedBlock(o.content) !== stripProtectedBlock(e.content) || JSON.stringify(o.key) !== JSON.stringify(e.key) || (o.comment ?? '') !== (e.comment ?? ''); })
                 .map(e => e.comment || String(e.uid));
             results.push({ task: 'lorebook', status: 'success', detail: `Lorebook committed: ${changedNames.length ? changedNames.map(n => `"${n}"`).join(', ') : '(no changes staged)'}` });
         } catch (err) {

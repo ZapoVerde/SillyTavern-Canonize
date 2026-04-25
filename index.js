@@ -106,7 +106,7 @@ import { runHealer } from './core/healer.js';
 import { lbEnsureLorebook, lbSaveLorebook } from './lorebook/api.js';
 import { parseLbSuggestions, enrichLbSuggestions,
          nextLorebookUid, makeLbDraftEntry,
-         stripPlzAnchor, stitchPlzAnchor } from './lorebook/utils.js';
+         stripProtectedBlock, stitchProtectedBlock } from './lorebook/utils.js';
 import { runRagPipeline, writeChunkHeaderToChat,
          renderChunkChatLabel, clearChunkChatLabels } from './rag/pipeline.js';
 import { patchCharacterWorld } from './modal/commit.js';
@@ -167,7 +167,7 @@ function logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN) {
 
 /**
  * Parses raw lorebook AI output and applies all suggestions to _draftLorebook.
- * Stores narrative-only content; PLZ anchors are stitched at commit time.
+ * Stores narrative-only content; protected blocks are re-attached at commit time.
  * @param {string} rawText  Raw AI output from runLorebookSyncCall.
  * @returns {Promise<void>}
  */
@@ -198,26 +198,16 @@ async function processLorebookUpdate(rawText, anchorUuid = null) {
         }
     }
 
-    // 2. Save the result — JIT-stitch PLZ anchors onto a copy before writing to disk.
-    // Draft remains narrative-only; only the copy sent to disk carries the Physical Identity block.
-    const PLZ_PRESERVE_REGEX = /(?:\r?\n)*### Physical Identity\b/i;
+    // 2. Save the result — blindly re-attach any protected block from the prior saved state.
+    // Draft remains narrative-only; only the copy sent to disk carries the protected block.
     const preLorebook = state._lorebookData ?? { entries: {} };
     const stitchedLorebook = structuredClone(state._draftLorebook);
     for (const entry of Object.values(stitchedLorebook.entries ?? {})) {
-        const narrative = stripPlzAnchor(entry.content);
-        if (getSettings().enablePersonalyze) {
-            const stitched = stitchPlzAnchor(entry.comment || '', narrative);
-            if (stitched !== narrative) {
-                entry.content = stitched;
-                continue;
-            }
-        }
-        // Fallback: preserve any existing Physical Identity block from the prior saved state.
         const origEntry = preLorebook.entries?.[String(entry.uid)];
-        const origParts = origEntry ? (origEntry.content || '').split(PLZ_PRESERVE_REGEX) : null;
-        entry.content = (origParts && origParts.length > 1)
-            ? narrative + '\n\n### Physical Identity\n' + origParts.slice(1).join('\n\n### Physical Identity\n')
-            : narrative;
+        entry.content = stitchProtectedBlock(
+            stripProtectedBlock(entry.content),
+            origEntry?.content ?? '',
+        );
     }
     stitchedLorebook.extensions = { ...(stitchedLorebook.extensions ?? {}), cnz_anchor_uuid: anchorUuid };
     await lbSaveLorebook(state._lorebookName, stitchedLorebook);

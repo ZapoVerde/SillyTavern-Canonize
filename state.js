@@ -57,8 +57,6 @@ export const PROFILE_DEFAULTS = Object.freeze({
     lorebookSyncStart:        'syncPoint',   // 'syncPoint' | 'latestTurn'
     lorebookSyncPrompt:       DEFAULT_LOREBOOK_SYNC_PROMPT,
     hookseekerPrompt:         DEFAULT_HOOKSEEKER_PROMPT,
-    // PersonaLyze integration
-    enablePersonalyze:        false,
     // Rolling trim
     autoAdvanceMask:          false,
     // RAG

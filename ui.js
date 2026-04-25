@@ -369,13 +369,6 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
 
         <div class="cnz-settings-row">
           <label class="cnz-checkbox-label">
-            <input id="cnz-set-enable-personalyze" type="checkbox" ${(s.enablePersonalyze ?? false) ? 'checked' : ''}>
-            <span>Import PersonaLyze content ${tip('When enabled, the Physical Identity block from PersonaLyze is stitched back onto each lorebook entry at save time. The block is invisible in the Canonize UI but is written to the lorebook file for SillyTavern to use during roleplay.')}</span>
-          </label>
-        </div>
-
-        <div class="cnz-settings-row">
-          <label class="cnz-checkbox-label">
             <input id="cnz-set-auto-advance-mask" type="checkbox" ${(s.autoAdvanceMask ?? false) ? 'checked' : ''}>
             <span>Auto-advance context mask ${tip('When enabled, the context mask follows the DNA chain head after each commit, hiding canonized turns from the main AI.')}</span>
           </label>

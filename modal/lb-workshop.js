@@ -49,7 +49,7 @@ import { getSettings } from '../core/settings.js';
 import {
     parseLbSuggestions, enrichLbSuggestions, matchEntryByComment, nextLorebookUid,
     makeLbDraftEntry, updateLbDiff, syncFreeformFromSuggestions, revertLbSuggestion,
-    deleteLbEntry, stripPlzAnchor,
+    deleteLbEntry, stripProtectedBlock,
 } from '../lorebook/utils.js';
 import { buildModalTranscript, buildSyncWindowTranscript } from './hooks-workshop.js';
 
@@ -249,7 +249,7 @@ export function renderLbIngesterDetail(suggestion) {
         const entry = state._draftLorebook?.entries?.[String(suggestion.linkedUid)];
         $('#cnz-lb-editor-name').val(entry?.comment ?? suggestion.name);
         $('#cnz-lb-editor-keys').val(entry?.key?.join(', ') ?? '');
-        $('#cnz-lb-editor-content').val(stripPlzAnchor(entry?.content ?? ''));
+        $('#cnz-lb-editor-content').val(stripProtectedBlock(entry?.content ?? ''));
     }
     $('#cnz-lb-error-ingester').addClass('cnz-hidden').text('');
 
@@ -320,7 +320,7 @@ export function onLbIngesterLoadLatest() {
     if (entry) {
         entry.comment = s._aiSnapshot.name;
         entry.key     = [...s._aiSnapshot.keys];
-        entry.content = stripPlzAnchor(s._aiSnapshot.content);
+        entry.content = stripProtectedBlock(s._aiSnapshot.content);
     }
     renderLbIngesterDetail(s);
     const prefix = s.status === 'applied' ? '\u2713 ' : s.status === 'rejected' ? '\u2717 ' : '';
@@ -353,7 +353,7 @@ export function onLbIngesterLoadPrev() {
     }
     entry.comment = parentEntry.comment || '';
     entry.key     = Array.isArray(parentEntry.key) ? [...parentEntry.key] : [];
-    entry.content = stripPlzAnchor(parentEntry.content || '');
+    entry.content = stripProtectedBlock(parentEntry.content || '');
     s.name   = entry.comment;
     s.status = 'pending';
 
@@ -370,7 +370,7 @@ export function onLbIngesterLoadPrev() {
 
 /**
  * Regenerate: fires a fresh targeted AI call for the currently loaded entry.
- * Lands in the draft and editor, re-attaching PLZ anchors if found.
+ * Lands in the draft and editor.
  */
 export function onLbIngesterRegenerate() {
     const s = state._lorebookSuggestions[state._lbActiveIngesterIndex];
