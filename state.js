@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/state.js
  * @stamp {"utc":"2026-04-16T00:00:00.000Z"}
- * @version 1.0.17
  * @architectural-role Stateful Owner
  * @description
  * Central mutable state container for all CNZ engine variables. Exports a

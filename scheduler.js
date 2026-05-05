@@ -1,26 +1,20 @@
 /**
  * @file data/default-user/extensions/canonize/scheduler.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.1
+ * @stamp {"utc":"2025-01-15T12:00:00.000Z"}
  * @architectural-role Stateful Owner
  * @description
  * Scheduler — owns snooze state and the sync-in-progress flag, and drives
  * trigger evaluation. Registers event listeners (ST and bus) for every trigger
- * supplied at init time, evaluates conditions, and emits the declared bus event
- * when a condition is satisfied.
- *
- * No business logic lives here. All decision logic is in trigger conditions
- * declared in recipes.js. The scheduler gathers runtime state (context, messages,
- * DNA chain) and passes it to each condition as a plain object.
+ * supplied at init time.
  *
  * @api-declaration
- * initScheduler(triggers, getSettings)  — register trigger listeners; must be called once at init.
+ * initScheduler(triggers, getSettings)  — register trigger listeners.
  * setSyncInProgress(bool)               — set the sync-in-progress flag.
  * isSyncInProgress()                    — read the sync-in-progress flag.
- * snooze(pairs, currentPairCount)       — advance snooze boundary by `pairs` from `currentPairCount`.
- * resetScheduler()                      — clear snooze and sync-in-progress (on char switch).
+ * snooze(pairs, currentPairCount)       — advance snooze boundary.
+ * resetScheduler()                      — clear snooze and sync-in-progress.
  * setDnaChain(chain)                    — update the scheduler's copy of the DNA chain.
- * getGap(settings)                      — compute uncommitted gap in pairs from current context + DNA chain.
+ * getGap(settings)                      — compute uncommitted gap.
  *
  * @contract
  *   assertions:
@@ -28,13 +22,11 @@
  *     state_ownership: [_snoozeUntilCount, _syncInProgress, _dnaChain, _getSettings, _triggers]
  *     external_io: [SillyTavern.getContext, eventSource]
  */
-// ─── CNZ Scheduler ────────────────────────────────────────────────────────────
-// Owns snooze/sync-in-progress state and drives trigger evaluation.
-// No business logic — all conditions live in Triggers (recipes.js).
 
 import { emit, on, BUS_EVENTS } from './bus.js';
 import { log } from './log.js';
 import { eventSource } from '../../../../script.js';
+import { isExtensionEnabled } from './core/settings.js';
 
 // ── Module State ──────────────────────────────────────────────────────────────
 
@@ -81,8 +73,7 @@ export function isSyncInProgress() {
 }
 
 /**
- * Advances the snooze boundary. The auto_sync trigger will not fire until
- * the pair count exceeds the stored boundary.
+ * Advances the snooze boundary.
  * @param {number} pairs            Number of pairs to snooze.
  * @param {number} currentPairCount Current pair count.
  */
@@ -108,8 +99,7 @@ export function setDnaChain(chain) {
 }
 
 /**
- * Computes the uncommitted gap in pairs (pairs past the committed boundary
- * that fall outside the live context buffer). Uses current SillyTavern context.
+ * Computes the uncommitted gap in pairs.
  * @param   {object} settings  Active profile settings.
  * @returns {number}           Gap in prose pairs.
  */
@@ -129,6 +119,9 @@ export function getGap(settings) {
 // ── Internal ──────────────────────────────────────────────────────────────────
 
 function _evaluate(trigger, eventData) {
+    // Master Bypass: If the engine is disabled, do not evaluate triggers.
+    if (!isExtensionEnabled()) return;
+
     const context  = SillyTavern.getContext();
     const settings = _getSettings();
     const messages = context?.chat ?? [];

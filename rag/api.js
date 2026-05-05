@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/rag/api.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
  * @architectural-role IO Wrapper
  * @description
  * Thin HTTP wrapper around the ST Data Bank file endpoints plus character

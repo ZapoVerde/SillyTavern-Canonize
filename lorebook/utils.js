@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/lorebook/utils.js
  * @stamp {"utc":"2026-04-25T00:00:00.000Z"}
- * @version 1.1.0
  * @architectural-role Pure Functions
  * @description
  * Pure data manipulation functions for lorebook state. Covers parsing AI

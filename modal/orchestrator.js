@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/modal/orchestrator.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.17
  * @architectural-role UI Builder
  * @description
  * Owns the four-step review wizard lifecycle: injectModal (DOM construction and

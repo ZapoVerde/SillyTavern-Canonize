@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/bus.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.0
  * @architectural-role Event Bus
  * @description
  * CNZ event bus — thin wrapper around a plain handler map. No CNZ knowledge.

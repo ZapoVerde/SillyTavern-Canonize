@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/llm-calls.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.17
  * @architectural-role Prompt Assembly and Generation
  * @description
  * Owns the three sync AI calls and the bus dispatch that backs them.

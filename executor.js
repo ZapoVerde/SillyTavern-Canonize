@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/executor.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.0
  * @architectural-role IO Executor
  * @description
  * LLM call executor. Subscribes to `CONTRACT_DISPATCHED` on import, fires the

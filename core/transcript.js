@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/transcript.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
  * @architectural-role Pure Functions
  * @description
  * Pure functions for building transcript strings and prose-pair arrays from

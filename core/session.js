@@ -1,37 +1,107 @@
 /**
  * @file data/default-user/extensions/canonize/core/session.js
- * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2025-01-15T12:00:00.000Z"}
+ * @version 1.2.0
  * @architectural-role Stateful Owner / Event Delegate
  * @description
  * Manages the lifecycle of a Canonize session. Handles character and chat 
- * switch events, session state resets, and sweeps for orphaned Data Bank files 
- * belonging to deleted characters.
+ * switch events, session state resets, and "Soft Detach" logic.
  *
  * @api-declaration
- * checkOrphans, resetStagedState, resetSessionState, onChatChanged
+ * checkOrphans, resetStagedState, resetSessionState, onChatChanged, detachCanonize, toggleExtension
  *
  * @contract
  *   assertions:
  *     purity: mutates
  *     state_ownership: [state._lastKnownAvatar, state._dnaChain, state._lorebookData, state._draftLorebook, state._lorebookName, state._lorebookSuggestions, state._parentNodeLorebook, state._priorSituation, state._beforeSituation, state._lastRagUrl, state._pendingOrphans, state._stagedProsePairs, state._stagedPairOffset, state._splitPairIdx, state._ragChunks]
- *     external_io: [saveSettingsDebounced, getRequestHeaders, /api/files/verify]
+ *     external_io: [saveSettingsDebounced, getRequestHeaders, /api/files/verify, callPopup]
  */
 
 import { state } from '../state.js';
 import { extension_settings } from '../../../../extensions.js';
-import { saveSettingsDebounced, getRequestHeaders } from '../../../../../script.js';
+import { saveSettingsDebounced, getRequestHeaders, callPopup } from '../../../../../script.js';
 import { invalidateAllJobs } from '../cycleStore.js';
 import { resetScheduler, setDnaChain } from '../scheduler.js';
 import { readDnaChain } from './dna-chain.js';
-import { syncCnzSummaryOnCharacterSwitch } from './summary-prompt.js';
+import { syncCnzSummaryOnCharacterSwitch, setCnzPromptEnabled } from './summary-prompt.js';
 import { runHealer } from './healer.js';
 import { clearChunkChatLabels } from '../rag/pipeline.js';
 import { warn, error } from '../log.js';
+import { isExtensionEnabled } from './settings.js';
+import { cnzAvatarKey } from '../rag/api.js';
+import { setWandVisibility } from '../ui/wand.js';
+import { unlinkCharacterWorld } from './character-api.js';
+
+/**
+ * Detaches Canonize's influence from a character's active state.
+ * Mutes the summary prompt and unlinks RAG attachments. 
+ * Optionally prompts to unlink the Lorebook.
+ * @param {object} char 
+ */
+export async function detachCanonize(char) {
+    if (!char) return;
+    
+    // 1. Mute the summary prompt
+    setCnzPromptEnabled(false);
+
+    // 2. Remove cnz_ prefix files from character attachments
+    if (extension_settings.character_attachments?.[char.avatar]) {
+        const cnzRagPrefix = `cnz_${cnzAvatarKey(char.avatar)}_rag_`;
+        const initialCount = extension_settings.character_attachments[char.avatar].length;
+        
+        extension_settings.character_attachments[char.avatar] = 
+            extension_settings.character_attachments[char.avatar].filter(a => !a.name?.startsWith(cnzRagPrefix));
+            
+        if (extension_settings.character_attachments[char.avatar].length !== initialCount) {
+            saveSettingsDebounced();
+        }
+    }
+
+    // 3. Clear any UI labels
+    clearChunkChatLabels();
+
+    // 4. Optional Lorebook Detach
+    const currentWorld = char.data?.extensions?.world;
+    if (currentWorld) {
+        const confirmed = await callPopup(
+            `<h3>Disconnect Lorebook?</h3>
+            <p>Canonize is now disabled. Would you like to disconnect the Lorebook <strong>"${currentWorld}"</strong> from this character card?</p>
+            <p><em>Note: Keeping it connected allows the AI to retain static long-term memory while Canonize is paused.</em></p>`,
+            'confirm'
+        );
+        if (confirmed) {
+            await unlinkCharacterWorld(char);
+            toastr.info('CNZ: Lorebook disconnected from character card.');
+        }
+    }
+}
+
+/**
+ * Orchestrates the global enable/disable toggle logic.
+ */
+export async function toggleExtension(isEnabled) {
+    const context = SillyTavern.getContext();
+    const char = context?.characters?.[context?.characterId];
+
+    if (!isEnabled) {
+        if (char) await detachCanonize(char);
+        invalidateAllJobs();
+        resetScheduler();
+        setWandVisibility(false);
+    } else {
+        setCnzPromptEnabled(true);
+        setWandVisibility(true);
+        if (char) {
+            runHealer(char, char.chat).catch(err => 
+                error('Session', 'toggleExtension: healer failed:', err)
+            );
+        }
+    }
+}
 
 /**
  * Scans the character attachment registry for files belonging to characters
- * that no longer exist in ST. Wipes dead registry keys and verifies survivors.
+ * that no longer exist in ST.
  */
 export async function checkOrphans() {
     const ctx            = SillyTavern.getContext();
@@ -69,16 +139,13 @@ export async function checkOrphans() {
     state._pendingOrphans = existing;
     const n = existing.length;
     toastr.warning(
-        `CNZ: ${n} orphaned file${n !== 1 ? 's' : ''} from deleted character${n !== 1 ? 's' : ''}. ` +
+        `CNZ: ${n} orphaned file${n !== 1 ? 's' : ''} review needed. ` +
         `<a href="#" class="cnz-orphan-review">Review</a> &nbsp; <a href="#" class="cnz-orphan-dismiss">Dismiss</a>`,
         '',
         { timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false },
     );
 }
 
-/**
- * Resets staged pair and chunk state without clearing session-level fields.
- */
 export function resetStagedState() {
     state._stagedProsePairs       = [];
     state._stagedPairOffset       = 0;
@@ -87,9 +154,6 @@ export function resetStagedState() {
     clearChunkChatLabels();
 }
 
-/**
- * Resets all session-level state. Called on character switch.
- */
 export function resetSessionState() {
     invalidateAllJobs();
     resetScheduler();
@@ -107,9 +171,9 @@ export function resetSessionState() {
 }
 
 /**
- * Event listener logic for CHAT_CHANGED. Detects character or chat swaps.
+ * Event listener logic for CHAT_CHANGED.
  */
-export function onChatChanged() {
+export async function onChatChanged() {
     const context = SillyTavern.getContext();
     if (!context || context.characterId == null) {
         state._lastKnownAvatar = null;
@@ -118,6 +182,15 @@ export function onChatChanged() {
 
     const char         = context.characters[context.characterId];
     const chatFileName = char?.chat ?? null;
+
+    if (!isExtensionEnabled()) {
+        // Silent Sweeper does not pop a modal on character switch (too intrusive).
+        // It strictly mutes prompts and RAG. 
+        setCnzPromptEnabled(false);
+        state._lastKnownAvatar = char?.avatar ?? null;
+        resetSessionState();
+        return;
+    }
 
     if (!char || char.avatar !== state._lastKnownAvatar) {
         state._lastKnownAvatar = char?.avatar ?? null;

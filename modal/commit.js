@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/modal/commit.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.17
  * @architectural-role UI Builder
  * @description
  * Owns Step 4 of the review modal (Finalize / Commit). Handles the receipts

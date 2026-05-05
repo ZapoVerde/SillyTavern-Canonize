@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/modal/hooks-workshop.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
  * @architectural-role UI Builder
  * @description
  * Owns Step 1 of the review modal (Hooks Workshop). Handles tab switching

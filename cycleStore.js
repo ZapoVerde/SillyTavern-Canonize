@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/cycleStore.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.0
  * @architectural-role Stateful Owner
  * @description
  * Per-cycle scratchpad and dependency resolver. The only "smart" component in

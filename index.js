@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
- * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
- * @version 1.2.1
+ * @stamp {"utc":"2025-01-15T12:00:00.000Z"}
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) entry point. Orchestrates the startup 
@@ -25,7 +24,7 @@ import { state } from './state.js';
 
 // Module Imports
 import { initMobileDebug } from './utils/mobile-debug.js';
-import { initSettings, getSettings } from './core/settings.js';
+import { initSettings, getSettings, isExtensionEnabled } from './core/settings.js';
 import { initScheduler, snooze } from './scheduler.js';
 import { Triggers } from './recipes.js';
 import { injectModal, openReviewModal, openOrphanModal } from './modal/orchestrator.js';
@@ -125,7 +124,7 @@ on(BUS_EVENTS.SYNC_TRIGGERED, handleSyncTrigger);
 // ─── Context Mask Interceptor ──────────────────────────────────────────────────
 
 globalThis.cnzMaskMessages = function(chat) {
-    if (!getSettings().autoAdvanceMask) return;
+    if (!getSettings().autoAdvanceMask || !isExtensionEnabled()) return;
     const IGNORE = SillyTavern.getContext().symbols.ignore;
     let anchorIdx = -1;
     for (let i = chat.length - 1; i >= 0; i--) {

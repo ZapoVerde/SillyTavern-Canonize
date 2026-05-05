@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/modal/lb-workshop.js
  * @stamp {"utc":"2026-03-28T00:00:00.000Z"}
- * @version 1.1.0
  * @architectural-role UI Builder
  * @description
  * Owns Step 2 of the review modal (Lorebook Workshop). Manages the suggestion

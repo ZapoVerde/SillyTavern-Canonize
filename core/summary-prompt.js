@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/summary-prompt.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
+ * @stamp {"utc":"2025-01-15T12:00:00.000Z"}
  * @architectural-role IO Wrapper
  * @description
  * Owns the CNZ Summary prompt lifecycle in the ST PromptManager: ensures the
@@ -10,7 +9,7 @@
  *
  * @api-declaration
  * getCnzPromptManager, ensureCnzSummaryPrompt, writeCnzSummaryPrompt,
- * syncCnzSummaryOnCharacterSwitch
+ * syncCnzSummaryOnCharacterSwitch, setCnzPromptEnabled
  *
  * @contract
  *   assertions:
@@ -79,6 +78,20 @@ export function writeCnzSummaryPrompt(avatar, content, anchorUuid) {
     prompt.content         = content;
     prompt.cnz_avatar      = avatar;
     prompt.cnz_anchor_uuid = anchorUuid ?? null;
+    pm.saveServiceSettings();
+}
+
+/**
+ * IO Executor. Toggles the enabled state of the CNZ Summary prompt.
+ * Does nothing if the prompt has not been created yet.
+ * @param {boolean} enabled 
+ */
+export function setCnzPromptEnabled(enabled) {
+    const pm = getCnzPromptManager();
+    if (!pm) return;
+    const prompt = pm.getPromptById(CNZ_SUMMARY_ID);
+    if (!prompt) return;
+    prompt.enabled = !!enabled;
     pm.saveServiceSettings();
 }
 

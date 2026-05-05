@@ -1,16 +1,14 @@
 /**
  * @file data/default-user/extensions/canonize/settings/data.js
- * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
- * @version 1.1.0
+ * @stamp {"utc":"2025-01-15T12:00:00.000Z"}
+ * @version 1.2.0
  * @architectural-role Stateful Owner
  * @description
  * Owns CNZ extension settings: reading the active profile, bootstrapping the
- * initial settings structure (including one-time migration from the legacy flat
- * layout), and profile CRUD helpers. All writes go through
- * `extension_settings[EXT_NAME]` and are persisted via `saveSettingsDebounced`.
+ * initial settings structure, and profile CRUD helpers.
  *
  * @api-declaration
- * getSettings, getMetaSettings, initSettings
+ * getSettings, getMetaSettings, initSettings, isExtensionEnabled, setExtensionEnabled
  *
  * @contract
  *   assertions:
@@ -38,23 +36,42 @@ export function getMetaSettings() {
     return extension_settings[EXT_NAME];
 }
 
+/** 
+ * Returns true if the master extension toggle is enabled.
+ * @returns {boolean}
+ */
+export function isExtensionEnabled() {
+    return extension_settings[EXT_NAME]?.extensionEnabled ?? true;
+}
+
+/**
+ * Sets the master extension toggle state.
+ * @param {boolean} bool 
+ */
+export function setExtensionEnabled(bool) {
+    if (!extension_settings[EXT_NAME]) return;
+    extension_settings[EXT_NAME].extensionEnabled = !!bool;
+}
+
 // ─── Settings Init ────────────────────────────────────────────────────────────
 
 export function initSettings() {
     if (!extension_settings[EXT_NAME]) extension_settings[EXT_NAME] = {};
     const root = extension_settings[EXT_NAME];
 
+    // Ensure master toggle is initialized
+    if (root.extensionEnabled === undefined) {
+        root.extensionEnabled = true;
+    }
+
     if (!root.profiles) {
         // ── One-time migration: flat structure → profile-based ────────────
-        // First, apply old key renames in-place so they are collected correctly.
-        // factFinderPrompt → lorebookSyncPrompt
         if (root.factFinderPrompt !== undefined) {
             if (root.lorebookSyncPrompt === undefined || root.lorebookSyncPrompt === DEFAULT_LOREBOOK_SYNC_PROMPT) {
                 root.lorebookSyncPrompt = root.factFinderPrompt;
             }
             delete root.factFinderPrompt;
         }
-        // ragSummaryOnly + useQvink → ragContents + ragSummarySource
         if (root.ragSummaryOnly !== undefined || root.useQvink !== undefined) {
             const wasSummaryOnly = root.ragSummaryOnly ?? false;
             const wasQvink       = root.useQvink       ?? false;
@@ -65,21 +82,15 @@ export function initSettings() {
             delete root.useQvink;
         }
 
-        // syncFromTurn → liveContextBuffer (semantics inverted; discard old value, reset to default)
         if (root.syncFromTurn !== undefined) {
-            warn('Settings', 'syncFromTurn renamed to liveContextBuffer — semantics inverted, resetting to default of 5');
+            warn('Settings', 'syncFromTurn renamed to liveContextBuffer — resetting to default');
             delete root.syncFromTurn;
-            root.liveContextBuffer = 5;
         }
-        // pruneOnSync → autoAdvanceMask (boolean migrates directly)
         if (root.pruneOnSync !== undefined) {
             root.autoAdvanceMask = root.pruneOnSync;
             delete root.pruneOnSync;
         }
 
-        // Harvest profile-config keys from the flat root into a legacy object.
-        // Meta-state keys (lastLorebookSyncAt) are not in
-        // PROFILE_DEFAULTS, so they are left untouched at root.
         const legacyConfig = {};
         for (const key of Object.keys(PROFILE_DEFAULTS)) {
             if (Object.prototype.hasOwnProperty.call(root, key)) {
@@ -93,11 +104,9 @@ export function initSettings() {
         root.currentProfileName = 'Default';
         root.activeState        = structuredClone(defaultProfile);
     } else {
-        // Existing profile structure — fill in any keys added by newer versions.
         root.activeState = Object.assign({}, PROFILE_DEFAULTS, root.activeState);
     }
 
-    // Clean up legacy keys no longer part of any profile.
     delete root.activeState.enablePersonalyze;
     for (const profile of Object.values(root.profiles ?? {})) {
         delete profile.enablePersonalyze;

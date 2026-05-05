@@ -1,15 +1,13 @@
 /**
  * @file data/default-user/extensions/canonize/ui/wand.js
- * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2025-01-15T12:00:00.000Z"}
  * @architectural-role UI Builder / Feature Trigger
  * @description
  * Manages the "Run Canonize" wand button in the SillyTavern extensions menu.
- * Owns the manual sync trigger logic, including the three-way choice dialog 
- * (Full vs. Window vs. Cancel) shown when a large turn gap is detected.
+ * Owns the manual sync trigger logic.
  *
  * @api-declaration
- * showSyncChoicePopup, onWandButtonClick, injectWandButton
+ * showSyncChoicePopup, onWandButtonClick, injectWandButton, setWandVisibility
  *
  * @contract
  *   assertions:
@@ -19,12 +17,22 @@
  */
 
 import { state } from '../state.js';
-import { getSettings } from '../core/settings.js';
+import { getSettings, isExtensionEnabled } from '../core/settings.js';
 import { getGap, isSyncInProgress } from '../scheduler.js';
 import { buildProsePairs } from '../core/transcript.js';
 import { runCnzSync } from '../core/sync-pipeline.js';
 import { openReviewModal } from '../modal/orchestrator.js';
 import { log, warn, error } from '../log.js';
+
+/**
+ * Sets the visibility of the wand button in the extensions menu.
+ * @param {boolean} isVisible 
+ */
+export function setWandVisibility(isVisible) {
+    const $btn = $('#cnz-wand-btn');
+    if (!$btn.length) return;
+    $btn.toggleClass('cnz-hidden', !isVisible);
+}
 
 /**
  * Shows a three-button choice dialog for manual sync.
@@ -56,9 +64,6 @@ export function showSyncChoicePopup(bodyHtml, fullLabel, winLabel) {
 
 /**
  * Handles the CNZ wand toolbar button click.
- * If gap is small, opens review modal directly.
- * If gap matches window, runs sync then opens modal.
- * If gap is large, prompts user for coverage level.
  */
 export async function onWandButtonClick() {
     const ctx = SillyTavern.getContext();
@@ -149,6 +154,12 @@ export function injectWandButton() {
         '<span>Run Canonize</span>' +
         '</div>'
     );
+
+    // Initial visibility check
+    if (!isExtensionEnabled()) {
+        btn.addClass('cnz-hidden');
+    }
+
     btn.on('click', () => onWandButtonClick().catch(err => {
         error('Wand', 'Button error:', err);
         toastr.error(`CNZ: ${err.message}`);

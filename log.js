@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/log.js
  * @stamp {"utc":"2026-04-08T00:00:00.000Z"}
- * @version 1.0.0
  * @architectural-role Utility / Central Logger
  * @description
  * Centralised logging wrapper for CNZ.

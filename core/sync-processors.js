@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/sync-processors.js
  * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
- * @version 1.0.0
  * @architectural-role Stateful Owner / IO Wrapper
  * @description
  * Processes raw AI text results from sync lanes into structured state updates.

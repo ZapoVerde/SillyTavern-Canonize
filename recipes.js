@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/recipes.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.0
  * @architectural-role Pure Functions / Constants
  * @description
  * Static recipe declarations for all CNZ AI calls. A Recipe is an immutable

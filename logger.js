@@ -1,7 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/logger.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.0
  * @architectural-role Observer
  * @description
  * Console logger for LLM call lifecycle. Sits on the event bus and emits one
