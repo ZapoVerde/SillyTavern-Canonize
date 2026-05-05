@@ -1,26 +1,26 @@
 /**
  * @file data/default-user/extensions/canonize/core/sync-pipeline.js
  * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
- * @version 1.0.0
  * @architectural-role Feature Orchestrator
  * @description
  * Primary orchestrator for the Canonize sync cycle. Coordinates the compute 
  * window logic, AI lane execution (Lorebook, Hooks, RAG), and final commit 
- * processing. Emits UI events to track sync progress.
+ * processing. Owns the high-level trigger handling logic, including large-gap 
+ * recovery workflows.
  *
  * @api-declaration
- * runCnzSync, logSyncStart
+ * runCnzSync, logSyncStart, handleSyncTrigger
  *
  * @contract
  *   assertions:
  *     purity: mutates
  *     state_ownership: [state._stagedProsePairs, state._stagedPairOffset, state._priorSituation, state._lorebookName, state._lorebookData, state._draftLorebook]
- *     external_io: [/api/worldinfo/*, /api/chats/saveChat]
+ *     external_io: [/api/worldinfo/*, /api/chats/saveChat, toastr]
  */
 
 import { state } from '../state.js';
 import { log, warn, error } from '../log.js';
-import { setSyncInProgress } from '../scheduler.js';
+import { setSyncInProgress, isSyncInProgress } from '../scheduler.js';
 import { getSettings } from './settings.js';
 import { buildTranscript, buildProsePairs } from './transcript.js';
 import { computeSyncWindow } from './window.js';
@@ -32,6 +32,7 @@ import { writeCnzSummaryPrompt } from './summary-prompt.js';
 import { 
     processLorebookUpdate, processHooksUpdate, commitDnaAnchor 
 } from './sync-processors.js';
+import { readDnaChain } from './dna-chain.js';
 
 /**
  * Logs the calculated boundaries of a sync operation.
@@ -178,4 +179,43 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
     } else {
         toastr.warning('Sync processed with errors');
     }
+}
+
+/**
+ * Handles a sync triggered by the scheduler.
+ * Implements the "Large Gap" logic: if the gap is massive, runs one window sync
+ * and then prompts the user with the option to cover the remaining gap.
+ *
+ * @param {object} payload SYNC_TRIGGERED event payload.
+ */
+export function handleSyncTrigger({ char, messages, gap, every, trailingBoundary, largeGap }) {
+    log('Sync', `══ SYNC TRIGGERED ══ gap=${gap}/${every} largeGap=${largeGap} char="${char?.name}"`);
+    
+    if (!largeGap) {
+        runCnzSync(char, messages).catch(err => error('Sync', 'runCnzSync failed:', err));
+        return;
+    }
+
+    if (isSyncInProgress()) return;
+
+    runCnzSync(char, messages).then(() => {
+        // Re-read DNA chain after the window sync — it may have closed the gap.
+        const freshChain = readDnaChain(messages);
+        const lkgIdx     = freshChain.lkgMsgIdx;
+        const prior      = lkgIdx >= 0 
+            ? messages.slice(0, lkgIdx + 1).filter(m => !m.is_system && m.is_user).length 
+            : 0;
+        
+        const remaining = trailingBoundary - prior;
+        if (remaining < every) return;
+
+        const snoozeTurns = getSettings().gapSnoozeTurns ?? 5;
+        toastr.warning(
+            `CNZ: ${remaining} uncaptured pair(s). ` +
+            `<a href="#" class="cnz-gap-sync-all">Sync all</a> &nbsp; ` +
+            `<a href="#" class="cnz-gap-snooze">Snooze ${snoozeTurns} pairs</a>`,
+            '',
+            { timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false }
+        );
+    }).catch(err => error('Sync', 'Large gap window sync failed:', err));
 }

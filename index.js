@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
  * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
- * @version 1.2.0
+ * @version 1.2.1
  * @architectural-role Feature Entry Point
  * @description
  * SillyTavern Narrative Engine (CNZ) entry point. Orchestrates the startup 
@@ -26,14 +26,13 @@ import { state } from './state.js';
 // Module Imports
 import { initMobileDebug } from './utils/mobile-debug.js';
 import { initSettings, getSettings } from './core/settings.js';
-import { initScheduler, snooze, isSyncInProgress } from './scheduler.js';
+import { initScheduler, snooze } from './scheduler.js';
 import { Triggers } from './recipes.js';
 import { injectModal, openReviewModal, openOrphanModal } from './modal/orchestrator.js';
 import { injectSettingsPanel } from './settings/panel.js';
 import { injectWandButton } from './ui/wand.js';
-import { runCnzSync } from './core/sync-pipeline.js';
-import { onChatChanged, resetSessionState } from './core/session.js';
-import { readDnaChain } from './core/dna-chain.js';
+import { runCnzSync, handleSyncTrigger } from './core/sync-pipeline.js';
+import { onChatChanged } from './core/session.js';
 import { renderChunkChatLabel, writeChunkHeaderToChat } from './rag/pipeline.js';
 import { renderRagCard } from './modal/rag-workshop.js';
 
@@ -121,27 +120,7 @@ on(BUS_EVENTS.CYCLE_STORE_UPDATED, ({ key, value }) => {
     }
 });
 
-on(BUS_EVENTS.SYNC_TRIGGERED, ({ char, messages, gap, every, trailingBoundary, largeGap }) => {
-    if (!largeGap) {
-        runCnzSync(char, messages);
-    } else if (!isSyncInProgress()) {
-        runCnzSync(char, messages).then(() => {
-            const freshChain = readDnaChain(messages);
-            const lkgIdx = freshChain.lkgMsgIdx;
-            const prior = lkgIdx >= 0 ? messages.slice(0, lkgIdx + 1).filter(m => !m.is_system && m.is_user).length : 0;
-            const remaining = trailingBoundary - prior;
-            if (remaining >= every) {
-                const snoozeTurns = getSettings().gapSnoozeTurns ?? 5;
-                toastr.warning(
-                    `CNZ: ${remaining} uncaptured pair(s). ` +
-                    `<a href="#" class="cnz-gap-sync-all">Sync all</a> &nbsp; ` +
-                    `<a href="#" class="cnz-gap-snooze">Snooze ${snoozeTurns} pairs</a>`,
-                    '', { timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false }
-                );
-            }
-        });
-    }
-});
+on(BUS_EVENTS.SYNC_TRIGGERED, handleSyncTrigger);
 
 // ─── Context Mask Interceptor ──────────────────────────────────────────────────
 
