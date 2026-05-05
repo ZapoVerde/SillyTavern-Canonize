@@ -1,0 +1,237 @@
+{
+  "entries": {
+    "0": {
+      "key": ["ship", "vessel", "spacecraft", "bridge", "cockpit", "docking"],
+      "content": "Ship Operations:\n- Fuel: Consumed per Jump based on Efficiency (EFF).\n- Rations: 1 unit per crew member consumed per day of travel.\n- The Jump: A violent fold in space. Causes 1-2 hours of 'Jump Sickness' (nausea/vertigo) upon arrival.\n- Maintenance: Ships accrue 'Maintenance Debt.' If not serviced at a station, HUL decreases and failure risk increases.\n- Critical Systems: Jump Core (Travel), Scrubbers (Air), Heat Sinks (Cooling), Thrusters (Maneuvering).",
+      "comment": "Ship General Mechanics",
+      "selective": true,
+      "order": 10,
+      "uid": 0
+    },
+    "1": {
+      "key": ["Wayfarer Class", "Wayfarer", "freighter"],
+      "content": "Class: Wayfarer (Standard Freighter)\nStats: SPD: 3, CRG: 3, EFF: 3, HUL: 3\nOverview: The most common independent ship in the sector. It is reliable, modular, and easy to repair. It features a small crew cabin, a kitchen unit, and a medium cargo hold.\nVibe: Used-car aesthetic. Rattling vents and the smell of old coffee.",
+      "comment": "Ship: Wayfarer",
+      "selective": true,
+      "order": 100,
+      "uid": 1
+    },
+    "2": {
+      "key": ["Arrow Class", "Arrow", "Courier"],
+      "content": "Class: Arrow (Light Courier)\nStats: SPD: 5, CRG: 1, EFF: 2, HUL: 2\nOverview: Built for speed and nothing else. It is essentially a Jump Core with a cockpit strapped to it. Used for high-stakes data running or medical emergencies.\nVibe: Cramped, high-pitched engine whine, sleek and intimidatingly fast.",
+      "comment": "Ship: Arrow",
+      "selective": true,
+      "order": 100,
+      "uid": 2
+    },
+    "3": {
+      "key": ["Behemoth Class", "Behemoth", "Hauler"],
+      "content": "Class: Behemoth (Heavy Bulk Carrier)\nStats: SPD: 1, CRG: 5, EFF: 1, HUL: 4\nOverview: A massive flying warehouse. It cannot maneuver quickly and costs a fortune to fuel, but it can carry enough cargo to supply a whole station.\nVibe: Echoing corridors, deep bass vibrations, feels like a floating building.",
+      "comment": "Ship: Behemoth",
+      "selective": true,
+      "order": 100,
+      "uid": 3
+    },
+    "4": {
+      "key": ["Vulture Class", "Vulture", "Salvager"],
+      "content": "Class: Vulture (Industrial/Salvage)\nStats: SPD: 2, CRG: 3, EFF: 2, HUL: 5\nOverview: Heavily armored with specialized magnetic grapples and cutting lasers. Designed for debris fields and radiation zones.\nVibe: Scuffed metal, heavy industrial tools, noisy hydraulics.",
+      "comment": "Ship: Vulture",
+      "selective": true,
+      "order": 100,
+      "uid": 4
+    },
+    "5": {
+      "key": ["Aegis Class", "Aegis", "Gunship", "Patrol"],
+      "content": "Class: Aegis (Security/Escort)\nStats: SPD: 4, CRG: 2, EFF: 3, HUL: 5\nOverview: A military-grade vessel often used by Bastion security or high-end mercenaries. Features reinforced plating and point-defense mounts.\nVibe: Stark lighting, tactical displays, smelling of ozone and gun-oil.",
+      "comment": "Ship: Aegis",
+      "selective": true,
+      "order": 100,
+      "uid": 5
+    },
+    "6": {
+      "key": ["maintenance", "repairs", "breakdown", "malfunction"],
+      "content": "Mechanical Trouble Hooks:\n- Jump Core Drift: The ship exits jumps several thousand kilometers off-target.\n- Scrubber Clog: Air becomes stale; crew suffers fatigue/headaches.\n- Cooling Leak: Internal temperature rises; non-essential systems must be shut down.\n- Hull Stress: Groaning sounds during maneuvers; possible atmosphere leak in secondary bays.",
+      "comment": "Maintenance & Failure Hooks",
+      "selective": true,
+      "order": 50,
+      "uid": 6
+    },
+    "7": {
+      "key": ["irene", "wayfarer", "ship", "cooling loop"],
+      "content": "A Wayfarer-class merchant vessel currently operated by a solo captain and a newly hired mechanic. Recent overhauls at Ovid's Landing stabilized a persistent cooling loop vibration and added a stator shim, increasing the ship's speed rating to 3.5. The hold is currently packed with soy-protein grains and blight samples, supported by a mushroom farm and a newly installed hydroponic greens station.",
+      "comment": "Irene",
+      "selective": true,
+      "order": 100,
+      "uid": 7
+    },
+    "8": {
+      "key": ["jax", "mechanic", "crew", "ceres"],
+      "content": "A slender, skilled mechanic and Ceres veteran with close-cropped hair and grease-stained coveralls. Hired at Ovid's Landing for 200 credits per day, she successfully stabilized the Irene’s cooling loop and performed a \"speed nudge\" to the engines. She prefers synth-beef over nutrient paste and carries a pistol for security during high-tension dockside operations.",
+      "comment": "Jax",
+      "selective": true,
+      "order": 100,
+      "uid": 8
+    },
+    "9": {
+      "key": ["voss", "diplomatic crate", "c-14", "no scan"],
+      "content": "A mysterious and influential figure operating out of Deck C-14 at Ovid's Landing. Voss coordinates \"no questions asked\" deliveries of matte-black diplomatic crates that are exempt from standard customs scans. Deliveries for Voss are high-paying but often attract unwanted attention and involve the use of passive signal jammers.",
+      "comment": "Cargo Master Voss",
+      "selective": true,
+      "order": 100,
+      "uid": 9
+    },
+    "10": {
+      "key": ["Port Aurelia", "Aurelia", "PA"],
+      "content": "Identity: Administrative Capital / High-Tech Hub\nOverview: A gleaming torus station serving as the sector’s bureaucratic heart.\nTrade Conditions:\n- High demand: Refined Metals, Fresh Produce\n- Surplus: Luxury Goods, High-End Tech, Medical Supplies\nPolitics:\n- Governor Vane (Corporate-State Liaison)\n- Aurelia Customs Enforcement (Strict)\nConnections:\n- Kasparov Terminal (2 days)\n- Ovid’s Landing (3 days)\n- Valhalla Station (4 days)\nCurrent Situation: A customs strike is causing 24-hour docking delays. Priority is given to \"donations\" to the welfare fund.\nReputation Tags: High scrutiny for smugglers; priority docking for licensed couriers.",
+      "comment": "Port Aurelia",
+      "selective": true,
+      "order": 100,
+      "uid": 10
+    },
+    "11": {
+      "key": ["Kasparov Terminal", "Kasparov"],
+      "content": "Identity: Heavy Industrial / Manufacturing\nOverview: A smog-choked factory complex orbiting an industrial world.\nTrade Conditions:\n- High demand: Raw Ore, Laborer Rations, Cooling Gels\n- Surplus: Ship Components, Heavy Machinery, Industrial Tools\nPolitics:\n- Union Boss Miller (Hardliner)\n- Kasparov Corp Security\nConnections:\n- Port Aurelia (2 days)\n- Iron-Hold (3 days)\nCurrent Situation: A \"mysterious\" series of equipment failures has halted the production of warp-stator components.\nReputation Tags: Respects union-friendly captains; corporate bootlickers are snubbed.",
+      "comment": "Kasparov Terminal",
+      "selective": true,
+      "order": 100,
+      "uid": 11
+    },
+    "12": {
+      "key": ["Ovid’s Landing", "orvid", "landing"],
+      "content": "Identity: Agricultural Ring\nOverview: A lush series of bio-domes producing the sector's high-quality food.\nTrade Conditions:\n- High demand: Irrigation Tech, Soil Supplements, Pesticides\n- Surplus: Grains, Synthetic Meat, Medical Flora\nPolitics:\n- The Overseer Council (Bio-Engineers)\n- Free Soil Movement (Protest group)\nConnections:\n- Port Aurelia (3 days)\n- New Mumbai (5 days)\nCurrent Situation: A localized blight is threatening the soy-protein crop; the station is desperate for antifungal agents.\nReputation Tags: Strict bio-scans; high pay for fast delivery of perishables.",
+      "comment": "Ovid’s Landing",
+      "selective": true,
+      "order": 100,
+      "uid": 12
+    },
+    "13": {
+      "key": ["New Mumbai", "Mumbai"],
+      "content": "Identity: Trade Nexus / Consumer Bazaar\nOverview: A chaotic, high-traffic station where everything has a price.\nTrade Conditions:\n- High demand: Ship Parts, Rare Earth Minerals, Data Bricks\n- Surplus: Consumer Electronics, Textiles, Spices\nPolitics:\n- The Merchant Prince (Informal Broker)\n- Multiple competing trade guilds\nConnections:\n- Ovid’s Landing (5 days)\n- Midpoint Junction (4 days)\nCurrent Situation: A local currency crash has made credit exchange volatile. Barter is preferred.\nReputation Tags: Known \"honest\" traders get better interest rates.",
+      "comment": "New Mumbai",
+      "selective": true,
+      "order": 100,
+      "uid": 13
+    },
+    "14": {
+      "key": ["Valhalla", "VS"],
+      "content": "Identity: Fuel Processing / Energy Hub\nOverview: A utilitarian refinery orbiting a blue gas giant. Cold and loud.\nTrade Conditions:\n- High demand: Scrubber Filters, Radiation Shielding, Alcohol\n- Surplus: Refined H3 Fuel, Coolant, Lubricants\nPolitics:\n- Stationmaster Krell (Ex-Military)\n- Fuel Tech Union\nConnections:\n- Port Aurelia (4 days)\n- Bastion (6 days)\nCurrent Situation: Solar flare activity has made the jump route to Bastion \"choppy\" and dangerous for unshielded ships.\nReputation Tags: Military discount; low tolerance for loitering.",
+      "comment": "Valhalla Station",
+      "selective": true,
+      "order": 100,
+      "uid": 14
+    },
+    "15": {
+      "key": ["core", "sector 1"],
+      "content": "The Core (High Security, Low Margins)\nOverview: The heart of interstellar civilization. Routes are well-patrolled, docking fees are high, and corporate law is absolute. Margins on trade are thin due to high competition, but safety is guaranteed.\nKey Locations: Port Aurelia, Kasparov Terminal, Ovid's Landing, New Mumbai, Valhalla Station.\nAtmosphere: Polished chrome, bureaucrats, expensive fuel, and heavy surveillance.",
+      "comment": "Sector 1",
+      "selective": true,
+      "order": 50,
+      "uid": 15
+    },
+    "16": {
+      "key": ["midline", "sector 2"],
+      "content": "The Midline (Moderate Risk, Industrial)\nOverview: The engine room of the sector. This is where raw materials from the Rim are processed before heading to the Core. Security is present but pragmatic. Trade volume is massive, and most 'working class' captains spend their lives here.\nKey Locations: Iron-Hold, Midpoint Junction, Hekate's Watch, Bastion, Ceres Refinery.\nAtmosphere: Gritty, functional, smelling of grease and ozone.",
+      "comment": "Sector 2",
+      "selective": true,
+      "order": 50,
+      "uid": 16
+    },
+    "17": {
+      "key": ["Iron-Hold", "IH"],
+      "content": "Identity: Mining Outpost\nOverview: A hollowed-out asteroid. Rough, vibrating, and oxygen-poor.\nTrade Conditions:\n- High demand: Drill Bits, Heavy Machinery, Oxygen Tanks\n- Surplus: Iron Ore, Copper, Raw Silicates\nPolitics:\n- Claim-Jumper \"King\" Arvo\n- Deep Rock Corporate Watchdog\nConnections:\n- Kasparov Terminal (3 days)\n- Freeport 99 (5 days)\n- Hekate’s Watch (4 days)\nCurrent Situation: A major vein has collapsed. The station is short on emergency med-kits and structural foam.\nReputation Tags: Captains who can handle \"rough\" docking are respected.",
+      "comment": "Iron-Hold",
+      "selective": true,
+      "order": 100,
+      "uid": 17
+    },
+    "18": {
+      "key": ["midpoint junction", "midpoint", "junction", "MJ"],
+      "content": "Identity: Logistics / Warehouse Station\nOverview: A massive cluster of cargo bays where freight is swapped.\nTrade Conditions:\n- High demand: General Supplies, Data Drives, Ship Parts\n- Surplus: Shipping Containers, Freight Insurance, Low-grade Ration Packs\nPolitics:\n- Registrar Elara (Bureaucrat)\n- The \"Loaders\" (Powerful stevedore gang)\nConnections:\n- New Mumbai (4 days)\n- Ceres Refinery (6 days)\nCurrent Situation: A shipment of high-value electronics went \"missing.\" Cargo inspections are currently intrusive.\nReputation Tags: Efficiency is everything; \"Lost\" cargo kills your rating.",
+      "comment": "Midpoint Junction",
+      "selective": true,
+      "order": 100,
+      "uid": 18
+    },
+    "19": {
+      "key": ["Hecate", "hekate's watch", "hekate"],
+      "content": "Identity: Scientific Research Station\nOverview: Minimalist and sleek, orbiting a black hole’s event horizon.\nTrade Conditions:\n- High demand: Precision Sensors, Lab Equipment, High-Calorie Rations\n- Surplus: Xenon Gas, Scientific Data, Exotic Matter\nPolitics:\n- Director Thorne (Reclusive)\n- Sector Intelligence Observers\nConnections:\n- Iron-Hold (4 days)\n- Siren’s Call (7 days)\nCurrent Situation: A data leak has put the station on lockdown. No one enters or leaves without a level-4 sweep.\nReputation Tags: Discretion is mandatory; no questions asked, no stories told.",
+      "comment": "Hekate’s Watch",
+      "selective": true,
+      "order": 100,
+      "uid": 19
+    },
+    "20": {
+      "key": ["Bastion", "military station"],
+      "content": "Identity: Military Fortress\nOverview: A station bristling with guns. The wall against the lawless Rim.\nTrade Conditions:\n- High demand: High-End Tech, Medical Supplies, Entertainment\n- Surplus: Decommissioned Arms, Tactical Gear, Security Contracts\nPolitics:\n- Admiral Halloway\n- Military Police Force\nConnections:\n- Valhalla Station (6 days)\n- Ceres Refinery (4 days)\nCurrent Situation: Increased pirate activity on the Rim has the Admiral offering bounties for \"auxiliary patrol\" ships.\nReputation Tags: Prioritizes military vets; smugglers are summarily detained.",
+      "comment": "Bastion",
+      "selective": true,
+      "order": 100,
+      "uid": 20
+    },
+    "21": {
+      "key": ["Ceres", "Ceres Refinery"],
+      "content": "Identity: Gas Skimming Plant\nOverview: Massive skimmers dipping into a gas giant's clouds.\nTrade Conditions:\n- High demand: Ship Repairs, Protective Suits, Fresh Water\n- Surplus: Industrial Gases, Polymer Plastics, Fertilizer\nPolitics:\n- The Cloud-Walkers (Freelance Skimmer Pilots)\n- Ceres Corp Management\nConnections:\n- Midpoint Junction (6 days)\n- Bastion (4 days)\n- Scrapyard-7 (5 days)\nCurrent Situation: A \"cloud-kraken\" (massive atmospheric storm) has damaged the main intake. Refinery output is halved.\nReputation Tags: High pay for \"storm-runners.\"",
+      "comment": "Ceres Refinery",
+      "selective": true,
+      "order": 100,
+      "uid": 21
+    },
+    "22": {
+      "key": ["rim", "sector 3", "lawless"],
+      "content": "The Rim (Low Security, Lawless)\nOverview: The wild frontier. Many systems here are off the charts or barely habitable. There is no central government, and fuel is astronomically expensive. However, the lack of taxes and the abundance of salvage make it a gold mine for those who survive.\nKey Locations: Freeport 99, Scrapyard-7, Dead-End Stop, Siren's Call, The Obelisk, Last Chance.\nAtmosphere: Desperate, dark, dangerous, and quiet.",
+      "comment": "Sector 3",
+      "selective": true,
+      "order": 50,
+      "uid": 22
+    },
+    "23": {
+      "key": ["Freeport 99", "Freeport", "F99"],
+      "content": "Identity: Unregulated \"Free City\"\nOverview: A patchwork city of lashed-together derelict hulls. No laws, only rules.\nTrade Conditions:\n- High demand: Narcotics, Luxury Goods, Stolen Data\n- Surplus: Salvage, Black Market Tech, Cheap Repairs\nPolitics:\n- The Council of Captains\n- Gang Leader \"Patch\"\nConnections:\n- Iron-Hold (5 days)\n- Dead-End Stop (6 days)\nCurrent Situation: A power struggle between local gangs has made the docking bays a combat zone. Docking is at own risk.\nReputation Tags: Scum welcome; clean-cut corporate types are targeted.",
+      "comment": "Freeport 99",
+      "selective": true,
+      "order": 100,
+      "uid": 23
+    },
+    "24": {
+      "key": ["Scrapyard-7", "Scrapyard", "S7"],
+      "content": "Identity: Salvage Yard / Graveyard\nOverview: A massive debris field of old warships and colony hulls.\nTrade Conditions:\n- High demand: Cutting Torches, Magnets, Med-Supplies\n- Surplus: Ancient Components, Scrap Metal, Relic Tech\nPolitics:\n- The Scavenger King (Eccentric)\n- Freelance \"Breakers\"\nConnections:\n- Ceres Refinery (5 days)\n- The Obelisk (8 days)\nCurrent Situation: An old war-drone reactivated in the debris field and is sniping incoming ships. Salvage is paused.\nReputation Tags: High risk, high reward; salvage rights are earned by blood.",
+      "comment": "Scrapyard-7",
+      "selective": true,
+      "order": 100,
+      "uid": 24
+    },
+    "25": {
+      "key": ["Dead-End Stop", "Dead-End", "DES", "stop"],
+      "content": "Identity: Deep Space Outpost\nOverview: A flickering, lonely light at the edge of the void.\nTrade Conditions:\n- High demand: Fuel, Food, Communication Relays\n- Surplus: Asteroid Ice, Rare Crystals, Exploration Logs\nPolitics:\n- Stationmaster Old Pete\n- Transient prospectors\nConnections:\n- Freeport 99 (6 days)\n- Last Chance (10 days)\nCurrent Situation: The oxygen scrubbers are failing. If new filters don't arrive in 5 days, the station goes dark.\nReputation Tags: Helpfulness here creates legendary loyalty.",
+      "comment": "Dead-End Stop",
+      "selective": true,
+      "order": 100,
+      "uid": 25
+    },
+    "26": {
+      "key": ["Siren’s Call", "Siren", "Siren's"],
+      "content": "Identity: Private Corporate Research\nOverview: A hidden facility investigating nebula anomalies. Highly secretive.\nTrade Conditions:\n- High demand: High-End Tech, Security Personnel, Silence\n- Surplus: Encrypted Data, Biological Samples\nPolitics:\n- Project Lead \"Delta\"\n- Corporate Hit Squads\nConnections:\n- Hekate’s Watch (7 days)\n- The Obelisk (9 days)\nCurrent Situation: Several crew members have gone missing. The station is hiring \"disposable\" contractors to investigate the lower decks.\nReputation Tags: Corporate \"fixer\" reputation is highly valued.",
+      "comment": "Siren’s Call",
+      "selective": true,
+      "order": 100,
+      "uid": 26
+    },
+    "27": {
+      "key": ["The Obelisk", "Obelisk", "spire"],
+      "content": "Identity: Ancient Mystery Site\nOverview: Built around a massive, non-human spire of black stone.\nTrade Conditions:\n- High demand: Batteries, Specialized Sensors, Mercenaries\n- Surplus: Artifacts (Illegal), Research Notes, Strange Alloys\nPolitics:\n- The Cult of the Spire\n- Rogue Archeologists\nConnections:\n- Scrapyard-7 (8 days)\n- Siren’s Call (9 days)\nCurrent Situation: The Obelisk has started emitting a low-frequency hum. Tech-cultists are flocking to the system.\nReputation Tags: Scientific or occult interests get you past the first gate.",
+      "comment": "The Obelisk",
+      "selective": true,
+      "order": 100,
+      "uid": 27
+    },
+    "28": {
+      "key": ["Last Chance", "Edge", "The Abyss"],
+      "content": "Identity: The Absolute Edge\nOverview: A single docking arm and a bar called \"The Abyss.\" The last stop for fuel.\nTrade Conditions:\n- High demand: Fuel (Premium Prices), Alcohol, Spare Parts\n- Surplus: Deep-Space Maps, Bragging Rights\nPolitics:\n- Bartender \"No-Name\"\n- Desperate Drifters\nConnections:\n- Dead-End Stop (10 days)\nCurrent Situation: A ship just returned from the void with no crew and a hold full of gold. The bar is in a frenzy.\nReputation Tags: Only the brave or the suicidal call this place home.",
+      "comment": "Last Chance",
+      "selective": true,
+      "order": 100,
+      "uid": 28
+    }
+  },
+  "name": "Merchanter_Complete"
+}
