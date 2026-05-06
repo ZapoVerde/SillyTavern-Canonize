@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/sync-pipeline.js
- * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-06T00:00:00.000Z"}
  * @architectural-role Feature Orchestrator
  * @description
  * Primary orchestrator for the Canonize sync cycle. Coordinates the compute 
@@ -189,14 +189,15 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
  * @param {object} payload SYNC_TRIGGERED event payload.
  */
 export function handleSyncTrigger({ char, messages, gap, every, trailingBoundary, largeGap }) {
+    // LOCK: Prevent multiple concurrent syncs from being triggered by turns or swipes.
+    if (isSyncInProgress()) return;
+
     log('Sync', `══ SYNC TRIGGERED ══ gap=${gap}/${every} largeGap=${largeGap} char="${char?.name}"`);
     
     if (!largeGap) {
         runCnzSync(char, messages).catch(err => error('Sync', 'runCnzSync failed:', err));
         return;
     }
-
-    if (isSyncInProgress()) return;
 
     runCnzSync(char, messages).then(() => {
         // Re-read DNA chain after the window sync — it may have closed the gap.

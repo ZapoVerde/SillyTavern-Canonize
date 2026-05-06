@@ -1,13 +1,14 @@
 /**
  * @file data/default-user/extensions/canonize/core/dna-chain.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-06T00:00:00.000Z"}
  * @architectural-role Stateful Owner
  * @description
  * Owns the DNA chain read/write lifecycle: scanning chat messages to build the
  * chain, looking up the last-known-good anchor, constructing anchor payloads,
- * and writing anchors and back-pointer links into chat messages. Also owns
- * the `readCnzSummaryPromptState` helper and `sanitizeDnaChain` stubs retained
- * for API continuity.
+ * and writing anchors and back-pointer links into chat messages. 
+ *
+ * Hardened in v1.2.1 to fallback to user messages if AI messages are missing
+ * (e.g. during swipes or generation) to ensure the timeline gap always closes.
  *
  * @api-declaration
  * readDnaChain, getLkgAnchor, buildAnchorPayload, writeDnaAnchor, writeDnaLinks,
@@ -152,16 +153,17 @@ export function buildAnchorPayload({ uuid, committedAt, hooks, lorebook, ragUrl,
  * Writes a CnzAnchor payload into the last AI message of the given pair,
  * then saves the chat. The message becomes the Anchor for this sync cycle.
  *
- * If the pair has no AI message, logs a warning and returns without writing.
+ * Fallback: if the pair has no AI message (swipes/active gen), writes to the 
+ * User message instead to ensure the sync milestone is recorded.
  *
  * @param {object} pair       - prose pair object (from buildProsePairs)
  * @param {CnzAnchor} anchor  - payload from buildAnchorPayload
  * @returns {Promise<void>}
  */
 export async function writeDnaAnchor(pair, anchor) {
-    const msg = findLastAiMessageInPair(pair);
+    const msg = findLastAiMessageInPair(pair) ?? pair.user;
     if (!msg) {
-        warn('DnaChain', 'writeDnaAnchor: no AI message in pair — skipping');
+        warn('DnaChain', 'writeDnaAnchor: no target message in pair — skipping');
         return;
     }
     msg.extra ??= {};
@@ -175,8 +177,9 @@ export async function writeDnaAnchor(pair, anchor) {
 
 /**
  * Writes a CnzLink back-pointer into the last AI message of each pair in
- * the given range, then saves the chat once. Skips the anchor pair itself
- * (it already carries the full CnzAnchor). Skips pairs with no AI message.
+ * the given range, then saves the chat once. 
+ *
+ * Fallback: if a pair has no AI message, writes to the User message instead.
  *
  * @param {object[]} pairs      - all prose pairs in the sync block
  * @param {number}   anchorIdx  - index of the anchor pair within `pairs`; that pair is skipped
@@ -188,7 +191,7 @@ export async function writeDnaLinks(pairs, anchorIdx, uuid, pairOffset) {
     let wrote = false;
     for (let i = 0; i < pairs.length; i++) {
         if (i === anchorIdx) continue;
-        const msg = findLastAiMessageInPair(pairs[i]);
+        const msg = findLastAiMessageInPair(pairs[i]) ?? pairs[i].user;
         if (!msg) continue;
         msg.extra ??= {};
         msg.extra.cnz = {
