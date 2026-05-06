@@ -94,3 +94,7 @@ Before deleting, check if it's safe:
 | **FB Deploy** | `firebase deploy` | Deploys based on current `firebase use` |
 
 **Pro Tip:** If you ever get stuck in a weird state, `git status` is always your first move. It usually tells you exactly how to get out of it!
+
+
+change between main and current code
+git diff main...HEAD > changes.txt
