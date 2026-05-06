@@ -132,9 +132,7 @@ globalThis.cnzMaskMessages = function(chat) {
     }
     if (anchorIdx < 0) return;
     for (let i = 0; i <= anchorIdx; i++) {
-        chat[i] = structuredClone(chat[i]);
-        chat[i].extra ??= {};
-        chat[i].extra[IGNORE] = true;
+        chat[i] = { ...chat[i], extra: { ...(chat[i].extra ?? {}), [IGNORE]: true } };
     }
 };
 
