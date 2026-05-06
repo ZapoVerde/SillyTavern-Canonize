@@ -65,119 +65,121 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
     log('Sync', `══ SYNC START ══ char="${char?.name}" coverAll=${coverAll} msgs=${messages.length}`);
     setSyncInProgress(true);
     
-    document.dispatchEvent(new CustomEvent('cnz:sync-started', {
-        detail: { lorebookName: state._lorebookName, charName: char?.name ?? null },
-    }));
-
-    const settings  = getSettings();
-    const allPairs  = buildProsePairs(messages);
-    const { syncPairs, syncPairOffset } = computeSyncWindow(allPairs, messages, settings, coverAll, state._dnaChain);
-
-    if (syncPairs.length === 0) {
-        warn('Sync', 'runCnzSync: no uncommitted pairs in window — aborting');
-        setSyncInProgress(false);
-        return;
-    }
-
-    // Stage pairs for processors
-    state._stagedProsePairs = syncPairs;
-    state._stagedPairOffset = syncPairOffset;
-
-    // Build Hookseeker transcript with continuity lookback
-    const horizon       = settings.hookseekerHorizon ?? 40;
-    const lookbackStart = Math.max(0, syncPairOffset - (horizon - syncPairs.length));
-    const hookPairs     = allPairs.slice(lookbackStart, syncPairOffset + syncPairs.length);
-    const hookTranscript = buildTranscript(hookPairs.flatMap(p => [p.user, ...p.messages]));
-
-    // Build Lorebook transcript
-    let lbPairsForLog = syncPairs;
-    let lbTranscript;
-    if ((settings.lorebookSyncStart ?? 'syncPoint') === 'latestTurn') {
-        lbPairsForLog = hookPairs;
-        lbTranscript  = hookTranscript;
-    } else {
-        lbTranscript  = buildTranscript(syncPairs.flatMap(p => [p.user, ...p.messages]));
-    }
-
-    logSyncStart(hookPairs, lbPairsForLog, syncPairs, coverAll, settings.chunkEveryN ?? 20);
-
-    // Ensure lorebook is ready
-    if (!state._draftLorebook) {
-        state._lorebookName = settings.lorebookName || char.name;
-        state._lorebookData = await lbEnsureLorebook(state._lorebookName);
-        state._draftLorebook = structuredClone(state._lorebookData);
-    }
-    
-    if (char?.data?.extensions?.world !== state._lorebookName) {
-        try { await patchCharacterWorld(char, state._lorebookName); }
-        catch (e) { error('Lorebook', 'Lorebook link failed:', e); }
-    }
-
-    const anchorUuid = (typeof crypto?.randomUUID === 'function')
-        ? crypto.randomUUID()
-        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-            const r = Math.random() * 16 | 0;
-            return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-        });
-
-    // LANE 1: Lorebook
-    const lbPromise = (async () => {
-        try {
-            const text = await runLorebookSyncCall(lbTranscript, state._lorebookData);
-            await processLorebookUpdate(text, anchorUuid);
-            return true;
-        } catch (e) {
-            error('Lorebook', 'Lane 1 failed:', e);
-            if (state._draftLorebook) await processLorebookUpdate('', anchorUuid); 
-            return false;
-        }
-    })();
-
-    // LANE 2: Hooks
-    const hooksPromise = (async () => {
-        try {
-            const text = await runHookseekerCall(hookTranscript, state._priorSituation);
-            await processHooksUpdate(text);
-            state._priorSituation = text;
-            return true;
-        } catch (e) {
-            error('Hooks', 'Lane 2 failed:', e);
-            return false;
-        }
-    })();
-
-    // LANE 3: RAG
-    const ragPromise = (async () => {
-        if (!settings.enableRag) return true;
-        try {
-            await runRagPipeline(anchorUuid);
-            return true;
-        } catch (e) {
-            error('Rag', 'Lane 3 failed:', e);
-            return false;
-        }
-    })();
-
-    const [lbOk, hooksOk, ragOk] = await Promise.all([lbPromise, hooksPromise, ragPromise]);
-
-    // Commit Anchor
-    let anchorOk = false;
     try {
-        await commitDnaAnchor(messages, anchorUuid);
-        anchorOk = true;
-        const newUuid = state._dnaChain.lkg?.uuid ?? null;
-        if (newUuid) writeCnzSummaryPrompt(char.avatar, state._priorSituation, newUuid);
-    } catch (e) { error('DnaChain', 'Anchor commit failed:', e); }
+        document.dispatchEvent(new CustomEvent('cnz:sync-started', {
+            detail: { lorebookName: state._lorebookName, charName: char?.name ?? null },
+        }));
 
-    setSyncInProgress(false);
-    document.dispatchEvent(new CustomEvent('cnz:sync-completed', {
-        detail: { lorebookName: state._lorebookName, charName: char?.name ?? null },
-    }));
+        const settings  = getSettings();
+        const allPairs  = buildProsePairs(messages);
+        const { syncPairs, syncPairOffset } = computeSyncWindow(allPairs, messages, settings, coverAll, state._dnaChain);
 
-    if (lbOk && hooksOk && ragOk && anchorOk) {
-        toastr.success('Sync processed');
-    } else {
-        toastr.warning('Sync processed with errors');
+        if (syncPairs.length === 0) {
+            warn('Sync', 'runCnzSync: no uncommitted pairs in window — aborting');
+            return;
+        }
+
+        // Stage pairs for processors
+        state._stagedProsePairs = syncPairs;
+        state._stagedPairOffset = syncPairOffset;
+
+        // Build Hookseeker transcript with continuity lookback
+        const horizon       = settings.hookseekerHorizon ?? 40;
+        const lookbackStart = Math.max(0, syncPairOffset - (horizon - syncPairs.length));
+        const hookPairs     = allPairs.slice(lookbackStart, syncPairOffset + syncPairs.length);
+        const hookTranscript = buildTranscript(hookPairs.flatMap(p => [p.user, ...p.messages]));
+
+        // Build Lorebook transcript
+        let lbPairsForLog = syncPairs;
+        let lbTranscript;
+        if ((settings.lorebookSyncStart ?? 'syncPoint') === 'latestTurn') {
+            lbPairsForLog = hookPairs;
+            lbTranscript  = hookTranscript;
+        } else {
+            lbTranscript  = buildTranscript(syncPairs.flatMap(p => [p.user, ...p.messages]));
+        }
+
+        logSyncStart(hookPairs, lbPairsForLog, syncPairs, coverAll, settings.chunkEveryN ?? 20);
+
+        // Ensure lorebook is ready
+        if (!state._draftLorebook) {
+            state._lorebookName = settings.lorebookName || char.name;
+            state._lorebookData = await lbEnsureLorebook(state._lorebookName);
+            state._draftLorebook = structuredClone(state._lorebookData);
+        }
+        
+        if (char?.data?.extensions?.world !== state._lorebookName) {
+            try { await patchCharacterWorld(char, state._lorebookName); }
+            catch (e) { error('Lorebook', 'Lorebook link failed:', e); }
+        }
+
+        const anchorUuid = (typeof crypto?.randomUUID === 'function')
+            ? crypto.randomUUID()
+            : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+                const r = Math.random() * 16 | 0;
+                return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+            });
+
+        // LANE 1: Lorebook
+        const lbPromise = (async () => {
+            try {
+                const text = await runLorebookSyncCall(lbTranscript, state._lorebookData);
+                await processLorebookUpdate(text, anchorUuid);
+                return true;
+            } catch (e) {
+                error('Lorebook', 'Lane 1 failed:', e);
+                if (state._draftLorebook) await processLorebookUpdate('', anchorUuid); 
+                return false;
+            }
+        })();
+
+        // LANE 2: Hooks
+        const hooksPromise = (async () => {
+            try {
+                const text = await runHookseekerCall(hookTranscript, state._priorSituation);
+                await processHooksUpdate(text);
+                state._priorSituation = text;
+                return true;
+            } catch (e) {
+                error('Hooks', 'Lane 2 failed:', e);
+                return false;
+            }
+        })();
+
+        // LANE 3: RAG
+        const ragPromise = (async () => {
+            if (!settings.enableRag) return true;
+            try {
+                await runRagPipeline(anchorUuid);
+                return true;
+            } catch (e) {
+                error('Rag', 'Lane 3 failed:', e);
+                return false;
+            }
+        })();
+
+        const [lbOk, hooksOk, ragOk] = await Promise.all([lbPromise, hooksPromise, ragPromise]);
+
+        // Commit Anchor
+        let anchorOk = false;
+        try {
+            await commitDnaAnchor(messages, anchorUuid);
+            anchorOk = true;
+            const newUuid = state._dnaChain.lkg?.uuid ?? null;
+            if (newUuid) writeCnzSummaryPrompt(char.avatar, state._priorSituation, newUuid);
+        } catch (e) { error('DnaChain', 'Anchor commit failed:', e); }
+
+        document.dispatchEvent(new CustomEvent('cnz:sync-completed', {
+            detail: { lorebookName: state._lorebookName, charName: char?.name ?? null },
+        }));
+
+        if (lbOk && hooksOk && ragOk && anchorOk) {
+            toastr.success('Sync processed');
+        } else {
+            toastr.warning('Sync processed with errors');
+        }
+    } finally {
+        setSyncInProgress(false);
     }
 }
 

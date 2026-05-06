@@ -7,6 +7,9 @@
  * trigger evaluation. Registers event listeners (ST and bus) for every trigger
  * supplied at init time.
  *
+ * Hardened in v1.2.1: dynamically re-reads DNA chain from DOM on every turn 
+ * to prevent index desync during message swipes or deletions.
+ *
  * @api-declaration
  * initScheduler(triggers, getSettings)  — register trigger listeners.
  * setSyncInProgress(bool)               — set the sync-in-progress flag.
@@ -27,6 +30,7 @@ import { emit, on, BUS_EVENTS } from './bus.js';
 import { log } from './log.js';
 import { eventSource } from '../../../../script.js';
 import { isExtensionEnabled } from './core/settings.js';
+import { readDnaChain } from './core/dna-chain.js';
 
 // ── Module State ──────────────────────────────────────────────────────────────
 
@@ -108,7 +112,11 @@ export function getGap(settings) {
     if (!context) return 0;
     const messages   = context.chat ?? [];
     const pairCount  = messages.filter(m => !m.is_system && m.is_user).length;
-    const lkgIdx     = _dnaChain?.lkgMsgIdx ?? -1;
+    
+    // Dynamically guarantee fresh calculations from the DOM to avoid desync on swipes
+    const freshChain = readDnaChain(messages);
+    const lkgIdx     = freshChain.lkgMsgIdx;
+    
     const priorPairs = lkgIdx >= 0
         ? messages.slice(0, lkgIdx + 1).filter(m => !m.is_system && m.is_user).length
         : 0;
@@ -125,6 +133,11 @@ function _evaluate(trigger, eventData) {
     const context  = SillyTavern.getContext();
     const settings = _getSettings();
     const messages = context?.chat ?? [];
+    
+    // Dynamically ensure dnaChain is perfectly fresh from DOM 
+    // to correctly calculate gaps after message deletions or swipes
+    _dnaChain = readDnaChain(messages);
+    
     const count     = messages.filter(m => !m.is_system).length;
     const pairCount = messages.filter(m => !m.is_system && m.is_user).length;
 

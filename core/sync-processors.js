@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/sync-processors.js
- * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-06T00:00:00.000Z"}
  * @architectural-role Stateful Owner / IO Wrapper
  * @description
  * Processes raw AI text results from sync lanes into structured state updates.
@@ -40,8 +40,9 @@ import { setDnaChain } from '../scheduler.js';
  */
 export async function processLorebookUpdate(rawText, anchorUuid = null) {
     // 1. Parse and update AI suggestions if they exist
-    if (rawText.trim() && rawText.trim() !== 'NO CHANGES NEEDED') {
-        const suggestions = parseLbSuggestions(rawText);
+    const trimmedText = rawText?.trim() ?? '';
+    if (trimmedText && trimmedText !== 'NO CHANGES NEEDED') {
+        const suggestions = parseLbSuggestions(trimmedText);
         state._lorebookSuggestions = enrichLbSuggestions(suggestions);
 
         for (const s of state._lorebookSuggestions) {
@@ -133,9 +134,10 @@ export async function commitDnaAnchor(messages, anchorUuid) {
     await writeDnaAnchor(anchorPair, anchor);
     await writeDnaLinks(state._stagedProsePairs, anchorPairIdx, anchor.uuid, state._stagedPairOffset);
 
-    // Refresh DNA chain in memory
-    state._dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
+    // Refresh DNA chain in memory and update the scheduler immediately
+    const freshChat = SillyTavern.getContext().chat ?? [];
+    state._dnaChain = readDnaChain(freshChat);
     setDnaChain(state._dnaChain);
     
-    log('DnaChain', 'commitDnaAnchor: anchor written uuid=' + anchor.uuid);
+    log('DnaChain', 'commitDnaAnchor: anchor written and chain refreshed uuid=' + anchor.uuid);
 }
