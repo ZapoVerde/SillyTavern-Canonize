@@ -923,7 +923,7 @@ async function init() {
         // If ST's context window truncated the anchor out, all remaining messages
         // are post-anchor and nothing should be hidden.
         let anchorIdx = -1;
-        for (let i = chat.length - 1; i >= 0; i--) {
+        for (let i = chat.length - 2; i >= 0; i--) {
             if (chat[i]?.extra?.cnz?.type === 'anchor') { anchorIdx = i; break; }
         }
         if (anchorIdx < 0) return;
