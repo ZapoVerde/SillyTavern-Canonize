@@ -32,6 +32,14 @@ import { Recipes }    from './recipes.js';
 import { generateRaw } from '../../../../script.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
 
+// generateRaw uses shared global ST state and is not safe for concurrent calls.
+let _generateRawQueue = Promise.resolve();
+function _serialGenerateRaw(args) {
+    const next = _generateRawQueue.then(() => generateRaw(args));
+    _generateRawQueue = next.catch(() => {});
+    return next;
+}
+
 on(BUS_EVENTS.CONTRACT_DISPATCHED, async (payload) => {
     const { jobId, cycleId, recipeId, maxRetries = 1 } = payload;
 
@@ -74,5 +82,5 @@ async function _fireCall({ recipeId, inputs, settings, maxTokens }) {
             throw Object.assign(new Error(detail), { cause: err.cause, _profile: profileLabel });
         }
     }
-    return generateRaw({ prompt: inputs._prompt, trimNames: false, responseLength: tokens });
+    return _serialGenerateRaw({ prompt: inputs._prompt, trimNames: false, responseLength: tokens });
 }
