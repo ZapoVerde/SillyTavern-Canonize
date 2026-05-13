@@ -454,7 +454,6 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
             return true;
         } catch (e) {
             error('Hooks', 'Lane 2: ✗ failed —', e.message ?? e, e);
-            state._priorSituation = 'Current Action';
             return false;
         }
     })();
