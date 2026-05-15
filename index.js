@@ -913,6 +913,7 @@ async function init() {
     on(BUS_EVENTS.SYNC_TRIGGERED, ({ char, messages, gap, every, trailingBoundary, largeGap }) => {
         log('Sync', `══ SYNC TRIGGERED ══ gap=${gap}/${every} largeGap=${largeGap} char="${char?.name}"`);
         if (!largeGap) {
+            if (isSyncInProgress()) return;
             runCnzSync(char, messages).catch(err =>
                 error('Sync', 'runCnzSync uncaught error:', err),
             );

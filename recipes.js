@@ -187,9 +187,10 @@ export const Triggers = {
         source:     'st',
         watchEvent: event_types.MESSAGE_RECEIVED,
         condition:  (state, settings) => {
-            const { context, messages, pairCount, dnaChain, snoozeUntilCount } = state;
+            const { context, messages, pairCount, dnaChain, snoozeUntilCount, syncInProgress } = state;
             if (!context || context.groupId || context.characterId == null) return null;
             if (!settings.autoSync) return null;
+            if (syncInProgress) return null;
             const every = settings.chunkEveryN ?? 20;
             if (every <= 0 || pairCount <= 0) return null;
             if (pairCount <= snoozeUntilCount) return null;
