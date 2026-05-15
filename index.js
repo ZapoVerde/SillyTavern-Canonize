@@ -398,13 +398,36 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
     logSyncStart(hookPairs, lbPairsForLog, syncPairs, coverAll, settings.chunkEveryN ?? 20);
 
-    // Ensure lorebook is loaded before lanes start — auto-sync may run before openReviewModal.
+    // Always read lorebook fresh from disk so external edits (including deletions)
+    // are visible to this sync cycle.
+    const lbName = state._lorebookName || settings.lorebookName || char.name;
+    state._lorebookName = lbName;
+    const freshLorebook = await lbEnsureLorebook(lbName);
+
+    let externalDeletions = [];
     if (!state._draftLorebook) {
-        const lbName        = settings.lorebookName || char.name;
-        state._lorebookName = lbName;
-        state._lorebookData = await lbEnsureLorebook(state._lorebookName);
-        state._draftLorebook = structuredClone(state._lorebookData);
-        log('Lorebook', `Lorebook lazy-loaded: "${state._lorebookName}" (${Object.keys(state._lorebookData.entries ?? {}).length} entries)`);
+        // First sync this session: bootstrap from disk.
+        state._lorebookData  = freshLorebook;
+        state._draftLorebook = structuredClone(freshLorebook);
+        log('Lorebook', `Lorebook lazy-loaded: "${lbName}" (${Object.keys(freshLorebook.entries ?? {}).length} entries)`);
+    } else {
+        // Detect entries removed from disk externally since the last sync.
+        const knownEntries = state._lorebookData?.entries ?? {};
+        const freshEntries = freshLorebook.entries ?? {};
+        externalDeletions = Object.entries(knownEntries)
+            .filter(([uid]) => !(uid in freshEntries))
+            .map(([uid, entry]) => ({ uid: parseInt(uid, 10), name: entry.comment || String(uid) }));
+
+        if (externalDeletions.length > 0) {
+            log('Lorebook', `External deletions detected (${externalDeletions.length}): ${externalDeletions.map(e => `"${e.name}"`).join(', ')}`);
+            for (const { uid } of externalDeletions) {
+                delete state._draftLorebook.entries[String(uid)];
+            }
+        }
+
+        // Refresh _lorebookData to current disk state so the LLM gets accurate context
+        // and protected-block stitching pulls from the right source.
+        state._lorebookData = structuredClone(freshLorebook);
     }
     // Link lorebook to character if not already set.
     if (char?.data?.extensions?.world !== state._lorebookName) {
@@ -473,6 +496,20 @@ async function runCnzSync(char, messages, { coverAll = false } = {}) {
     })();
 
     const [lbOk, hooksOk, ragOk] = await Promise.all([lbPromise, hooksPromise, ragPromise]);
+
+    // Prepend deletion tombstones so they appear in the freeform and ingester
+    // the same way workshop-deleted entries do. Placed after Promise.all so the
+    // LLM lane can't overwrite them when it replaces _lorebookSuggestions.
+    if (externalDeletions.length > 0) {
+        const tombstones = externalDeletions.map(({ uid, name }) => ({
+            type:        'UPDATE',
+            name,
+            linkedUid:   uid,
+            status:      'deleted',
+            _aiSnapshot: { name, keys: [], content: '' },
+        }));
+        state._lorebookSuggestions = [...tombstones, ...state._lorebookSuggestions];
+    }
 
     // Commit the DNA anchor regardless of individual lane success.
     log('DnaChain', 'committing anchor');

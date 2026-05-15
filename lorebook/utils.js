@@ -294,7 +294,7 @@ export function enrichLbSuggestions(freshParsed) {
  *
  * Entries present in `after` but not in `before` → type NEW, status 'pending'.
  * Entries present in both but with changed content/keys → type UPDATE, status 'pending'.
- * Entries present in `before` but removed from `after` → skipped (deletions not surfaced).
+ * Entries present in `before` but removed from `after` → type UPDATE, status 'deleted'.
  *
  * All returned suggestions are marked status 'pending' so the user can review
  * them via Apply/Reject. The underlying lorebook data is already committed to
@@ -339,6 +339,19 @@ export function deriveSuggestionsFromAnchorDiff(before, after) {
                 });
             }
         }
+    }
+
+    // Entries present in before but absent from after — deleted (externally or via workshop).
+    for (const [uid, beforeEntry] of Object.entries(beforeEntries)) {
+        if (uid in afterEntries) continue;
+        const name = beforeEntry.comment || String(beforeEntry.uid ?? uid);
+        suggestions.push({
+            type:        'UPDATE',
+            name,
+            linkedUid:   parseInt(uid, 10),
+            status:      'deleted',
+            _aiSnapshot: { name, keys: [], content: '' },
+        });
     }
 
     return suggestions;
