@@ -132,10 +132,26 @@ async function reconcileWorldState(char, headAnchor) {
     const cnzRagPrefix   = `cnz_${cnzAvatarKey(char.avatar)}_rag_`;
     const allAttachments = extension_settings.character_attachments?.[char.avatar] ?? [];
     const cnzAttachments = allAttachments.filter(a => a.name?.startsWith(cnzRagPrefix));
-    const expectedRag    = headAnchor.ragUrl ? headAnchor.ragUrl.split('/').pop() : null;
-    const ragStale       = expectedRag
-        ? cnzAttachments.length !== 1 || cnzAttachments[0].name !== expectedRag
-        : cnzAttachments.length > 0;
+
+    let ragStale = false;
+    if (getSettings().useVectFox) {
+        // RAG file healing skipped — VectFox owns the vector index.
+        // Warn once if leftover Data Bank files are still registered as attachments.
+        if (cnzAttachments.length > 0) {
+            toastr.warning(
+                `CNZ: ${cnzAttachments.length} legacy RAG file(s) are still registered as character attachments. ` +
+                'VectFox is active so they are not used by Canonize, but they may be retrieved by ST\'s built-in vector engine. ' +
+                'Remove them via the ST Data Bank panel to avoid duplicate retrieval.',
+                '',
+                { timeOut: 10000, extendedTimeOut: 0, closeButton: true },
+            );
+        }
+    } else {
+        const expectedRag = headAnchor.ragUrl ? headAnchor.ragUrl.split('/').pop() : null;
+        ragStale = expectedRag
+            ? cnzAttachments.length !== 1 || cnzAttachments[0].name !== expectedRag
+            : cnzAttachments.length > 0;
+    }
 
     if (!lorebookStale && !ragStale) return;
 
@@ -258,11 +274,22 @@ export async function runHealer(char, _chatFileName) {
         await restoreLorebookToNode(char, nodeDummy, nodeFile);
         await restoreHooksToNode(char, nodeDummy, nodeFile);
 
-        try {
-            await restoreRagToNode(char, nodeFile);
-        } catch (err) {
-            error('Healer', 'RAG reconciliation failed:', err);
-            toastr.warning('CNZ: Branch healed but RAG reconciliation failed — vector index may be inconsistent.');
+        if (getSettings().useVectFox) {
+            // Purge stale timeline chunks. The next sync repopulates additively.
+            try {
+                const { purgeVectFoxCollection } = await import('../rag/vectfox-bridge.js');
+                await purgeVectFoxCollection(cnzAvatarKey(char.avatar));
+            } catch (err) {
+                error('Healer', 'VectFox purge after branch heal failed:', err);
+                toastr.warning('CNZ: Branch healed but VectFox index could not be purged — stale chunks may remain until next sync.');
+            }
+        } else {
+            try {
+                await restoreRagToNode(char, nodeFile);
+            } catch (err) {
+                error('Healer', 'RAG reconciliation failed:', err);
+                toastr.warning('CNZ: Branch healed but RAG reconciliation failed — vector index may be inconsistent.');
+            }
         }
 
         state._dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
@@ -402,27 +429,37 @@ export async function purgeAndRebuild() {
             return;
         }
 
-        // ── 5. Upload, register, patch LKG anchor, save ───────────────────────────
-        const charName    = char.name ?? '';
-        const ragText     = buildRagDocument(combinedChunks, ragSettings, charName);
-        const anchorHash  = chain.lkg.uuid?.slice(0, 8) ?? '';
-        const ragFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name, anchorHash);
-        const ragUrl      = await uploadRagFile(ragText, ragFileName);
-        const byteSize    = new TextEncoder().encode(ragText).length;
-        registerCharacterAttachment(char.avatar, ragUrl, ragFileName, byteSize);
+        // ── 5. Upload/push chunks to retrieval backend ────────────────────────────
+        if (getSettings().useVectFox) {
+            // Full rebuild: purge stale index then re-insert the complete history.
+            const { purgeVectFoxCollection, pushChunksToVectFox } = await import('../rag/vectfox-bridge.js');
+            await purgeVectFoxCollection(cnzAvatarKey(char.avatar));
+            await pushChunksToVectFox(combinedChunks, cnzAvatarKey(char.avatar));
+        } else {
+            const charName    = char.name ?? '';
+            const ragText     = buildRagDocument(combinedChunks, ragSettings, charName);
+            const anchorHash  = chain.lkg.uuid?.slice(0, 8) ?? '';
+            const ragFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name, anchorHash);
+            const ragUrl      = await uploadRagFile(ragText, ragFileName);
+            const byteSize    = new TextEncoder().encode(ragText).length;
+            registerCharacterAttachment(char.avatar, ragUrl, ragFileName, byteSize);
 
-        for (const { msgIdx } of chain.anchors) {
-            const msg = messages[msgIdx];
-            if (msg?.extra?.cnz) {
-                msg.extra.cnz = Object.assign({}, msg.extra.cnz, { ragUrl });
+            for (const { msgIdx } of chain.anchors) {
+                const msg = messages[msgIdx];
+                if (msg?.extra?.cnz) {
+                    msg.extra.cnz = Object.assign({}, msg.extra.cnz, { ragUrl });
+                }
             }
         }
+
         await ctx.saveChat();
 
-        // ── 6. Re-vectorize ───────────────────────────────────────────────────────
-        const { executeSlashCommandsWithOptions } = ctx;
-        await executeSlashCommandsWithOptions('/db-purge');
-        await executeSlashCommandsWithOptions('/db-ingest');
+        // ── 6. Re-vectorize (Data Bank mode only) ─────────────────────────────────
+        if (!getSettings().useVectFox) {
+            const { executeSlashCommandsWithOptions } = ctx;
+            await executeSlashCommandsWithOptions('/db-purge');
+            await executeSlashCommandsWithOptions('/db-ingest');
+        }
 
         toastr.success(`CNZ: Rebuild complete — ${combinedChunks.length} chunks re-indexed.`);
     } catch (err) {

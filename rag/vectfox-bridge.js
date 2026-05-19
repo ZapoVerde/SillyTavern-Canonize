@@ -9,12 +9,13 @@
  * Dynamically imports VectFox APIs so this file is safe to load even when
  * VectFox is not installed — the error surfaces only when the bridge is called.
  *
- * Collection lifecycle: purge then re-insert on every sync. Canonize rebuilds
- * chunks from scratch each cycle, so incremental updates would require
- * hash-diffing with no meaningful gain.
+ * Collection lifecycle: additive insert on every regular sync — getSavedHashes
+ * filters out already-indexed chunks so stable committed history is never
+ * re-embedded. Explicit purge is exposed via purgeVectFoxCollection for
+ * anchor-move scenarios (branch detection, Purge & Rebuild).
  *
  * @api-declaration
- * pushChunksToVectFox, checkVectFoxAvailable
+ * pushChunksToVectFox, purgeVectFoxCollection, checkVectFoxAvailable
  *
  * @contract
  *   assertions:
@@ -25,7 +26,6 @@
 
 import { getStringHash } from '../../../../../script.js';
 import { extension_settings } from '../../../../extensions.js';
-import { error, warn } from '../log.js';
 
 const VECTFOX_BASE = '../../VectFox/core';
 
@@ -70,11 +70,32 @@ export async function checkVectFoxAvailable() {
 }
 
 /**
- * Purges the Canonize collection from VectFox and re-inserts all completed
- * chunks from the current sync cycle. Only chunks with status 'complete' or
- * 'manual' are inserted; pending/error chunks are skipped.
+ * Wipes the entire Canonize collection from VectFox. Called before a full
+ * rebuild (Purge & Rebuild) or when the anchor moves (branch detection).
  *
- * @param {Array}  ragChunks  state._ragChunks after classifier has settled.
+ * @param {string} avatarKey  Sanitized avatar key (from cnzAvatarKey).
+ * @returns {Promise<void>}
+ */
+export async function purgeVectFoxCollection(avatarKey) {
+    const vf = await loadVectFoxApi();
+    const vfSettings = extension_settings.vectfox;
+
+    if (!vfSettings) {
+        throw new Error('VectFox settings not found. Ensure VectFox is installed and has been opened at least once.');
+    }
+
+    await vf.purgeVectorIndex(getCollectionId(avatarKey), vfSettings);
+}
+
+/**
+ * Additively inserts completed chunks into the VectFox collection, skipping
+ * any whose hash already exists. Safe to call every sync because content
+ * behind the anchor is immutable — hashes are stable.
+ *
+ * Only chunks with status 'complete' or 'manual' are eligible; pending/error
+ * chunks are skipped.
+ *
+ * @param {Array}  ragChunks  Chunks to consider for insertion.
  * @param {string} avatarKey  Sanitized avatar key (from cnzAvatarKey).
  * @returns {Promise<void>}
  */
@@ -88,24 +109,26 @@ export async function pushChunksToVectFox(ragChunks, avatarKey) {
 
     const collectionId = getCollectionId(avatarKey);
 
-    // Clear stale chunks from previous sync.
-    await vf.purgeVectorIndex(collectionId, vfSettings);
+    // Fetch existing hashes so we skip already-indexed chunks.
+    let existingHashes;
+    try {
+        existingHashes = new Set(await vf.getSavedHashes(collectionId, vfSettings));
+    } catch (_) {
+        existingHashes = new Set(); // collection doesn't exist yet — all items are new
+    }
 
     const items = ragChunks
         .filter(c => c.status === 'complete' || c.status === 'manual')
-        .map(c => ({
-            hash: getStringHash(c.content),
-            text: c.content,
-        }));
+        .map(c => ({ hash: getStringHash(c.content), text: c.content }))
+        .filter(item => !existingHashes.has(item.hash));
+
+    // Always register/enable even if nothing new to insert (ensures first-sync visibility).
+    vf.registerCollection(collectionId);
+    vf.setCollectionEnabled(collectionId, true);
 
     if (items.length === 0) {
-        warn('VectFoxBridge', 'No completed chunks to insert — collection cleared but not repopulated.');
         return;
     }
 
     await vf.insertVectorItems(collectionId, items, vfSettings);
-
-    // Register with VectFox's collection registry so it appears in queries.
-    vf.registerCollection(collectionId);
-    vf.setCollectionEnabled(collectionId, true);
 }
