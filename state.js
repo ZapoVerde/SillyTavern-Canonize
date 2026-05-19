@@ -61,6 +61,7 @@ export const PROFILE_DEFAULTS = Object.freeze({
     autoAdvanceMask:          false,
     // RAG
     enableRag:                false,
+    useVectFox:               false,
     ragSeparator:             'Chunk {{chunk_number}} ({{turn_range}})',
     ragContents:              'summary+full',
     ragSummarySource:         'defined',

@@ -32,6 +32,7 @@ import { buildProsePairs, formatPairsAsTranscript } from '../core/transcript.js'
 import { getSettings } from '../core/settings.js';
 import { interpolate } from '../defaults.js';
 import { uploadRagFile, registerCharacterAttachment, cnzAvatarKey, cnzFileName } from './api.js';
+import { pushChunksToVectFox } from './vectfox-bridge.js';
 import { warn, error } from '../log.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -388,9 +389,15 @@ export async function runRagPipeline(anchorUuid = null) {
     }, ragSettings);
     await waitForRagChunks(120_000);
 
+    const settings2 = getSettings();
+    if (settings2.useVectFox) {
+        await pushChunksToVectFox(state._ragChunks, cnzAvatarKey(char.avatar));
+        return;
+    }
+
     const ctx2      = SillyTavern.getContext();
     const charName2 = ctx2?.characters?.[ctx2?.characterId]?.name ?? '';
-    const ragText   = buildRagDocument(state._ragChunks, getSettings(), charName2);
+    const ragText   = buildRagDocument(state._ragChunks, settings2, charName2);
     if (!ragText.trim()) return;
 
     const charName    = char.name;
