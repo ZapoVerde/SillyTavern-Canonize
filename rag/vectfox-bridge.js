@@ -24,7 +24,7 @@
  *     external_io: [VectFox extension APIs]
  */
 
-import { getStringHash } from '../../../../../script.js';
+import { getStringHash } from '../../../../utils.js';
 import { extension_settings } from '../../../../extensions.js';
 
 const VECTFOX_BASE = '../../VectFox/core';
