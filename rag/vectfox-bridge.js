@@ -15,7 +15,8 @@
  * anchor-move scenarios (branch detection, Purge & Rebuild).
  *
  * @api-declaration
- * pushChunksToVectFox, purgeVectFoxCollection, checkVectFoxAvailable, isVectFoxCollectionEmpty
+ * pushChunksToVectFox, purgeVectFoxCollection, checkVectFoxAvailable, isVectFoxCollectionEmpty,
+ * isLorebookVectorized, revectorizeLorebookForChar
  *
  * @contract
  *   assertions:
@@ -45,14 +46,35 @@ function getCollectionId(avatarKey) {
  */
 async function loadVectFoxApi() {
     try {
-        const [coreApi, collectionLoader] = await Promise.all([
+        const [coreApi, collectionLoader, collectionMeta, collectionIds] = await Promise.all([
             import(`${VECTFOX_BASE}/core-vector-api.js`),
             import(`${VECTFOX_BASE}/collection-loader.js`),
+            import(`${VECTFOX_BASE}/collection-metadata.js`),
+            import(`${VECTFOX_BASE}/collection-ids.js`),
         ]);
-        return { ...coreApi, ...collectionLoader };
+        return { ...coreApi, ...collectionLoader, ...collectionMeta, ...collectionIds };
     } catch (e) {
         throw new Error('VectFox extension not found. Install VectFox alongside Canonize, or disable "Use VectFox for retrieval" in RAG settings.');
     }
+}
+
+/**
+ * Scans the live VectFox registry for lorebook collections whose sourceName
+ * matches lorebookName. Returns all matches — there may be several if the
+ * lorebook has been vectorized more than once.
+ * @param {object} vf            Loaded VectFox API object.
+ * @param {string} lorebookName  Lorebook name as stored in collection metadata.
+ * @returns {{ collectionId: string, registryKey: string }[]}
+ */
+function findLorebookCollections(vf, lorebookName) {
+    const results = [];
+    for (const registryKey of vf.getCollectionRegistry()) {
+        const { collectionId } = vf.parseRegistryKey(registryKey);
+        if (!collectionId.startsWith('vf_lorebook_')) continue;
+        if (vf.getCollectionMeta(collectionId)?.sourceName === lorebookName)
+            results.push({ collectionId, registryKey });
+    }
+    return results;
 }
 
 /**
@@ -85,6 +107,49 @@ export async function isVectFoxCollectionEmpty(avatarKey) {
     } catch (_) {
         return true; // collection missing or VectFox unavailable
     }
+}
+
+/**
+ * Returns true if at least one VectFox lorebook collection exists for lorebookName.
+ * Used by the healer to decide whether to trigger vectorization on chat load.
+ * @param {string} lorebookName
+ * @returns {Promise<boolean>}
+ */
+export async function isLorebookVectorized(lorebookName) {
+    try {
+        const vf = await loadVectFoxApi();
+        if (!extension_settings.vectfox) return false;
+        return findLorebookCollections(vf, lorebookName).length > 0;
+    } catch (_) {
+        return false;
+    }
+}
+
+/**
+ * Purges all stale VectFox lorebook collections for the character's lorebook,
+ * then re-vectorizes from the current lorebook on disk. Called fire-and-forget
+ * after a CNZ lorebook commit, and on chat load when no collection exists.
+ * @param {object} char  Current character object from context.
+ * @returns {Promise<void>}
+ */
+export async function revectorizeLorebookForChar(char) {
+    const lorebookName = char?.data?.extensions?.world || char?.name;
+    if (!lorebookName) throw new Error('Character has no lorebook name');
+
+    const vf = await loadVectFoxApi();
+    const vfSettings = extension_settings.vectfox;
+    if (!vfSettings) throw new Error('VectFox settings not found. Ensure VectFox is installed and has been opened at least once.');
+
+    for (const { collectionId, registryKey } of findLorebookCollections(vf, lorebookName)) {
+        await vf.deleteCollection(collectionId, vfSettings, registryKey);
+    }
+
+    const { vectorizeContent } = await import(`${VECTFOX_BASE}/content-vectorization.js`);
+    await vectorizeContent({
+        contentType: 'lorebook',
+        source: { type: 'select', id: lorebookName },
+        settings: vfSettings,
+    });
 }
 
 /**

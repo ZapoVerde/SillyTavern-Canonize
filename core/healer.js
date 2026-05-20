@@ -153,17 +153,22 @@ async function reconcileWorldState(char, headAnchor) {
             : cnzAttachments.length > 0;
     }
 
-    // ── Check VectFox collection ──────────────────────────────────────────────
+    // ── Check VectFox collections ─────────────────────────────────────────────
     let vectfoxEmpty = false;
+    let lorebookNeedsVectorize = false;
     if (getSettings().useVectFox) {
         try {
-            const { isVectFoxCollectionEmpty } = await import('../rag/vectfox-bridge.js');
-            vectfoxEmpty = await isVectFoxCollectionEmpty(cnzAvatarKey(char.avatar));
+            const { isVectFoxCollectionEmpty, isLorebookVectorized } = await import('../rag/vectfox-bridge.js');
+            [vectfoxEmpty, lorebookNeedsVectorize] = await Promise.all([
+                isVectFoxCollectionEmpty(cnzAvatarKey(char.avatar)),
+                lorebookName ? isLorebookVectorized(lorebookName).then(v => !v) : Promise.resolve(false),
+            ]);
             if (vectfoxEmpty) console.log('[CNZ Healer] VectFox collection empty — queuing fast-path push');
+            if (lorebookNeedsVectorize) console.log('[CNZ Healer] No VectFox lorebook collection — vectorizing on load');
         } catch (_) { /* VectFox unavailable */ }
     }
 
-    if (!lorebookStale && !ragStale && !vectfoxEmpty) return;
+    if (!lorebookStale && !ragStale && !vectfoxEmpty && !lorebookNeedsVectorize) return;
 
     // ── Restore from head anchor ──────────────────────────────────────────────
     try {
@@ -212,10 +217,17 @@ async function reconcileWorldState(char, headAnchor) {
                 console.log('[CNZ Healer] VectFox empty but no chunk stamps in chat — skipping push');
             }
         }
+        if (lorebookNeedsVectorize) {
+            import('../rag/vectfox-bridge.js')
+                .then(({ revectorizeLorebookForChar }) => revectorizeLorebookForChar(char))
+                .catch(err => console.warn('[CNZ Healer] Lorebook vectorize failed:', err));
+        }
         if (lorebookStale || ragStale) {
             toastr.info('CNZ: World state corrected to match current chat.');
-        } else if (vectfoxEmpty) {
+        } else if (vectfoxEmpty && !lorebookNeedsVectorize) {
             toastr.info('CNZ: VectFox collection rebuilt from chat history.');
+        } else if (lorebookNeedsVectorize) {
+            toastr.info('CNZ: No VectFox lorebook vectors found — vectorizing in background.');
         }
     } catch (err) {
         error('Healer', 'reconcileWorldState failed:', err);
