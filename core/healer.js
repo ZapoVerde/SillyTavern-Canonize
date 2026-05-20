@@ -168,6 +168,11 @@ async function reconcileWorldState(char, headAnchor) {
         if (lorebookStale) {
             await restoreLorebookToNode(char, nodeDummy, nodeFile);
             restoreHooksToNode(char, nodeDummy, nodeFile);
+            if (getSettings().useVectFox) {
+                import('../rag/vectfox-bridge.js')
+                    .then(({ revectorizeLorebookForChar }) => revectorizeLorebookForChar(char))
+                    .catch(err => error('Healer', 'VectFox lorebook re-vectorize failed after stale heal:', err));
+            }
         }
         if (ragStale) {
             try {
@@ -290,6 +295,10 @@ export async function runHealer(char, _chatFileName) {
                 error('Healer', 'VectFox purge after branch heal failed:', err);
                 toastr.warning('CNZ: Branch healed but VectFox index could not be purged — stale chunks may remain until next sync.');
             }
+            // Re-vectorize the rolled-back lorebook so VectFox reflects the restored version.
+            import('../rag/vectfox-bridge.js')
+                .then(({ revectorizeLorebookForChar }) => revectorizeLorebookForChar(char))
+                .catch(err => error('Healer', 'VectFox lorebook re-vectorize failed after branch heal:', err));
         } else {
             try {
                 await restoreRagToNode(char, nodeFile);
