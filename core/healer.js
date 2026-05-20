@@ -153,7 +153,17 @@ async function reconcileWorldState(char, headAnchor) {
             : cnzAttachments.length > 0;
     }
 
-    if (!lorebookStale && !ragStale) return;
+    // ── Check VectFox collection ──────────────────────────────────────────────
+    let vectfoxEmpty = false;
+    if (getSettings().useVectFox) {
+        try {
+            const { isVectFoxCollectionEmpty } = await import('../rag/vectfox-bridge.js');
+            vectfoxEmpty = await isVectFoxCollectionEmpty(cnzAvatarKey(char.avatar));
+            if (vectfoxEmpty) console.log('[CNZ Healer] VectFox collection empty — queuing fast-path push');
+        } catch (_) { /* VectFox unavailable */ }
+    }
+
+    if (!lorebookStale && !ragStale && !vectfoxEmpty) return;
 
     // ── Restore from head anchor ──────────────────────────────────────────────
     try {
@@ -173,7 +183,40 @@ async function reconcileWorldState(char, headAnchor) {
                 return;
             }
         }
-        toastr.info('CNZ: World state corrected to match current chat.');
+        if (vectfoxEmpty) {
+            // Fast path: reconstruct chunks from cnz_chunk_header stamps already in the chat
+            // and push them into the empty VectFox collection. No AI reclassification needed.
+            const messages = SillyTavern.getContext().chat ?? [];
+            const allPairs = buildProsePairs(messages);
+            const combinedChunks = [];
+            let prevPairEnd = 0;
+            for (let i = 0; i < allPairs.length; i++) {
+                const pair    = allPairs[i];
+                const lastMsg = pair?.messages?.[pair.messages.length - 1];
+                if (!lastMsg?.extra?.cnz_chunk_header) continue;
+                const pairStart = prevPairEnd;
+                const pairEnd   = i + 1;
+                combinedChunks.push({
+                    chunkIndex: combinedChunks.length,
+                    header:     lastMsg.extra.cnz_chunk_header,
+                    turnRange:  lastMsg.extra.cnz_turn_label?.replace(/^\*+\s*Memory:\s*/i, '') ?? `Pairs ${pairStart + 1}–${pairEnd}`,
+                    content:    formatPairsAsTranscript(allPairs.slice(pairStart, pairEnd)),
+                    status:     'complete',
+                });
+                prevPairEnd = pairEnd;
+            }
+            if (combinedChunks.length > 0) {
+                const { pushChunksToVectFox } = await import('../rag/vectfox-bridge.js');
+                await pushChunksToVectFox(combinedChunks, cnzAvatarKey(char.avatar));
+            } else {
+                console.log('[CNZ Healer] VectFox empty but no chunk stamps in chat — skipping push');
+            }
+        }
+        if (lorebookStale || ragStale) {
+            toastr.info('CNZ: World state corrected to match current chat.');
+        } else if (vectfoxEmpty) {
+            toastr.info('CNZ: VectFox collection rebuilt from chat history.');
+        }
     } catch (err) {
         error('Healer', 'reconcileWorldState failed:', err);
         toastr.warning('CNZ: World state may not match current chat — use Purge & Rebuild if needed.');

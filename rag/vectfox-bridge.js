@@ -15,7 +15,7 @@
  * anchor-move scenarios (branch detection, Purge & Rebuild).
  *
  * @api-declaration
- * pushChunksToVectFox, purgeVectFoxCollection, checkVectFoxAvailable
+ * pushChunksToVectFox, purgeVectFoxCollection, checkVectFoxAvailable, isVectFoxCollectionEmpty
  *
  * @contract
  *   assertions:
@@ -66,6 +66,24 @@ export async function checkVectFoxAvailable() {
         return true;
     } catch (_) {
         return false;
+    }
+}
+
+/**
+ * Returns true if the Canonize VectFox collection for avatarKey is empty or does not exist.
+ * Used by the healer to detect a missing collection on chat load and trigger a fast-path push.
+ * @param {string} avatarKey  Sanitized avatar key (from cnzAvatarKey).
+ * @returns {Promise<boolean>}
+ */
+export async function isVectFoxCollectionEmpty(avatarKey) {
+    try {
+        const vf = await loadVectFoxApi();
+        const vfSettings = extension_settings.vectfox;
+        if (!vfSettings) return true;
+        const hashes = await vf.getSavedHashes(getCollectionId(avatarKey), vfSettings);
+        return !hashes || hashes.length === 0;
+    } catch (_) {
+        return true; // collection missing or VectFox unavailable
     }
 }
 
