@@ -159,9 +159,12 @@ async function reconcileWorldState(char, headAnchor) {
     if (getSettings().useVectFox) {
         try {
             const { isVectFoxCollectionEmpty, isLorebookVectorized } = await import('../rag/vectfox-bridge.js');
+            // Only auto-vectorize if the character has an explicitly assigned lorebook.
+            // Falling back to char.name risks trying to vectorize a non-existent lorebook.
+            const explicitLorebook = char?.data?.extensions?.world || null;
             [vectfoxEmpty, lorebookNeedsVectorize] = await Promise.all([
                 isVectFoxCollectionEmpty(cnzAvatarKey(char.avatar)),
-                lorebookName ? isLorebookVectorized(lorebookName).then(v => !v) : Promise.resolve(false),
+                explicitLorebook ? isLorebookVectorized(explicitLorebook).then(v => !v) : Promise.resolve(false),
             ]);
             if (vectfoxEmpty) console.log('[CNZ Healer] VectFox collection empty — queuing fast-path push');
             if (lorebookNeedsVectorize) console.log('[CNZ Healer] No VectFox lorebook collection — vectorizing on load');

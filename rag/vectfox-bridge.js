@@ -133,8 +133,8 @@ export async function isLorebookVectorized(lorebookName) {
  * @returns {Promise<void>}
  */
 export async function revectorizeLorebookForChar(char) {
-    const lorebookName = char?.data?.extensions?.world || char?.name;
-    if (!lorebookName) throw new Error('Character has no lorebook name');
+    const lorebookName = char?.data?.extensions?.world || null;
+    if (!lorebookName) throw new Error('Character has no explicitly assigned lorebook');
 
     const vf = await loadVectFoxApi();
     const vfSettings = extension_settings.vectfox;
