@@ -134,17 +134,22 @@ async function reconcileWorldState(char, headAnchor) {
     const cnzAttachments = allAttachments.filter(a => a.name?.startsWith(cnzRagPrefix));
 
     let ragStale = false;
+    let legacyRagCleared = false;
     if (getSettings().useVectFox) {
-        // RAG file healing skipped — VectFox owns the vector index.
-        // Warn once if leftover Data Bank files are still registered as attachments.
+        // VectFox owns the vector index. Silently remove any leftover Data Bank
+        // attachments — they would pollute ST's built-in retrieval pipeline.
         if (cnzAttachments.length > 0) {
-            toastr.warning(
-                `CNZ: ${cnzAttachments.length} legacy RAG file(s) are still registered as character attachments. ` +
-                'VectFox is active so they are not used by Canonize, but they may be retrieved by ST\'s built-in vector engine. ' +
-                'Remove them via the ST Data Bank panel to avoid duplicate retrieval.',
-                '',
-                { timeOut: 10000, extendedTimeOut: 0, closeButton: true },
-            );
+            try {
+                for (const attachment of cnzAttachments) {
+                    await cnzDeleteFile(attachment.url);
+                }
+                extension_settings.character_attachments[char.avatar] =
+                    allAttachments.filter(a => !cnzAttachments.includes(a));
+                saveSettingsDebounced();
+                legacyRagCleared = true;
+            } catch (err) {
+                error('Healer', 'Legacy RAG attachment cleanup failed:', err);
+            }
         }
     } else {
         const expectedRag = headAnchor.ragUrl ? headAnchor.ragUrl.split('/').pop() : null;
@@ -153,25 +158,7 @@ async function reconcileWorldState(char, headAnchor) {
             : cnzAttachments.length > 0;
     }
 
-    // ── Check VectFox collections ─────────────────────────────────────────────
-    let vectfoxEmpty = false;
-    let lorebookNeedsVectorize = false;
-    if (getSettings().useVectFox) {
-        try {
-            const { isVectFoxCollectionEmpty, isLorebookVectorized } = await import('../rag/vectfox-bridge.js');
-            // Only auto-vectorize if the character has an explicitly assigned lorebook.
-            // Falling back to char.name risks trying to vectorize a non-existent lorebook.
-            const explicitLorebook = char?.data?.extensions?.world || null;
-            [vectfoxEmpty, lorebookNeedsVectorize] = await Promise.all([
-                isVectFoxCollectionEmpty(cnzAvatarKey(char.avatar)),
-                explicitLorebook ? isLorebookVectorized(explicitLorebook).then(v => !v) : Promise.resolve(false),
-            ]);
-            if (vectfoxEmpty) console.log('[CNZ Healer] VectFox collection empty — queuing fast-path push');
-            if (lorebookNeedsVectorize) console.log('[CNZ Healer] No VectFox lorebook collection — vectorizing on load');
-        } catch (_) { /* VectFox unavailable */ }
-    }
-
-    if (!lorebookStale && !ragStale && !vectfoxEmpty && !lorebookNeedsVectorize) return;
+    if (!lorebookStale && !ragStale && !legacyRagCleared) return;
 
     // ── Restore from head anchor ──────────────────────────────────────────────
     try {
@@ -191,46 +178,8 @@ async function reconcileWorldState(char, headAnchor) {
                 return;
             }
         }
-        if (vectfoxEmpty) {
-            // Fast path: reconstruct chunks from cnz_chunk_header stamps already in the chat
-            // and push them into the empty VectFox collection. No AI reclassification needed.
-            const messages = SillyTavern.getContext().chat ?? [];
-            const allPairs = buildProsePairs(messages);
-            const combinedChunks = [];
-            let prevPairEnd = 0;
-            for (let i = 0; i < allPairs.length; i++) {
-                const pair    = allPairs[i];
-                const lastMsg = pair?.messages?.[pair.messages.length - 1];
-                if (!lastMsg?.extra?.cnz_chunk_header) continue;
-                const pairStart = prevPairEnd;
-                const pairEnd   = i + 1;
-                combinedChunks.push({
-                    chunkIndex: combinedChunks.length,
-                    header:     lastMsg.extra.cnz_chunk_header,
-                    turnRange:  lastMsg.extra.cnz_turn_label?.replace(/^\*+\s*Memory:\s*/i, '') ?? `Pairs ${pairStart + 1}–${pairEnd}`,
-                    content:    formatPairsAsTranscript(allPairs.slice(pairStart, pairEnd)),
-                    status:     'complete',
-                });
-                prevPairEnd = pairEnd;
-            }
-            if (combinedChunks.length > 0) {
-                const { pushChunksToVectFox } = await import('../rag/vectfox-bridge.js');
-                await pushChunksToVectFox(combinedChunks, cnzAvatarKey(char.avatar));
-            } else {
-                console.log('[CNZ Healer] VectFox empty but no chunk stamps in chat — skipping push');
-            }
-        }
-        if (lorebookNeedsVectorize) {
-            import('../rag/vectfox-bridge.js')
-                .then(({ revectorizeLorebookForChar }) => revectorizeLorebookForChar(char))
-                .catch(err => console.warn('[CNZ Healer] Lorebook vectorize failed:', err));
-        }
-        if (lorebookStale || ragStale) {
+        if (lorebookStale || ragStale || legacyRagCleared) {
             toastr.info('CNZ: World state corrected to match current chat.');
-        } else if (vectfoxEmpty && !lorebookNeedsVectorize) {
-            toastr.info('CNZ: VectFox collection rebuilt from chat history.');
-        } else if (lorebookNeedsVectorize) {
-            toastr.info('CNZ: No VectFox lorebook vectors found — vectorizing in background.');
         }
     } catch (err) {
         error('Healer', 'reconcileWorldState failed:', err);
@@ -489,10 +438,14 @@ export async function purgeAndRebuild() {
 
         // ── 5. Upload/push chunks to retrieval backend ────────────────────────────
         if (getSettings().useVectFox) {
-            // Full rebuild: purge stale index then re-insert the complete history.
-            const { purgeVectFoxCollection, pushChunksToVectFox } = await import('../rag/vectfox-bridge.js');
+            // Full rebuild: purge stale index then re-slice the full history into scenes.
+            const { purgeVectFoxCollection, pushScenesToVectFox } = await import('../rag/vectfox-bridge.js');
+            const { buildSceneSlices } = await import('./scene-tracker.js');
             await purgeVectFoxCollection(cnzAvatarKey(char.avatar));
-            await pushChunksToVectFox(combinedChunks, cnzAvatarKey(char.avatar));
+            const allPairs  = buildProsePairs(messages);
+            const maxPairs  = getSettings().vectfoxMaxPairsPerChunk ?? 15;
+            const scenes    = buildSceneSlices(allPairs, maxPairs);
+            if (scenes.length > 0) await pushScenesToVectFox(scenes, cnzAvatarKey(char.avatar));
         } else {
             const charName    = char.name ?? '';
             const ragText     = buildRagDocument(combinedChunks, ragSettings, charName);

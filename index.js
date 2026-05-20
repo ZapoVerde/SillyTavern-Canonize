@@ -97,6 +97,7 @@ import './executor.js';   // self-registers its CONTRACT_DISPATCHED handler on i
 import './logger.js';    // console observer for LLM call lifecycle
 import { state } from './state.js';
 import { getSettings, initSettings } from './core/settings.js';
+import { initSceneTracker } from './core/scene-tracker.js';
 import { buildTranscript, buildProsePairs } from './core/transcript.js';
 import { runLorebookSyncCall, runHookseekerCall } from './core/llm-calls.js';
 import { readDnaChain, getLkgAnchor, buildAnchorPayload,
@@ -830,6 +831,8 @@ async function init() {
     try {
     initSettings();
     log('Init', 'Settings initialized.');
+    initSceneTracker();
+    log('Init', 'Scene tracker initialized.');
     initScheduler(Triggers, getSettings);
     log('Init', 'Scheduler initialized.');
     injectModal();

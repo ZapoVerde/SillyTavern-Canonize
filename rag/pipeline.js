@@ -32,7 +32,8 @@ import { buildProsePairs, formatPairsAsTranscript } from '../core/transcript.js'
 import { getSettings } from '../core/settings.js';
 import { interpolate } from '../defaults.js';
 import { uploadRagFile, registerCharacterAttachment, cnzAvatarKey, cnzFileName } from './api.js';
-import { pushChunksToVectFox } from './vectfox-bridge.js';
+import { pushScenesToVectFox } from './vectfox-bridge.js';
+import { buildSceneSlices } from '../core/scene-tracker.js';
 import { warn, error } from '../log.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -373,9 +374,26 @@ export async function runRagPipeline(anchorUuid = null) {
         state._stagedPairOffset   = foundIdx === -1 ? 0 : foundIdx;
     }
 
-    state._splitPairIdx           = state._stagedProsePairs.length;
-    const ragSettings = getSettings();
-    state._ragChunks              = buildRagChunks(state._stagedProsePairs, state._stagedPairOffset, ragSettings);
+    state._splitPairIdx = state._stagedProsePairs.length;
+    const ragSettings   = getSettings();
+
+    // VectFox path: skip classifier entirely — slice raw transcript by scene
+    // boundaries (Vistalyze stamps) or max-pairs cap, then push directly.
+    if (ragSettings.useVectFox) {
+        const maxPairs = ragSettings.vectfoxMaxPairsPerChunk ?? 15;
+        const scenes   = buildSceneSlices(state._stagedProsePairs, maxPairs);
+        if (scenes.length > 0) {
+            try {
+                await pushScenesToVectFox(scenes, cnzAvatarKey(char.avatar));
+            } catch (err) {
+                error('Pipeline', 'VectFox scene push failed:', err);
+                toastr.warning('CNZ: VectFox sync failed — scenes not indexed.');
+            }
+        }
+        return;
+    }
+
+    state._ragChunks = buildRagChunks(state._stagedProsePairs, state._stagedPairOffset, ragSettings);
 
     hydrateChunkHeadersFromChat();
     setCurrentSettings(ragSettings);
@@ -390,10 +408,6 @@ export async function runRagPipeline(anchorUuid = null) {
     await waitForRagChunks(120_000);
 
     const settings2 = getSettings();
-    if (settings2.useVectFox) {
-        await pushChunksToVectFox(state._ragChunks, cnzAvatarKey(char.avatar));
-        return;
-    }
 
     const ctx2      = SillyTavern.getContext();
     const charName2 = ctx2?.characters?.[ctx2?.characterId]?.name ?? '';
