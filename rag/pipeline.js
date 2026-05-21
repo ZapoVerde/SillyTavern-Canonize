@@ -28,12 +28,11 @@
 import { state } from '../state.js';
 import { on, off, BUS_EVENTS } from '../bus.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
-import { buildProsePairs, formatPairsAsTranscript } from '../core/transcript.js';
+import { buildProsePairs, formatPairsAsTranscript, buildSceneSlices } from '../core/transcript.js';
 import { getSettings } from '../core/settings.js';
 import { interpolate } from '../defaults.js';
 import { uploadRagFile, registerCharacterAttachment, cnzAvatarKey, cnzFileName } from './api.js';
 import { pushScenesToVectFox } from './vectfox-bridge.js';
-import { buildSceneSlices } from '../core/scene-tracker.js';
 import { warn, error } from '../log.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────

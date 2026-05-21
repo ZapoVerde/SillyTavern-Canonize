@@ -143,7 +143,7 @@ export async function purgeVectFoxCollection(avatarKey) {
  * Additively inserts scene-sliced transcript text into the VectFox collection,
  * skipping any scenes whose hash already exists. Each scene is one vector item.
  *
- * Scenes are produced by buildSceneSlices in scene-tracker.js: they are either
+ * Scenes are produced by buildSceneSlices in transcript.js: they are either
  * bounded by Vistalyze location-change events or by the vectfoxMaxPairsPerChunk
  * cap, whichever comes first. Scene boundary pairs appear in both the closing
  * and opening slice for better retrieval across transitions.

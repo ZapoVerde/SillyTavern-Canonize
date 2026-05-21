@@ -175,7 +175,7 @@ async function reconcileWorldState(char, headAnchor) {
                         const restoreScope = await scopeVectFoxToChar(cnzAvatarKey(char.avatar), lorebookName);
                         try {
                             await revectorizeLorebookForChar(char);
-                            const { buildSceneSlices } = await import('./scene-tracker.js');
+                            const { buildSceneSlices } = await import('./transcript.js');
                             const msgs    = SillyTavern.getContext().chat ?? [];
                             const pairs   = buildProsePairs(msgs);
                             const maxPairs = getSettings().vectfoxMaxPairsPerChunk ?? 15;
@@ -304,7 +304,7 @@ export async function runHealer(char, _chatFileName) {
             const lorebookName = char?.data?.extensions?.world || null;
             try {
                 const { purgeVectFoxCollection, pushScenesToVectFox, revectorizeLorebookForChar, scopeVectFoxToChar } = await import('../rag/vectfox-bridge.js');
-                const { buildSceneSlices } = await import('./scene-tracker.js');
+                const { buildSceneSlices } = await import('./transcript.js');
                 const restoreScope = await scopeVectFoxToChar(cnzAvatarKey(char.avatar), lorebookName);
                 try {
                     await purgeVectFoxCollection(cnzAvatarKey(char.avatar));
@@ -471,7 +471,7 @@ export async function purgeAndRebuild() {
             // Full rebuild: purge stale index then re-slice the full history into scenes.
             const lorebookName = char?.data?.extensions?.world || null;
             const { purgeVectFoxCollection, pushScenesToVectFox, scopeVectFoxToChar } = await import('../rag/vectfox-bridge.js');
-            const { buildSceneSlices } = await import('./scene-tracker.js');
+            const { buildSceneSlices } = await import('./transcript.js');
             const restoreScope = await scopeVectFoxToChar(cnzAvatarKey(char.avatar), lorebookName);
             try {
                 await purgeVectFoxCollection(cnzAvatarKey(char.avatar));
