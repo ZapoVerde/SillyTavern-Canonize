@@ -2,7 +2,7 @@
  * @file data/default-user/extensions/canonize/core/dna-chain.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
  * @version 1.0.16
- * @architectural-role Stateful Owner
+ * @architectural-role IO Wrapper
  * @description
  * Owns the DNA chain read/write lifecycle: scanning chat messages to build the
  * chain, looking up the last-known-good anchor, constructing anchor payloads,

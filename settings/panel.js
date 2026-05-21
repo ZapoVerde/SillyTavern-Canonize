@@ -2,7 +2,7 @@
  * @file data/default-user/extensions/canonize/settings/panel.js
  * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
  * @version 1.1.0
- * @architectural-role UI Builder
+ * @architectural-role Orchestrator
  * @description
  * Owns the extension settings panel rendered in the ST extensions drawer.
  * Manages profile creation, switching, and deletion; binds all input handlers

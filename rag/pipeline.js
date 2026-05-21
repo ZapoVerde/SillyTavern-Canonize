@@ -2,7 +2,7 @@
  * @file data/default-user/extensions/canonize/rag/pipeline.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
  * @version 1.0.16
- * @architectural-role Stateful Owner
+ * @architectural-role Orchestrator
  * @description
  * Owns chunk building, AI classification dispatch, chat-header hydration, and
  * document assembly. `buildRagChunks` is a pure function that partitions the

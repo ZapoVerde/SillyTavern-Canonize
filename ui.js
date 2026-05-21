@@ -2,7 +2,7 @@
  * @file data/default-user/extensions/canonize/ui.js
  * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
  * @version 1.1.0
- * @architectural-role HTML Builder
+ * @architectural-role Pure Functions
  * @description
  * Builds and returns HTML strings for the Canonize wizard modal, the
  * extensions settings panel, and the prompt-editor popup modal.

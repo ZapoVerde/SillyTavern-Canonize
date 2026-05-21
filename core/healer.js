@@ -2,7 +2,7 @@
  * @file data/default-user/extensions/canonize/core/healer.js
  * @stamp {"utc":"2026-04-16T00:00:00.000Z"}
  * @version 1.0.17
- * @architectural-role Stateful Owner
+ * @architectural-role Orchestrator
  * @description
  * Owns branch detection and state restoration. Walks the DNA chain embedded
  * in the chat to find the deepest still-valid anchor, then restores lorebook,
@@ -170,7 +170,21 @@ async function reconcileWorldState(char, headAnchor) {
             restoreHooksToNode(char, nodeDummy, nodeFile);
             if (getSettings().useVectFox) {
                 import('../rag/vectfox-bridge.js')
-                    .then(({ revectorizeLorebookForChar }) => revectorizeLorebookForChar(char))
+                    .then(async ({ revectorizeLorebookForChar, pushScenesToVectFox, scopeVectFoxToChar }) => {
+                        const lorebookName = char?.data?.extensions?.world || null;
+                        const restoreScope = await scopeVectFoxToChar(cnzAvatarKey(char.avatar), lorebookName);
+                        try {
+                            await revectorizeLorebookForChar(char);
+                            const { buildSceneSlices } = await import('./scene-tracker.js');
+                            const msgs    = SillyTavern.getContext().chat ?? [];
+                            const pairs   = buildProsePairs(msgs);
+                            const maxPairs = getSettings().vectfoxMaxPairsPerChunk ?? 15;
+                            const scenes  = buildSceneSlices(pairs, maxPairs);
+                            if (scenes.length > 0) await pushScenesToVectFox(scenes, cnzAvatarKey(char.avatar));
+                        } finally {
+                            await restoreScope();
+                        }
+                    })
                     .catch(err => error('Healer', 'VectFox lorebook re-vectorize failed after stale heal:', err));
             }
         }
@@ -287,18 +301,25 @@ export async function runHealer(char, _chatFileName) {
         await restoreHooksToNode(char, nodeDummy, nodeFile);
 
         if (getSettings().useVectFox) {
-            // Purge stale timeline chunks. The next sync repopulates additively.
+            const lorebookName = char?.data?.extensions?.world || null;
             try {
-                const { purgeVectFoxCollection } = await import('../rag/vectfox-bridge.js');
-                await purgeVectFoxCollection(cnzAvatarKey(char.avatar));
+                const { purgeVectFoxCollection, pushScenesToVectFox, revectorizeLorebookForChar, scopeVectFoxToChar } = await import('../rag/vectfox-bridge.js');
+                const { buildSceneSlices } = await import('./scene-tracker.js');
+                const restoreScope = await scopeVectFoxToChar(cnzAvatarKey(char.avatar), lorebookName);
+                try {
+                    await purgeVectFoxCollection(cnzAvatarKey(char.avatar));
+                    const maxPairs = getSettings().vectfoxMaxPairsPerChunk ?? 15;
+                    const pairs    = buildProsePairs(messages);
+                    const scenes   = buildSceneSlices(pairs, maxPairs);
+                    if (scenes.length > 0) await pushScenesToVectFox(scenes, cnzAvatarKey(char.avatar));
+                    await revectorizeLorebookForChar(char);
+                } finally {
+                    await restoreScope();
+                }
             } catch (err) {
-                error('Healer', 'VectFox purge after branch heal failed:', err);
-                toastr.warning('CNZ: Branch healed but VectFox index could not be purged — stale chunks may remain until next sync.');
+                error('Healer', 'VectFox purge/re-vectorize after branch heal failed:', err);
+                toastr.warning('CNZ: Branch healed but VectFox index could not be rebuilt — stale chunks may remain until next sync.');
             }
-            // Re-vectorize the rolled-back lorebook so VectFox reflects the restored version.
-            import('../rag/vectfox-bridge.js')
-                .then(({ revectorizeLorebookForChar }) => revectorizeLorebookForChar(char))
-                .catch(err => error('Healer', 'VectFox lorebook re-vectorize failed after branch heal:', err));
         } else {
             try {
                 await restoreRagToNode(char, nodeFile);
@@ -448,13 +469,19 @@ export async function purgeAndRebuild() {
         // ── 5. Upload/push chunks to retrieval backend ────────────────────────────
         if (getSettings().useVectFox) {
             // Full rebuild: purge stale index then re-slice the full history into scenes.
-            const { purgeVectFoxCollection, pushScenesToVectFox } = await import('../rag/vectfox-bridge.js');
+            const lorebookName = char?.data?.extensions?.world || null;
+            const { purgeVectFoxCollection, pushScenesToVectFox, scopeVectFoxToChar } = await import('../rag/vectfox-bridge.js');
             const { buildSceneSlices } = await import('./scene-tracker.js');
-            await purgeVectFoxCollection(cnzAvatarKey(char.avatar));
-            const allPairs  = buildProsePairs(messages);
-            const maxPairs  = getSettings().vectfoxMaxPairsPerChunk ?? 15;
-            const scenes    = buildSceneSlices(allPairs, maxPairs);
-            if (scenes.length > 0) await pushScenesToVectFox(scenes, cnzAvatarKey(char.avatar));
+            const restoreScope = await scopeVectFoxToChar(cnzAvatarKey(char.avatar), lorebookName);
+            try {
+                await purgeVectFoxCollection(cnzAvatarKey(char.avatar));
+                const allPairs  = buildProsePairs(messages);
+                const maxPairs  = getSettings().vectfoxMaxPairsPerChunk ?? 15;
+                const scenes    = buildSceneSlices(allPairs, maxPairs);
+                if (scenes.length > 0) await pushScenesToVectFox(scenes, cnzAvatarKey(char.avatar));
+            } finally {
+                await restoreScope();
+            }
         } else {
             const charName    = char.name ?? '';
             const ragText     = buildRagDocument(combinedChunks, ragSettings, charName);

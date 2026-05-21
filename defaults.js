@@ -2,7 +2,7 @@
  * @file data/default-user/extensions/canonize/defaults.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
  * @version 1.0.0
- * @architectural-role Pure Functions / Constants
+ * @architectural-role Pure Functions
  * @description
  * Default prompt templates for all five CNZ AI calls, plus the `interpolate`
  * utility used to expand them. Extracted here so `recipes.js` can import them

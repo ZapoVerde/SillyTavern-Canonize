@@ -2,7 +2,7 @@
  * @file data/default-user/extensions/canonize/core/settings.js
  * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
  * @version 1.1.0
- * @architectural-role Re-export Stub
+ * @architectural-role Pure Functions
  * @description
  * Backwards-compatibility shim. Settings data layer was moved to
  * `settings/data.js` during the Batch 4 refactor. All existing importers of

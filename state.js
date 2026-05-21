@@ -68,6 +68,7 @@ export const PROFILE_DEFAULTS = Object.freeze({
     ragSummarySource:         'defined',
     ragProfileId:             null,
     ragMaxTokens:             100,
+    vectfoxRetrievalTopK:     3,
     ragChunkSize:             2,
     ragChunkOverlap:          0,
     ragClassifierHistory:     0,

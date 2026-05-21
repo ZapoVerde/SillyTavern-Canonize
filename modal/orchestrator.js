@@ -2,7 +2,7 @@
  * @file data/default-user/extensions/canonize/modal/orchestrator.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
  * @version 1.0.17
- * @architectural-role UI Builder
+ * @architectural-role Orchestrator
  * @description
  * Owns the four-step review wizard lifecycle: injectModal (DOM construction and
  * event delegation), openReviewModal (lorebook/chain hydration, panel population,
@@ -47,6 +47,7 @@ import { deriveSuggestionsFromAnchorDiff, serialiseSuggestionsToFreeform } from 
 import { patchCharacterWorld } from './commit.js';
 import { CNZ_SUMMARY_ID } from '../state.js';
 import { cnzDeleteFile } from '../rag/api.js';
+import { deriveLastCommittedPairs } from '../core/sync.js';
 import {
     onHooksTabSwitch, updateHooksDiff, setHooksLoading,
 } from './hooks-workshop.js';
@@ -396,28 +397,6 @@ export async function openReviewModal() {
 }
 
 // ─── Derive Last Committed Pairs (pure helper) ────────────────────────────────
-
-/**
- * Derives the prose-pair slice that was committed in the most recent sync cycle.
- * Pure function — no module state reads.
- */
-function deriveLastCommittedPairs(allPairs, messages, dnaChain) {
-    const anchors = dnaChain?.anchors ?? [];
-    if (anchors.length === 0) return { pairs: [], pairOffset: 0 };
-
-    const headRef   = anchors[anchors.length - 1];
-    const parentRef = anchors.length >= 2 ? anchors[anchors.length - 2] : null;
-
-    const headPriorSeq   = messages.slice(0, headRef.msgIdx + 1).filter(m => !m.is_system).length;
-    const parentPriorSeq = parentRef
-        ? messages.slice(0, parentRef.msgIdx + 1).filter(m => !m.is_system).length
-        : 0;
-
-    const pairs      = allPairs.filter(p => p.validIdx >= parentPriorSeq && p.validIdx < headPriorSeq);
-    const pairOffset = pairs.length > 0 ? allPairs.indexOf(pairs[0]) : 0;
-
-    return { pairs, pairOffset };
-}
 
 // ─── DNA Chain Inspector ───────────────────────────────────────────────────────
 

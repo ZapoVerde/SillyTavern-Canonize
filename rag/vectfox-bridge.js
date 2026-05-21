@@ -2,22 +2,25 @@
  * @file data/default-user/extensions/canonize/rag/vectfox-bridge.js
  * @architectural-role IO Wrapper
  * @description
- * Pushes scene-sliced transcript text into a VectFox-managed vector collection.
- * Activated when settings.useVectFox is true.
+ * Pushes scene-sliced transcript text into a VectFox-managed vector collection
+ * and queries it for per-generation retrieval. Activated when settings.useVectFox
+ * is true.
  *
  * Dynamically imports VectFox APIs so this file is safe to load even when
  * VectFox is not installed — the error surfaces only when the bridge is called.
  *
  * Collection lifecycle: additive insert on every sync — hash dedup filters out
- * already-indexed scenes. Explicit purge is exposed via purgeVectFoxCollection
- * for branch-detection and Purge & Rebuild scenarios.
+ * already-indexed scenes. The cnz_* collection is registered but kept DISABLED
+ * in VectFox's auto-retrieval pipeline so CNZ controls injection via
+ * queryVectFoxScenes at generation time. Explicit purge is exposed via
+ * purgeVectFoxCollection for branch-detection and Purge & Rebuild scenarios.
  *
  * Lorebook re-vectorization is triggered by commit.js after a lorebook change
  * and by the branch healer after a lorebook rollback.
  *
  * @api-declaration
- * pushScenesToVectFox, purgeVectFoxCollection, checkVectFoxAvailable,
- * revectorizeLorebookForChar
+ * pushScenesToVectFox, queryVectFoxScenes, purgeVectFoxCollection,
+ * checkVectFoxAvailable, revectorizeLorebookForChar, scopeVectFoxToChar
  *
  * @contract
  *   assertions:
@@ -71,7 +74,7 @@ function findLorebookCollections(vf, lorebookName) {
     for (const registryKey of vf.getCollectionRegistry()) {
         const { collectionId } = vf.parseRegistryKey(registryKey);
         if (!collectionId.startsWith('vf_lorebook_')) continue;
-        if (vf.getCollectionMeta(collectionId)?.sourceName === lorebookName)
+        if (vf.getCollectionMeta(registryKey)?.sourceName === lorebookName)
             results.push({ collectionId, registryKey });
     }
     return results;
@@ -89,6 +92,33 @@ export async function checkVectFoxAvailable() {
     } catch (_) {
         return false;
     }
+}
+
+/**
+ * Queries the cnz_* VectFox collection for scenes most relevant to the given
+ * text. Called at GENERATION_STARTED so CNZ injects only semantically relevant
+ * transcript context instead of the full collection.
+ *
+ * @param {string} avatarKey   Sanitized avatar key (from cnzAvatarKey).
+ * @param {string} queryText   Recent chat text used as the search query.
+ * @param {number} [topK=3]    Maximum number of scenes to return.
+ * @returns {Promise<{ text: string, score: number, pairStart: number, pairEnd: number }[]>}
+ */
+export async function queryVectFoxScenes(avatarKey, queryText, topK = 3) {
+    const vf = await loadVectFoxApi();
+    const vfSettings = extension_settings.vectfox;
+    if (!vfSettings) throw new Error('VectFox settings not found. Ensure VectFox is installed and has been opened at least once.');
+
+    const collectionId = getCollectionId(avatarKey);
+    const results = await vf.queryCollection(collectionId, queryText, topK, vfSettings);
+
+    return results.metadata.map((meta, idx) => ({
+        text: meta.text || '',
+        hash: results.hashes[idx],
+        score: meta.score ?? 1.0,
+        pairStart: meta.pairStart,
+        pairEnd: meta.pairEnd,
+    }));
 }
 
 /**
@@ -147,12 +177,56 @@ export async function pushScenesToVectFox(scenes, avatarKey) {
         }))
         .filter(item => !existingHashes.has(item.hash));
 
+    // Register then explicitly DISABLE — collections default to enabled, so we
+    // must set enabled=false here. CNZ queries this collection directly at
+    // generation time via queryVectFoxScenes. Leaving it enabled would let
+    // VectFox's auto-retrieval pipeline inject the full transcript on every
+    // generation with the global top_k.
     vf.registerCollection(collectionId);
-    vf.setCollectionEnabled(collectionId, true);
+    vf.setCollectionEnabled(collectionId, false);
 
     if (items.length === 0) return;
 
     await vf.insertVectorItems(collectionId, items, vfSettings);
+}
+
+/**
+ * Temporarily disables all VectFox collections except those belonging to the
+ * current character. Returns an async restore function that re-enables them.
+ *
+ * Use this in a try/finally around heal operations so irrelevant collections
+ * don't interfere during purge/re-vectorize, and are restored afterward.
+ *
+ * @param {string} avatarKey      Sanitized avatar key (from cnzAvatarKey).
+ * @param {string} [lorebookName] Character's lorebook name for vf_lorebook_ matching.
+ * @returns {Promise<() => Promise<void>>} Async restore function.
+ */
+export async function scopeVectFoxToChar(avatarKey, lorebookName) {
+    const vf = await loadVectFoxApi();
+    const cnzId = getCollectionId(avatarKey);
+    const disabled = [];
+
+    for (const registryKey of vf.getCollectionRegistry()) {
+        const { collectionId } = vf.parseRegistryKey(registryKey);
+
+        if (collectionId === cnzId) continue;
+
+        if (lorebookName && collectionId.startsWith('vf_lorebook_')) {
+            const meta = vf.getCollectionMeta(registryKey);
+            if (meta?.sourceName === lorebookName) continue;
+        }
+
+        if (vf.isCollectionEnabled(registryKey)) {
+            vf.setCollectionEnabled(registryKey, false);
+            disabled.push(registryKey);
+        }
+    }
+
+    return async () => {
+        for (const registryKey of disabled) {
+            vf.setCollectionEnabled(registryKey, true);
+        }
+    };
 }
 
 /**

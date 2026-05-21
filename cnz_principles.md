@@ -37,13 +37,14 @@ A sync snapshot never cuts in the middle of an exchange. All snapshot coordinate
 
 ---
 
-## 4. The Three Kinds of Code
+## 4. The Four Kinds of Code
 
-Every module belongs to exactly one of three categories. Mixing them is a defect.
+Every module belongs to exactly one of four categories. Mixing them is a defect.
 
 1. **Pure Functions** — Input in, derived output out. No external reads or writes. No DOM. No settings access. No knowledge that the UI exists.
 2. **Stateful Owners** — The strictly bounded gatekeepers of runtime memory. Only one module may own any given state variable.
 3. **IO Wrappers** — Call LLMs, write lorebooks, push vectors, read chat metadata, update the DOM. Contain zero narrative derivation logic. They move data; they do not reason about it.
+4. **Orchestrators** — Sequence calls to the other three layers. Decide what runs and in what order; never what the narrative content means. Own no state. Perform no direct IO. Contain no derivation logic. A sync pipeline, a healer, a modal lifecycle driver: each is an Orchestrator.
 
 Each file declares its category before its implementation. That declaration is the first thing a reviewer checks.
 
