@@ -2,27 +2,22 @@
  * @file data/default-user/extensions/canonize/core/dna-chain.js
  * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
  * @version 1.0.16
- * @architectural-role IO Wrapper
+ * @architectural-role Pure Functions
  * @description
- * Owns the DNA chain read/write lifecycle: scanning chat messages to build the
- * chain, looking up the last-known-good anchor, constructing anchor payloads,
- * and writing anchors and back-pointer links into chat messages. Also owns
- * the `readCnzSummaryPromptState` helper and `sanitizeDnaChain` stubs retained
- * for API continuity.
+ * Pure derivation functions for the DNA chain: scanning chat messages to build
+ * the chain, looking up the last-known-good anchor, and constructing anchor
+ * payloads. No IO — callers pass all inputs; writers live in dna-writer.js.
  *
  * @api-declaration
- * readDnaChain, getLkgAnchor, buildAnchorPayload, writeDnaAnchor, writeDnaLinks,
- * findLastAiMessageInPair, buildNodeFileFromAnchor, findLkgAnchorByPosition,
- * sanitizeDnaChain
+ * readDnaChain, getLkgAnchor, buildAnchorPayload, findLastAiMessageInPair,
+ * buildNodeFileFromAnchor, findLkgAnchorByPosition, sanitizeDnaChain
  *
  * @contract
  *   assertions:
- *     purity: mutates
+ *     purity: pure
  *     state_ownership: [none]
- *     external_io: [/api/chats/saveChat]
+ *     external_io: [none]
  */
-
-import { warn, error } from '../log.js';
 
 // ─── Types (JSDoc only — no runtime impact) ───────────────────────────────────
 
@@ -95,10 +90,7 @@ export function readDnaChain(messages) {
         if (!msg.extra) continue;
         if (!msg.extra.cnz) continue;
         const cnz = msg.extra.cnz;
-        if (!cnz.type) {
-            warn('DnaChain', 'readDnaChain: message at index', i, 'has malformed cnz object (missing type)');
-            continue;
-        }
+        if (!cnz.type) continue;
         if (cnz.type === 'anchor') {
             result.anchors.push({ anchor: cnz, msgIdx: i });
         }
@@ -147,64 +139,6 @@ export function buildAnchorPayload({ uuid, committedAt, hooks, lorebook, ragUrl,
         ragHeaders:  ragHeaders ?? [],
         parentUuid:  parentUuid ?? null,
     };
-}
-
-/**
- * Writes a CnzAnchor payload into the last AI message of the given pair,
- * then saves the chat. The message becomes the Anchor for this sync cycle.
- *
- * If the pair has no AI message, logs a warning and returns without writing.
- *
- * @param {object} pair       - prose pair object (from buildProsePairs)
- * @param {CnzAnchor} anchor  - payload from buildAnchorPayload
- * @returns {Promise<void>}
- */
-export async function writeDnaAnchor(pair, anchor) {
-    const msg = findLastAiMessageInPair(pair);
-    if (!msg) {
-        warn('DnaChain', 'writeDnaAnchor: no AI message in pair — skipping');
-        return;
-    }
-    msg.extra ??= {};
-    msg.extra.cnz = anchor;
-    try {
-        await SillyTavern.getContext().saveChat();
-    } catch (err) {
-        error('DnaChain', 'writeDnaAnchor: saveChat failed:', err);
-    }
-}
-
-/**
- * Writes a CnzLink back-pointer into the last AI message of each pair in
- * the given range, then saves the chat once. Skips the anchor pair itself
- * (it already carries the full CnzAnchor). Skips pairs with no AI message.
- *
- * @param {object[]} pairs      - all prose pairs in the sync block
- * @param {number}   anchorIdx  - index of the anchor pair within `pairs`; that pair is skipped
- * @param {string}   uuid       - the sync block's uuid (same as the anchor's uuid)
- * @param {number}   pairOffset - absolute pair index of pairs[0] in the full chat
- * @returns {Promise<void>}
- */
-export async function writeDnaLinks(pairs, anchorIdx, uuid, pairOffset) {
-    let wrote = false;
-    for (let i = 0; i < pairs.length; i++) {
-        if (i === anchorIdx) continue;
-        const msg = findLastAiMessageInPair(pairs[i]);
-        if (!msg) continue;
-        msg.extra ??= {};
-        msg.extra.cnz = {
-            type: 'link',
-            uuid,
-            seq: pairOffset + i,
-        };
-        wrote = true;
-    }
-    if (!wrote) return;
-    try {
-        await SillyTavern.getContext().saveChat();
-    } catch (err) {
-        error('DnaChain', 'writeDnaLinks: saveChat failed:', err);
-    }
 }
 
 /**

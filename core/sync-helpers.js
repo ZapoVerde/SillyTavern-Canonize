@@ -23,8 +23,8 @@
 
 import { log, warn } from '../log.js';
 import { setDnaChain } from '../scheduler.js';
-import { readDnaChain, getLkgAnchor, buildAnchorPayload,
-         writeDnaAnchor, writeDnaLinks } from './dna-chain.js';
+import { readDnaChain, getLkgAnchor, buildAnchorPayload } from './dna-chain.js';
+import { writeDnaAnchor, writeDnaLinks } from './dna-writer.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
 import { lbSaveLorebook } from '../lorebook/api.js';
 import { parseLbSuggestions, enrichLbSuggestions,
