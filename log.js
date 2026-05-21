@@ -20,7 +20,7 @@
  * @api-declaration
  * log(tag, ...args)     — verbose-gated informational output
  * warn(tag, ...args)    — verbose-gated warning output
- * error(tag, ...args)   — always-on error output; triggers debounced flush
+ * error(tag, ...args)   — always-on error output; flushes immediately
  * setVerbose(enabled)   — enable or disable verbose output at runtime
  * isVerbose()           — returns the current verbose state
  * flushLog()            — manually flush buffer to cnz_debug.log
@@ -114,7 +114,8 @@ export function warn(tag, ...args) {
 export function error(tag, ...args) {
     _addToBuffer('ERROR', tag, args);
     _output(console.error.bind(console), tag, args);
-    _scheduleFlush();
+    if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null; }
+    _writeToFile();
 }
 
 export function setVerbose(enabled) {
