@@ -16,9 +16,9 @@
  *
  * @contract
  *   assertions:
- *     purity: pure
+ *     purity: mutates
  *     state_ownership: [none]
- *     external_io: [generateRaw via bus/executor]
+ *     external_io: [generateRaw via bus/executor, state._lorebookData (read-only default)]
  */
 
 import { state } from '../state.js';
