@@ -11,7 +11,8 @@
  *
  * @api-declaration
  * buildProsePairs, buildTranscript, buildProsePairsSlice, slicePairsByBytes,
- * formatPairsAsTranscript, buildSceneSlices
+ * formatPairsAsTranscript, buildSceneSlices,
+ * computeSyncWindow, deriveLastCommittedPairs
  *
  * @contract
  *   assertions:
@@ -159,4 +160,60 @@ export function buildSceneSlices(pairs, maxPairs) {
     }
 
     return slices;
+}
+
+/**
+ * Computes which prose pairs fall within the current sync window.
+ * Pure — all inputs explicit, no state reads.
+ * @param {object[]} allPairs
+ * @param {object[]} messages
+ * @param {object}   settings
+ * @param {boolean}  coverAll
+ * @param {object}   dnaChain
+ * @returns {{ syncPairs: object[], syncPairOffset: number }}
+ */
+export function computeSyncWindow(allPairs, messages, settings, coverAll, dnaChain) {
+    const lcb   = settings.liveContextBuffer ?? 5;
+    const every = settings.chunkEveryN ?? 20;
+    const tbb   = Math.max(0, allPairs.length - lcb);
+
+    const lkgIdx   = dnaChain?.lkgMsgIdx ?? -1;
+    const priorSeq = lkgIdx >= 0
+        ? messages.slice(0, lkgIdx + 1).filter(m => !m.is_system).length
+        : 0;
+
+    const uncommitted = allPairs.filter((p, i) => p.validIdx >= priorSeq && i < tbb);
+    const syncPairs   = coverAll ? uncommitted : uncommitted.slice(0, every);
+
+    const firstPair      = syncPairs[0];
+    const syncPairOffset = firstPair ? allPairs.indexOf(firstPair) : 0;
+
+    return { syncPairs, syncPairOffset };
+}
+
+/**
+ * Returns the prose pairs that belong to the last committed sync block
+ * (between the second-to-last anchor and the last anchor).
+ * Pure — all inputs explicit, no state reads.
+ * @param {object[]} allPairs
+ * @param {object[]} messages
+ * @param {object}   dnaChain
+ * @returns {{ pairs: object[], pairOffset: number }}
+ */
+export function deriveLastCommittedPairs(allPairs, messages, dnaChain) {
+    const anchors = dnaChain?.anchors ?? [];
+    if (anchors.length === 0) return { pairs: [], pairOffset: 0 };
+
+    const headRef   = anchors[anchors.length - 1];
+    const parentRef = anchors.length >= 2 ? anchors[anchors.length - 2] : null;
+
+    const headPriorSeq   = messages.slice(0, headRef.msgIdx + 1).filter(m => !m.is_system).length;
+    const parentPriorSeq = parentRef
+        ? messages.slice(0, parentRef.msgIdx + 1).filter(m => !m.is_system).length
+        : 0;
+
+    const pairs      = allPairs.filter(p => p.validIdx >= parentPriorSeq && p.validIdx < headPriorSeq);
+    const pairOffset = pairs.length > 0 ? allPairs.indexOf(pairs[0]) : 0;
+
+    return { pairs, pairOffset };
 }

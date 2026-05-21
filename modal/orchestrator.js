@@ -47,7 +47,7 @@ import { deriveSuggestionsFromAnchorDiff, serialiseSuggestionsToFreeform } from 
 import { patchCharacterWorld } from './commit.js';
 import { CNZ_SUMMARY_ID } from '../state.js';
 import { cnzDeleteFile } from '../rag/api.js';
-import { deriveLastCommittedPairs } from '../core/sync.js';
+import { deriveLastCommittedPairs } from '../core/transcript.js';
 import {
     onHooksTabSwitch, updateHooksDiff, setHooksLoading,
 } from './hooks-workshop.js';

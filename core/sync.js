@@ -10,8 +10,9 @@
  *
  * @api-declaration
  * runCnzSync(char, messages, { coverAll }) — full sync cycle
- * computeSyncWindow(allPairs, messages, settings, coverAll, dnaChain) — pure
- * deriveLastCommittedPairs(allPairs, messages, dnaChain) — pure
+ *
+ * Pure helpers (re-exported from transcript.js for callers who import from here):
+ * computeSyncWindow, deriveLastCommittedPairs
  *
  * @contract
  *   assertions:
@@ -23,7 +24,7 @@
 import { log, warn, error } from '../log.js';
 import { setSyncInProgress } from '../scheduler.js';
 import { getSettings } from './settings.js';
-import { buildProsePairs, buildTranscript } from './transcript.js';
+import { buildProsePairs, buildTranscript, computeSyncWindow } from './transcript.js';
 import { runLorebookSyncCall, runHookseekerCall } from './llm-calls.js';
 import { readDnaChain } from './dna-chain.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
@@ -34,44 +35,8 @@ import { state } from '../state.js';
 import { logSyncStart, processLorebookUpdate,
          processHooksUpdate, commitDnaAnchor } from './sync-helpers.js';
 
-// ─── Pure helpers ─────────────────────────────────────────────────────────────
-
-export function computeSyncWindow(allPairs, messages, settings, coverAll, dnaChain) {
-    const lcb   = settings.liveContextBuffer ?? 5;
-    const every = settings.chunkEveryN ?? 20;
-    const tbb   = Math.max(0, allPairs.length - lcb);
-
-    const lkgIdx   = dnaChain?.lkgMsgIdx ?? -1;
-    const priorSeq = lkgIdx >= 0
-        ? messages.slice(0, lkgIdx + 1).filter(m => !m.is_system).length
-        : 0;
-
-    const uncommitted = allPairs.filter((p, i) => p.validIdx >= priorSeq && i < tbb);
-    const syncPairs   = coverAll ? uncommitted : uncommitted.slice(0, every);
-
-    const firstPair      = syncPairs[0];
-    const syncPairOffset = firstPair ? allPairs.indexOf(firstPair) : 0;
-
-    return { syncPairs, syncPairOffset };
-}
-
-export function deriveLastCommittedPairs(allPairs, messages, dnaChain) {
-    const anchors = dnaChain?.anchors ?? [];
-    if (anchors.length === 0) return { pairs: [], pairOffset: 0 };
-
-    const headRef   = anchors[anchors.length - 1];
-    const parentRef = anchors.length >= 2 ? anchors[anchors.length - 2] : null;
-
-    const headPriorSeq   = messages.slice(0, headRef.msgIdx + 1).filter(m => !m.is_system).length;
-    const parentPriorSeq = parentRef
-        ? messages.slice(0, parentRef.msgIdx + 1).filter(m => !m.is_system).length
-        : 0;
-
-    const pairs      = allPairs.filter(p => p.validIdx >= parentPriorSeq && p.validIdx < headPriorSeq);
-    const pairOffset = pairs.length > 0 ? allPairs.indexOf(pairs[0]) : 0;
-
-    return { pairs, pairOffset };
-}
+// Re-export pure helpers so existing callers importing from sync.js don't break.
+export { computeSyncWindow, deriveLastCommittedPairs } from './transcript.js';
 
 // ─── Sync pipeline ────────────────────────────────────────────────────────────
 
