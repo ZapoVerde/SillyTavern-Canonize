@@ -6,16 +6,16 @@
  * @description
  * Listens for `vistalyze:location-changed` DOM events fired by the
  * SillyTavern-Vistalyze extension and stamps the boundary message with
- * `extra.cnz_scene_boundary = true`. These stamps are later read by the
- * VectFox sync pipeline to split transcript text at scene boundaries rather
- * than fixed turn-pair windows.
+ * `extra.cnz_scene_boundary = true`. These stamps are read by the sync
+ * pipeline (buildSceneSlices in transcript.js) to split transcript text at
+ * scene boundaries rather than fixed turn-pair windows.
  *
  * Boundary pairs are included in both the closing and opening slice so that
  * queries spanning a scene transition retrieve it from either side. Max-pairs
  * splits (positional fallback) do not get this overlap.
  *
  * When Vistalyze is not installed or disabled, no events fire and the stamps
- * are never written — the VectFox pipeline falls back to max-pairs splitting.
+ * are never written — the pipeline falls back to max-pairs splitting.
  *
  * Pure derivation (buildSceneSlices) lives in core/transcript.js.
  *

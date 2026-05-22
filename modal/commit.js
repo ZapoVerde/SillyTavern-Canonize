@@ -203,11 +203,6 @@ async function commitChanges(char, hooksText) {
             await lbSaveLorebook(state._lorebookName, stitchedLorebook);
             state._lorebookData = structuredClone(state._draftLorebook);
             lorebookChanged = true;
-            if (getSettings().useVectFox) {
-                import('../rag/vectfox-bridge.js')
-                    .then(({ revectorizeLorebookForChar }) => revectorizeLorebookForChar(char))
-                    .catch(err => warn('Commit', 'VectFox lorebook re-vectorize failed:', err));
-            }
             const changedNames = Object.values(state._draftLorebook.entries ?? {})
                 .filter(e => { const o = preLorebook.entries[String(e.uid)]; return !o || stripProtectedBlock(o.content) !== stripProtectedBlock(e.content) || JSON.stringify(o.key) !== JSON.stringify(e.key) || (o.comment ?? '') !== (e.comment ?? ''); })
                 .map(e => e.comment || String(e.uid));

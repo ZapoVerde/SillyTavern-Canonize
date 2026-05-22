@@ -25,7 +25,7 @@ import { resetScheduler, setDnaChain } from '../scheduler.js';
 import { readDnaChain } from './dna-chain.js';
 import { syncCnzSummaryOnCharacterSwitch } from './summary-prompt.js';
 import { runHealer } from './healer.js';
-import { clearChunkChatLabels } from '../rag/pipeline.js';
+import { clearChunkChatLabels } from '../rag/chat-labels.js';
 import { checkOrphans } from './orphans.js';
 import { state } from '../state.js';
 

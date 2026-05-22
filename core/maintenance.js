@@ -23,7 +23,7 @@
  *                       state._lorebookData, state._draftLorebook]
  *     external_io: [callPopup, toastr, /api/files/delete, /api/chats/saveChat,
  *                   /db-purge, /db-ingest, extension_settings.character_attachments,
- *                   saveSettingsDebounced, rag/vectfox-bridge.js (dynamic)]
+ *                   saveSettingsDebounced]
  */
 
 import { extension_settings } from '../../../../extensions.js';
@@ -157,44 +157,27 @@ export async function purgeAndRebuild() {
             return;
         }
 
-        // ── 5. Upload/push chunks to retrieval backend ────────────────────────────
-        if (getSettings().useVectFox) {
-            const lorebookName = char?.data?.extensions?.world || null;
-            const { purgeVectFoxCollection, pushScenesToVectFox, scopeVectFoxToChar } =
-                await import('../rag/vectfox-bridge.js');
-            const { buildSceneSlices } = await import('./transcript.js');
-            const restoreScope = await scopeVectFoxToChar(cnzAvatarKey(char.avatar), lorebookName);
-            try {
-                await purgeVectFoxCollection(cnzAvatarKey(char.avatar));
-                const scenes = buildSceneSlices(buildProsePairs(messages), getSettings().vectfoxMaxPairsPerChunk ?? 15);
-                if (scenes.length > 0) await pushScenesToVectFox(scenes, cnzAvatarKey(char.avatar));
-            } finally {
-                await restoreScope();
-            }
-        } else {
-            const ragText    = buildRagDocument(combinedChunks, ragSettings, char.name ?? '');
-            const anchorHash = chain.lkg.uuid?.slice(0, 8) ?? '';
-            const ragFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name, anchorHash);
-            const ragUrl      = await uploadRagFile(ragText, ragFileName);
-            const byteSize    = new TextEncoder().encode(ragText).length;
-            registerCharacterAttachment(char.avatar, ragUrl, ragFileName, byteSize);
+        // ── 5. Upload chunks to Data Bank ─────────────────────────────────────────
+        const ragText    = buildRagDocument(combinedChunks, ragSettings, char.name ?? '');
+        const anchorHash = chain.lkg.uuid?.slice(0, 8) ?? '';
+        const ragFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name, anchorHash);
+        const ragUrl      = await uploadRagFile(ragText, ragFileName);
+        const byteSize    = new TextEncoder().encode(ragText).length;
+        registerCharacterAttachment(char.avatar, ragUrl, ragFileName, byteSize);
 
-            for (const { msgIdx } of chain.anchors) {
-                const msg = messages[msgIdx];
-                if (msg?.extra?.cnz) {
-                    msg.extra.cnz = Object.assign({}, msg.extra.cnz, { ragUrl });
-                }
+        for (const { msgIdx } of chain.anchors) {
+            const msg = messages[msgIdx];
+            if (msg?.extra?.cnz) {
+                msg.extra.cnz = Object.assign({}, msg.extra.cnz, { ragUrl });
             }
         }
 
         await ctx.saveChat();
 
-        // ── 6. Re-vectorize (Data Bank mode only) ─────────────────────────────────
-        if (!getSettings().useVectFox) {
-            const { executeSlashCommandsWithOptions } = ctx;
-            await executeSlashCommandsWithOptions('/db-purge');
-            await executeSlashCommandsWithOptions('/db-ingest');
-        }
+        // ── 6. Re-vectorize ───────────────────────────────────────────────────────
+        const { executeSlashCommandsWithOptions } = ctx;
+        await executeSlashCommandsWithOptions('/db-purge');
+        await executeSlashCommandsWithOptions('/db-ingest');
 
         toastr.success(`CNZ: Rebuild complete — ${combinedChunks.length} chunks re-indexed.`);
     } catch (err) {

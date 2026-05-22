@@ -130,8 +130,6 @@ function refreshSettingsUI() {
 $('#cnz-set-auto-advance-mask').prop('checked', s.autoAdvanceMask ?? false);
     $('#cnz-set-enable-rag').prop('checked', s.enableRag ?? false);
     $('#cnz-rag-settings-body').toggleClass('cnz-disabled', !(s.enableRag ?? false));
-    $('#cnz-set-use-vectfox').prop('checked', s.useVectFox ?? false);
-    _applyVectFoxUiState(s.useVectFox ?? false);
     $('#cnz-set-rag-separator').val(s.ragSeparator ?? DEFAULT_SEPARATOR);
     $('#cnz-set-rag-contents').val(s.ragContents ?? 'summary+full');
 
@@ -236,12 +234,6 @@ $('#cnz-set-auto-advance-mask').on('change', function () {
         getSettings().enableRag = $(this).prop('checked');
         saveSettingsDebounced(); updateDirtyIndicator();
         $('#cnz-rag-settings-body').toggleClass('cnz-disabled', !getSettings().enableRag);
-    });
-
-    $('#cnz-set-use-vectfox').on('change', function () {
-        getSettings().useVectFox = $(this).prop('checked');
-        saveSettingsDebounced(); updateDirtyIndicator();
-        _applyVectFoxUiState(getSettings().useVectFox);
     });
 
     $('#cnz-set-rag-separator').on('change', function () {
@@ -459,12 +451,6 @@ function updateRagAiControlsVisibility() {
     const hasSummary    = (s.ragContents ?? 'summary+full') !== 'full';
     const isDefinedHere = (s.ragSummarySource ?? 'defined') === 'defined';
     $('#cnz-rag-ai-controls').toggleClass('cnz-disabled', !(hasSummary && isDefinedHere));
-}
-
-function _applyVectFoxUiState(enabled) {
-    $('#cnz-rag-separator-row').toggleClass('cnz-disabled', enabled);
-    $('#cnz-rag-separator-hint').toggleClass('cnz-disabled', enabled);
-    $('#cnz-rag-contents-row').toggleClass('cnz-disabled', enabled);
 }
 
 export function injectSettingsPanel() {

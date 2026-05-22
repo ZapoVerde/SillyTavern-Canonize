@@ -24,7 +24,8 @@
 import { state, escapeHtml } from '../state.js';
 import { getSettings } from '../core/settings.js';
 import { buildProsePairs } from '../core/transcript.js';
-import { buildRagDocument, renderAllChunkChatLabels, ragRegenCard as _ragRegenCard } from '../rag/pipeline.js';
+import { buildRagDocument, ragRegenCard as _ragRegenCard } from '../rag/pipeline.js';
+import { renderAllChunkChatLabels } from '../rag/chat-labels.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────

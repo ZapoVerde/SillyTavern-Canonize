@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/healer.js
- * @stamp {"utc":"2026-05-21T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-22T00:00:00.000Z"}
  * @version 2.0.0
  * @architectural-role Orchestrator
  * @description
@@ -24,21 +24,18 @@
  *     purity: mutates
  *     state_ownership: [state._dnaChain, state._lorebookName]
  *     external_io: [callPopup, toastr, lorebook via healer-restore.js,
- *                   rag/vectfox-bridge.js (dynamic), scheduler.setDnaChain]
+ *                   healer-restore.js, scheduler.setDnaChain]
  */
 
 import { callPopup } from '../../../../../script.js';
 import { extension_settings } from '../../../../extensions.js';
-import { saveSettingsDebounced } from '../../../../../script.js';
 import { state } from '../state.js';
 import { readDnaChain, findLkgAnchorByPosition, buildNodeFileFromAnchor } from './dna-chain.js';
-import { buildProsePairs } from './transcript.js';
 import { setDnaChain } from '../scheduler.js';
 import { lbGetLorebook } from '../lorebook/api.js';
 import { cnzAvatarKey } from '../rag/api.js';
-import { getSettings } from './settings.js';
 import { error } from '../log.js';
-import { restoreLorebookToNode, restoreHooksToNode, restoreRagToNode, cnzDeleteFile } from './healer-restore.js';
+import { restoreLorebookToNode, restoreHooksToNode, restoreRagToNode } from './healer-restore.js';
 
 // Re-export restore ops — callers that import from healer.js keep working.
 export { restoreLorebookToNode, restoreHooksToNode, restoreRagToNode } from './healer-restore.js';
@@ -68,23 +65,14 @@ async function reconcileWorldState(char, headAnchor) {
     const cnzAttachments = allAttachments.filter(a => a.name?.startsWith(cnzRagPrefix));
 
     let ragStale = false;
-    let legacyRagCleared = false;
-    if (getSettings().useVectFox) {
-        if (cnzAttachments.length > 0) {
-            try {
-                for (const attachment of cnzAttachments) {
-                    await cnzDeleteFile(attachment.url);
-                }
-                extension_settings.character_attachments[char.avatar] =
-                    allAttachments.filter(a => !cnzAttachments.includes(a));
-                saveSettingsDebounced();
-                legacyRagCleared = true;
-            } catch (err) {
-                error('Healer', 'Legacy RAG attachment cleanup failed:', err);
-            }
-        }
-    } else {
-        const expectedRag = headAnchor.ragUrl ? headAnchor.ragUrl.split('/').pop() : null;
+    const expectedRag = headAnchor.ragUrl ? headAnchor.ragUrl.split('/').pop() : null;
+    // Guard: if the anchor expects a RAG file but the character has no registry
+    // key at all, skip — the attachments registry likely hasn't loaded yet
+    // (cold-boot race). An absent key differs from []: [] means registered-but-empty.
+    const charKeyExists = Object.prototype.hasOwnProperty.call(
+        extension_settings.character_attachments ?? {}, char.avatar
+    );
+    if (!expectedRag || charKeyExists) {
         ragStale = expectedRag
             ? cnzAttachments.length !== 1 || cnzAttachments[0].name !== expectedRag
             : cnzAttachments.length > 0;
@@ -99,26 +87,6 @@ async function reconcileWorldState(char, headAnchor) {
         if (lorebookStale) {
             await restoreLorebookToNode(char, nodeDummy, nodeFile);
             restoreHooksToNode(char, nodeDummy, nodeFile);
-            if (getSettings().useVectFox) {
-                import('../rag/vectfox-bridge.js')
-                    .then(async ({ revectorizeLorebookForChar, pushScenesToVectFox, scopeVectFoxToChar }) => {
-                        const { buildSceneSlices } = await import('./transcript.js');
-                        const restoreScope = await scopeVectFoxToChar(
-                            cnzAvatarKey(char.avatar),
-                            char?.data?.extensions?.world || null,
-                        );
-                        try {
-                            await revectorizeLorebookForChar(char);
-                            const msgs    = SillyTavern.getContext().chat ?? [];
-                            const pairs   = buildProsePairs(msgs);
-                            const scenes  = buildSceneSlices(pairs, getSettings().vectfoxMaxPairsPerChunk ?? 15);
-                            if (scenes.length > 0) await pushScenesToVectFox(scenes, cnzAvatarKey(char.avatar));
-                        } finally {
-                            await restoreScope();
-                        }
-                    })
-                    .catch(err => error('Healer', 'VectFox re-vectorize failed after stale heal:', err));
-            }
         }
         if (ragStale) {
             try {
@@ -203,8 +171,7 @@ export async function runHealer(char, _chatFileName) {
         <ul>
             <li>Lorebook entries rolled back</li>
             <li>Narrative hooks rolled back</li>
-            <li>RAG files for orphaned turns removed</li>
-            <li>Vector index purged and rebuilt</li>
+            <li>RAG file reconciled</li>
         </ul>
         <p>This cannot be undone.</p>`,
         'confirm',
@@ -226,39 +193,17 @@ export async function runHealer(char, _chatFileName) {
         await restoreLorebookToNode(char, nodeDummy, nodeFile);
         await restoreHooksToNode(char, nodeDummy, nodeFile);
 
-        if (getSettings().useVectFox) {
-            const lorebookName = char?.data?.extensions?.world || null;
-            try {
-                const { purgeVectFoxCollection, pushScenesToVectFox, revectorizeLorebookForChar, scopeVectFoxToChar } =
-                    await import('../rag/vectfox-bridge.js');
-                const { buildSceneSlices } = await import('./transcript.js');
-                const restoreScope = await scopeVectFoxToChar(cnzAvatarKey(char.avatar), lorebookName);
-                try {
-                    await purgeVectFoxCollection(cnzAvatarKey(char.avatar));
-                    const pairs  = buildProsePairs(messages);
-                    const scenes = buildSceneSlices(pairs, getSettings().vectfoxMaxPairsPerChunk ?? 15);
-                    if (scenes.length > 0) await pushScenesToVectFox(scenes, cnzAvatarKey(char.avatar));
-                    await revectorizeLorebookForChar(char);
-                } finally {
-                    await restoreScope();
-                }
-            } catch (err) {
-                error('Healer', 'VectFox purge/re-vectorize after branch heal failed:', err);
-                toastr.warning('CNZ: Branch healed but VectFox index could not be rebuilt — stale chunks may remain.');
-            }
-        } else {
-            try {
-                await restoreRagToNode(char, nodeFile);
-            } catch (err) {
-                error('Healer', 'RAG reconciliation failed:', err);
-                toastr.warning('CNZ: Branch healed but RAG reconciliation failed — vector index may be inconsistent.');
-            }
+        try {
+            await restoreRagToNode(char, nodeFile);
+        } catch (err) {
+            error('Healer', 'RAG reconciliation failed:', err);
+            toastr.warning('CNZ: Branch healed but RAG reconciliation failed — vector index may be inconsistent.');
         }
 
         state._dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
         setDnaChain(state._dnaChain);
 
-        toastr.warning(`CNZ: Branch detected — restored to message ${restorePoint}. Vector index rebuilt.`);
+        toastr.warning(`CNZ: Branch detected — restored to message ${restorePoint}.`);
     } catch (err) {
         error('Healer', 'Healer: restoration failed:', err);
         toastr.error('CNZ: Branch detected but restoration failed — lorebook may be inconsistent.');

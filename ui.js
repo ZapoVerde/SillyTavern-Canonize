@@ -299,7 +299,6 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
     const ragContents      = s.ragContents      ?? 'summary+full';
     const ragSummarySource = s.ragSummarySource ?? 'defined';
     const enableRag        = s.enableRag        ?? false;
-    const useVectFox       = s.useVectFox       ?? false;
     const hasSummary       = ragContents !== 'full';
     const isDefinedHere    = ragSummarySource === 'defined';
 
@@ -404,23 +403,16 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
 
         <div id="cnz-rag-settings-body" class="cnz-settings-subgroup ${enableRag ? '' : 'cnz-disabled'}">
 
-          <div class="cnz-settings-row">
-            <label class="cnz-checkbox-label">
-              <input id="cnz-set-use-vectfox" type="checkbox" ${useVectFox ? 'checked' : ''}>
-              <span>Use VectFox for retrieval ${tip('Pushes chunks directly into a VectFox-managed vector collection instead of uploading a flat document to the ST Data Bank. VectFox handles embedding, hybrid search, and injection at generation time. Requires VectFox installed alongside Canonize. When enabled, also disable VectFox\'s own chat vectorization to avoid double-indexing.')}</span>
-            </label>
-          </div>
-
-          <div class="cnz-settings-inline-row ${useVectFox ? 'cnz-disabled' : ''}" id="cnz-rag-separator-row">
-            <label for="cnz-set-rag-separator">Separator ${tip('Template string prepended to every memory chunk in the RAG document. Supports {{turn_number}}, {{char_name}}, {{turn_range}}. Leave blank to use the default *** divider. Not used when VectFox retrieval is enabled.')}</label>
+          <div class="cnz-settings-inline-row" id="cnz-rag-separator-row">
+            <label for="cnz-set-rag-separator">Separator ${tip('Template string prepended to every memory chunk in the RAG document. Supports {{turn_number}}, {{char_name}}, {{turn_range}}. Leave blank to use the default *** divider.')}</label>
             <input id="cnz-set-rag-separator" type="text" class="cnz-input cnz-settings-input-wide"
                    placeholder="e.g. ** {{turn_number}} **"
                    value="${escapeHtml(s.ragSeparator ?? '')}">
           </div>
-          <small id="cnz-rag-separator-hint" class="cnz-settings-hint ${useVectFox ? 'cnz-disabled' : ''}">Vars: <code>{{turn_number}}</code>, <code>{{char_name}}</code>, <code>{{turn_range}}</code> &mdash; blank defaults to <code>***</code></small>
+          <small id="cnz-rag-separator-hint" class="cnz-settings-hint">Vars: <code>{{turn_number}}</code>, <code>{{char_name}}</code>, <code>{{turn_range}}</code> &mdash; blank defaults to <code>***</code></small>
 
-          <div class="cnz-settings-inline-row ${useVectFox ? 'cnz-disabled' : ''}" id="cnz-rag-contents-row">
-            <label for="cnz-set-rag-contents">RAG Contents ${tip('"Summary + Full Content": AI-generated header plus raw dialogue. "Summary Only": compact header list, no dialogue. "Full Content Only": raw dialogue with no headers. Not used when VectFox retrieval is enabled.')}</label>
+          <div class="cnz-settings-inline-row" id="cnz-rag-contents-row">
+            <label for="cnz-set-rag-contents">RAG Contents ${tip('"Summary + Full Content": AI-generated header plus raw dialogue. "Summary Only": compact header list, no dialogue. "Full Content Only": raw dialogue with no headers.')}</label>
             <select id="cnz-set-rag-contents" class="cnz-select cnz-settings-select-sm">
               <option value="summary+full" ${ragContents === 'summary+full' ? 'selected' : ''}>Summary + Full Content</option>
               <option value="summary"      ${ragContents === 'summary'      ? 'selected' : ''}>Summary Only</option>
