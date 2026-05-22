@@ -69,34 +69,40 @@ async function _doRagFetch(ctx, settings, chain) {
 
     log('RagHook', `fetch anchors=${validUuids.length} topK=${topK} topKLb=${topKLb} threshold=${threshold}`);
 
-    // ── Paths 1 + 2: chunk retrieval (parallel) ───────────────────────────────
+    // ── Paths 1 + 2 + 3: all three queries in parallel ────────────────────────
+    // Path 3 (lb semantic) previously ran after 1+2, doubling latency.
+    // All three embed independent query texts — run them together.
+    const t0 = performance.now();
+
+    const [chunkBatches, lbHitsRaw] = await Promise.all([
+        // Paths 1 + 2: chunk queries (chat context + WI context)
+        Promise.all([
+            chatQuery.trim() && topK   > 0 ? querySyncChunks(validUuids, chatQuery, topK)   : [],
+            lbQuery.trim()   && topKLb > 0 ? querySyncChunks(validUuids, lbQuery,   topKLb) : [],
+        ]),
+        // Path 3: lorebook semantic activation
+        topKLb > 0 && chatQuery.trim() ? queryLorebookEntries(validUuids, chatQuery, topKLb) : [],
+    ]);
+
+    log('RagHook', `all paths resolved in ${(performance.now() - t0).toFixed(0)}ms`);
+
+    // ── Merge chunk results ────────────────────────────────────────────────────
     let chunks = [];
-    const promises = [];
-    if (chatQuery.trim() && topK > 0)   promises.push(querySyncChunks(validUuids, chatQuery, topK));
-    if (lbQuery.trim()   && topKLb > 0) promises.push(querySyncChunks(validUuids, lbQuery,   topKLb));
-
-    if (promises.length) {
-        const batches = await Promise.all(promises);
-        const seen    = new Set();
-        for (const batch of batches) {
-            for (const r of batch) {
-                if (r.score < threshold || seen.has(r.text)) continue;
-                seen.add(r.text);
-                chunks.push(r);
-            }
+    const seen = new Set();
+    for (const batch of chunkBatches) {
+        for (const r of batch) {
+            if (r.score < threshold || seen.has(r.text)) continue;
+            seen.add(r.text);
+            chunks.push(r);
         }
-        chunks.sort((a, b) => b.score - a.score);
     }
+    chunks.sort((a, b) => b.score - a.score);
 
-    // ── Path 3: lorebook semantic activation ──────────────────────────────────
-    let toActivate = [];
-    if (topKLb > 0 && chatQuery.trim()) {
-        const lbHits     = await queryLorebookEntries(validUuids, chatQuery, topKLb);
-        const activeUids = new Set((ctx.worldInfoActivated ?? []).map(e => e.uid));
-        toActivate = lbHits
-            .filter(h => h.score >= threshold && !activeUids.has(h.entryUid))
-            .map(h => ({ world: h.lorebookName, uid: h.entryUid }));
-    }
+    // ── Lorebook activation candidates ────────────────────────────────────────
+    const activeUids = new Set((ctx.worldInfoActivated ?? []).map(e => e.uid));
+    const toActivate = lbHitsRaw
+        .filter(h => h.score >= threshold && !activeUids.has(h.entryUid))
+        .map(h => ({ world: h.lorebookName, uid: h.entryUid }));
 
     // ── Format injection ───────────────────────────────────────────────────────
     let injection = '';
@@ -131,7 +137,7 @@ export function prefetchRag() {
     const messages = ctx.chat ?? [];
     if (!messages.length) return;
 
-    log('RagHook', `Prefetch started (chatLen=${messages.length})`);
+    log('RagHook', `MESSAGE_SENT → prefetch start (chatLen=${messages.length}) t=${Date.now()}`);
     _prefetchChatLen = messages.length;
     _prefetchPromise = _doRagFetch(ctx, settings, chain).catch(err => {
         error('RagHook', 'Prefetch failed:', err);
@@ -153,12 +159,14 @@ export async function onGenerationStarted() {
     const messages = ctx.chat ?? [];
     if (!messages.length) return;
 
-    log('RagHook', `source=${settings.ragEmbeddingSource ?? '(unset)'} model=${settings.ragEmbeddingModel ?? '(unset)'}`);
+    const tGen = Date.now();
+    log('RagHook', `GENERATION_STARTED t=${tGen} source=${settings.ragEmbeddingSource ?? '(unset)'} model=${settings.ragEmbeddingModel ?? '(unset)'}`);
 
     let result = null;
     if (_prefetchPromise && _prefetchChatLen === messages.length) {
-        log('RagHook', 'Awaiting prefetch');
+        log('RagHook', `awaiting prefetch (prefetch age=${Date.now() - tGen}ms)`);
         result = await _prefetchPromise;
+        log('RagHook', `prefetch resolved after ${Date.now() - tGen}ms`);
     }
     _prefetchPromise = null;
     _prefetchChatLen = -1;
@@ -172,7 +180,7 @@ export async function onGenerationStarted() {
         }
     }
 
-    log('RagHook', `${result.chunks} chunks injected`);
+    log('RagHook', `${result.chunks} chunks injected | total=${Date.now() - tGen}ms`);
     ctx.setExtensionPrompt(EXT_PROMPT_KEY, result.injection, INJECT_POSITION, result.depth);
 
     if (result.toActivate.length) {
