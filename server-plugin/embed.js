@@ -1,37 +1,11 @@
 /**
  * @file server-plugin/embed.js
- * @description Embedding generation. Supports two sources:
- *   - 'local'       — @xenova/transformers pipeline (Xenova/all-MiniLM-L6-v2), no API key required.
- *   - 'openrouter'  — OpenAI-compatible embeddings via OpenRouter; requires model + apiKey.
- *
- * initEmbedder() warms the local pipeline at startup. embedWithSource() and
- * embedBatchWithSource() dispatch to the correct backend at call time based on
- * the cfg object supplied by the caller (built from CNZ settings).
+ * @description Embedding generation via OpenRouter (OpenAI-compatible API).
+ * Local @xenova/transformers support has been removed — incompatible with Node v24.
+ * Configure embeddingSource: 'openrouter' with a model and apiKey in CNZ settings.
  */
 
-import { pipeline, env } from '@xenova/transformers';
-
-const LOCAL_MODEL = 'Xenova/all-MiniLM-L6-v2';
-const OR_BASE     = 'https://openrouter.ai/api/v1/embeddings';
-
-env.allowLocalModels = true;
-
-/** @type {import('@xenova/transformers').FeatureExtractionPipeline | null} */
-let _pipe = null;
-
-export async function initEmbedder() {
-    _pipe = await pipeline('feature-extraction', LOCAL_MODEL);
-}
-
-// ─── Local ────────────────────────────────────────────────────────────────────
-
-async function embedLocal(text) {
-    if (!_pipe) throw new Error('CNZ embed: local embedder not initialized');
-    const out = await _pipe(text, { pooling: 'mean', normalize: true });
-    return Array.from(out.data);
-}
-
-// ─── OpenRouter (OpenAI-compatible) ──────────────────────────────────────────
+const OR_BASE = 'https://openrouter.ai/api/v1/embeddings';
 
 async function embedRemote(model, apiKey, text) {
     const res = await fetch(OR_BASE, {
@@ -47,10 +21,8 @@ async function embedRemote(model, apiKey, text) {
     return data.data[0].embedding;
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
-
 /**
- * Embed a single string using the configured source.
+ * Embed a single string. Requires embeddingSource: 'openrouter' with model + apiKey.
  * @param {{ source: string, model: string, apiKey: string }} cfg
  * @param {string} text
  * @returns {Promise<number[]>}
@@ -59,11 +31,11 @@ export async function embedWithSource(cfg, text) {
     if (cfg.source === 'openrouter' && cfg.model && cfg.apiKey) {
         return embedRemote(cfg.model, cfg.apiKey, text);
     }
-    return embedLocal(text);
+    throw new Error('CNZ embed: set embeddingSource to "openrouter" and provide a model and API key in CNZ settings.');
 }
 
 /**
- * Embed an array of strings. Sequential to avoid OOM / rate-limit bursts.
+ * Embed an array of strings sequentially.
  * @param {{ source: string, model: string, apiKey: string }} cfg
  * @param {string[]} texts
  * @returns {Promise<number[][]>}

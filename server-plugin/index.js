@@ -15,7 +15,6 @@
  */
 
 import { initDb, closeDb } from './db.js';
-import { initEmbedder }    from './embed.js';
 import { registerRoutes }  from './routes.js';
 
 export const info = {
@@ -30,8 +29,6 @@ export const info = {
 export async function init(router) {
     initDb();
     console.log('[CNZ plugin] SQLite DB initialized.');
-    await initEmbedder();
-    console.log('[CNZ plugin] Embedding model ready.');
     registerRoutes(router);
     console.log('[CNZ plugin] Routes registered at /api/plugins/cnz/.');
 }

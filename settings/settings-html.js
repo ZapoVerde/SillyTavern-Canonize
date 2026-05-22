@@ -186,13 +186,12 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
           <div class="cnz-settings-section-header">Retrieval Settings</div>
 
           <div class="cnz-settings-inline-row">
-            <label for="cnz-set-embedding-source">Embedding Source ${tip('"Local": bundled all-MiniLM-L6-v2, no API key needed. "OpenRouter": use any OpenRouter embedding model (e.g. qwen/qwen3-embedding-8b).')}</label>
+            <label for="cnz-set-embedding-source">Embedding Source ${tip('Currently only OpenRouter is supported. Provide a model ID (e.g. qwen/qwen3-embedding-8b) and your OpenRouter API key below.')}</label>
             <select id="cnz-set-embedding-source" class="cnz-select cnz-settings-select-sm">
-              <option value="local"       ${embedSource === 'local'       ? 'selected' : ''}>Local (all-MiniLM-L6-v2)</option>
-              <option value="openrouter"  ${embedSource === 'openrouter'  ? 'selected' : ''}>OpenRouter</option>
+              <option value="openrouter" selected>OpenRouter</option>
             </select>
           </div>
-          <div id="cnz-rag-remote-embed-rows" class="${isRemoteEmbed ? '' : 'cnz-hidden'}">
+          <div id="cnz-rag-remote-embed-rows">
             <div class="cnz-settings-inline-row">
               <label for="cnz-set-embedding-model">Embedding Model ${tip('OpenRouter model ID, e.g. qwen/qwen3-embedding-8b')}</label>
               <input id="cnz-set-embedding-model" type="text" class="cnz-input cnz-settings-input-wide"
