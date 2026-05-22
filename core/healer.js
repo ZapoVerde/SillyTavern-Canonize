@@ -56,7 +56,7 @@ async function _reconcileRagChunks(char, headAnchor) {
 
     try {
         const avatarKey = cnzAvatarKey(char.avatar);
-        const counts    = await anchorChunkCount(avatarKey);
+        const counts    = await anchorChunkCount(avatarKey, headAnchor.uuid);
 
         // ── Chat chunks ───────────────────────────────────────────────────────
         if ((counts.chunksForCharacter ?? 0) === 0) {
@@ -93,19 +93,18 @@ async function _reconcileRagChunks(char, headAnchor) {
         }
 
         // ── Lorebook entries ──────────────────────────────────────────────────
-        if ((counts.lbEntriesForCharacter ?? 0) === 0) {
-            const lbSnapshot = headAnchor.lorebook ?? {};
-            const lbName     = lbSnapshot.name ?? char?.data?.extensions?.world ?? char?.name;
-            const rawEntries = Object.values(lbSnapshot.entries ?? {});
-            const entries    = rawEntries
-                .filter(e => e.disable !== true && e.content?.trim())
-                .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
+        const lbSnapshot = headAnchor.lorebook ?? {};
+        const lbName     = lbSnapshot.name ?? char?.data?.extensions?.world ?? char?.name;
+        const rawEntries = Object.values(lbSnapshot.entries ?? {});
+        const entries    = rawEntries
+            .filter(e => e.disable !== true && e.content?.trim())
+            .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
 
-            if (entries.length && lbName) {
-                log('Healer', `Indexing ${entries.length} lorebook entries for "${lbName}"`);
-                await insertLorebookEntries(avatarKey, headAnchor.uuid, lbName, entries);
-                log('Healer', `Lorebook entries indexed`);
-            }
+        const lbIndexed  = counts.lbEntriesForAnchor ?? 0;
+        if (entries.length && lbName && lbIndexed < entries.length) {
+            log('Healer', `Indexing ${entries.length} lorebook entries for "${lbName}" (${lbIndexed} already indexed)`);
+            await insertLorebookEntries(avatarKey, headAnchor.uuid, lbName, entries);
+            log('Healer', `Lorebook entries indexed`);
         }
     } catch (err) {
         error('Healer', 'RAG auto-reconcile failed:', err);
