@@ -30,6 +30,7 @@
  */
 
 import { callPopup } from '../../../../../script.js';
+import { getStringHash } from '../../../../utils.js';
 import { state } from '../state.js';
 import { readDnaChain, findLkgAnchorByPosition, buildNodeFileFromAnchor } from './dna-chain.js';
 import { setDnaChain } from '../scheduler.js';
@@ -100,11 +101,14 @@ async function _reconcileRagChunks(char, headAnchor) {
             .filter(e => e.disable !== true && e.content?.trim())
             .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
 
-        const lbIndexed  = counts.lbEntriesForAnchor ?? 0;
-        if (entries.length && lbName && lbIndexed < entries.length) {
-            log('Healer', `Indexing ${entries.length} lorebook entries for "${lbName}" (${lbIndexed} already indexed)`);
-            await insertLorebookEntries(avatarKey, headAnchor.uuid, lbName, entries);
-            log('Healer', `Lorebook entries indexed`);
+        if (entries.length && lbName) {
+            const knownHashes = new Set(counts.lbHashesForAnchor ?? []);
+            const missing     = entries.filter(e => !knownHashes.has(getStringHash(e.content)));
+            if (missing.length) {
+                log('Healer', `Indexing ${missing.length}/${entries.length} lorebook entries for "${lbName}"`);
+                await insertLorebookEntries(avatarKey, headAnchor.uuid, lbName, missing);
+                log('Healer', `Lorebook entries indexed`);
+            }
         }
     } catch (err) {
         error('Healer', 'RAG auto-reconcile failed:', err);
