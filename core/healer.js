@@ -108,6 +108,7 @@ async function _reconcileRagChunks(char, headAnchor) {
                 log('Healer', `Indexing ${missing.length}/${entries.length} lorebook entries for "${lbName}"`);
                 await insertLorebookEntries(avatarKey, headAnchor.uuid, lbName, missing);
                 log('Healer', `Lorebook entries indexed`);
+                toastr.info(`CNZ: Auto-indexed ${missing.length} lorebook entries for "${lbName}".`);
             }
         }
     } catch (err) {
