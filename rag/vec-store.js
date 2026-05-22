@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/vec-store.js
  * @stamp {"utc":"2026-05-22T00:00:00.000Z"}
- * @version 1.0.0
+ * @version 1.1.0
  * @architectural-role IO Wrapper
  * @description
  * Client-side interface to the CNZ server plugin's SQLite vector store.
@@ -14,6 +14,8 @@
  * @api-declaration
  * insertSyncChunks(avatarKey, anchorUuid, chatFile, chunks, pairOffset)
  * querySyncChunks(avatarKey, validAnchorUuids, queryText, topK)
+ * insertLorebookEntries(avatarKey, anchorUuid, lorebookName, entries)
+ * queryLorebookEntries(validAnchorUuids, queryText, topK)
  * purgeAnchorChunks(anchorUuid)
  * purgeCharacterChunks(avatarKey)
  * anchorChunkCount(avatarKey, anchorUuid)
@@ -28,12 +30,15 @@
 import { getRequestHeaders } from '../../../../../script.js';
 import { getStringHash }     from '../../../../utils.js';
 import { getSettings }       from '../core/settings.js';
+import { log }               from '../log.js';
 
 const BASE = '/api/plugins/cnz';
 
 function embedCfg() {
     const s = getSettings();
-    return { embeddingSource: s.ragEmbeddingSource ?? 'local', embeddingModel: s.ragEmbeddingModel ?? '', embeddingApiKey: s.ragEmbeddingApiKey ?? '' };
+    const cfg = { embeddingSource: s.ragEmbeddingSource ?? 'openrouter', embeddingModel: s.ragEmbeddingModel ?? '' };
+    log('VecStore', `embedCfg source=${cfg.embeddingSource} model=${cfg.embeddingModel || '(unset)'}`);
+    return cfg;
 }
 
 async function post(path, body) {
@@ -121,15 +126,50 @@ export async function purgeCharacterChunks(avatarKey) {
 }
 
 /**
- * Returns the number of indexed chunks for an anchor and/or character. Used
- * by reconcileWorldState and for health checks.
+ * Returns the number of indexed chunks and lorebook entries for an anchor
+ * and/or character. Used by reconcileWorldState and for health checks.
  * @param {string} [avatarKey]
  * @param {string} [anchorUuid]
- * @returns {Promise<{ chunksForAnchor?:number, chunksForCharacter?:number }>}
+ * @returns {Promise<{ chunksForAnchor?:number, chunksForCharacter?:number, lbEntriesForCharacter?:number }>}
  */
 export async function anchorChunkCount(avatarKey, anchorUuid) {
     const params = {};
     if (avatarKey)  params.avatarKey  = avatarKey;
     if (anchorUuid) params.anchorUuid = anchorUuid;
     return get('/health', params);
+}
+
+/**
+ * Embeds and inserts lorebook entries for an anchor into the DB. Skips entries
+ * that are already indexed (upsert by hash + anchor_uuid unique constraint).
+ *
+ * @param {string} avatarKey     Sanitized avatar filename.
+ * @param {string} anchorUuid    UUID of the owning anchor.
+ * @param {string} lorebookName  Name of the lorebook (for WORLDINFO_FORCE_ACTIVATE).
+ * @param {{ uid:number, content:string, keys:string[], comment:string }[]} entries
+ * @returns {Promise<{ inserted: number }>}
+ */
+export async function insertLorebookEntries(avatarKey, anchorUuid, lorebookName, entries) {
+    if (!entries.length) return { inserted: 0 };
+    const payload = entries.map(e => ({
+        hash:    getStringHash(e.content),
+        uid:     e.uid,
+        content: e.content,
+        keys:    e.keys ?? [],
+    }));
+    return post('/insert-lorebook', { avatarKey, anchorUuid, lorebookName, entries: payload, ...embedCfg() });
+}
+
+/**
+ * Queries the DB for lorebook entries semantically similar to queryText.
+ * Returns entries for WORLDINFO_FORCE_ACTIVATE — caller dedupes against
+ * already-active keyword-matched entries.
+ *
+ * @param {string[]} validAnchorUuids  UUIDs from the current DNA chain.
+ * @param {string}   queryText         Recent chat context used as the query.
+ * @param {number}   [topK=3]
+ * @returns {Promise<{ lorebookName:string, entryUid:number, score:number }[]>}
+ */
+export async function queryLorebookEntries(validAnchorUuids, queryText, topK = 3) {
+    return post('/query-lorebook', { queryText, validAnchorUuids, topK, ...embedCfg() });
 }

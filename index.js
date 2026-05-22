@@ -33,7 +33,7 @@ import { readDnaChain } from './core/dna-chain.js';
 import { runCnzSync } from './core/sync.js';
 import { onChatChanged } from './core/session.js';
 import { writeChunkHeaderToChat, renderChunkChatLabel } from './rag/chat-labels.js';
-import { onGenerationStarted } from './rag/generation-hook.js';
+import { onGenerationStarted, prefetchRag } from './rag/generation-hook.js';
 import { injectModal } from './modal/modal-setup.js';
 import { openReviewModal } from './modal/orchestrator.js';
 import { openOrphanModal } from './modal/orphan-modal.js';
@@ -60,6 +60,7 @@ async function init() {
         log('Init', 'Wand button injected.');
 
         eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
+        eventSource.on(event_types.MESSAGE_SENT, () => prefetchRag());
         eventSource.on(event_types.GENERATION_STARTED, () => onGenerationStarted().catch(err => error('RagHook', err)));
 
         $(document).on('click', '.cnz-review-link', (e) => {

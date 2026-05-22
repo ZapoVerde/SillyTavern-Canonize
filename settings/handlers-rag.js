@@ -24,6 +24,32 @@ import { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE } from '.
 import { getSettings } from './data.js';
 import { error } from '../log.js';
 
+let _orModelCache = null;
+
+const OPENAI_EMBED_MODELS = [
+    { id: 'text-embedding-3-large', label: 'text-embedding-3-large' },
+    { id: 'text-embedding-3-small', label: 'text-embedding-3-small' },
+    { id: 'text-embedding-ada-002',  label: 'text-embedding-ada-002' },
+];
+
+function _renderEmbedModelList(items, showingAll, withToggle = false) {
+    const $list   = $('#cnz-embedding-model-list');
+    const current = $('#cnz-set-embedding-model').val().trim();
+    const sorted  = [...items].sort((a, b) => a.id.localeCompare(b.id));
+    const opts    = ['<option value="">— Select a model —</option>'];
+    if (withToggle) {
+        const lbl = showingAll
+            ? '— Showing all models · click to filter to embedding-only —'
+            : '— Showing embedding models · click to show all —';
+        opts.unshift(`<option value="__toggle__">${lbl}</option>`);
+    }
+    opts.push(...sorted.map(({ id, label }) => {
+        const sel = id === current ? ' selected' : '';
+        return `<option value="${$('<span>').text(id).html()}"${sel}>${$('<span>').text(label || id).html()}</option>`;
+    }));
+    $list.html(opts.join('')).data('showing-all', showingAll).removeClass('cnz-hidden');
+}
+
 export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
 
     $('#cnz-set-enable-rag').on('change', function () {
@@ -108,16 +134,10 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
     $('#cnz-set-embedding-source').on('change', function () {
         getSettings().ragEmbeddingSource = $(this).val();
         saveSettingsDebounced(); updateDirtyIndicator();
-        $('#cnz-rag-remote-embed-rows').toggleClass('cnz-hidden', $(this).val() === 'local');
     });
 
     $('#cnz-set-embedding-model').on('input', function () {
         getSettings().ragEmbeddingModel = $(this).val().trim();
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-embedding-api-key').on('input', function () {
-        getSettings().ragEmbeddingApiKey = $(this).val();
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
@@ -143,6 +163,56 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
 
     $('#cnz-edit-injection-template').on('click', () =>
         openPromptModal('ragInjectionTemplate', 'Edit Injection Template', DEFAULT_RAG_INJECTION_TEMPLATE, ['text']));
+
+    // ── Embedding model browser ───────────────────────────────────────────────
+    $('#cnz-browse-embedding-model').on('click', async function () {
+        const source = getSettings().ragEmbeddingSource ?? 'openrouter';
+        if (source !== 'openrouter') {
+            _renderEmbedModelList(OPENAI_EMBED_MODELS, false, false);
+            return;
+        }
+        const $btn = $(this);
+        const orig = $btn.html();
+        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i>');
+        try {
+            if (!_orModelCache) {
+                const [embResp, allResp] = await Promise.all([
+                    fetch('https://openrouter.ai/api/v1/models?output_modalities=embeddings'),
+                    fetch('https://openrouter.ai/api/v1/models'),
+                ]);
+                const toEntry = m => ({ id: m.id, label: m.name ? `${m.id} — ${m.name}` : m.id });
+                const embModels = embResp.ok ? ((await embResp.json()).data ?? []).map(toEntry) : [];
+                const allModels = allResp.ok ? ((await allResp.json()).data ?? []).map(toEntry) : [];
+                const embIds = new Set(embModels.map(m => m.id));
+                _orModelCache = {
+                    embeddings: embModels,
+                    all: [...embModels, ...allModels.filter(m => !embIds.has(m.id))],
+                };
+            }
+            const { embeddings, all } = _orModelCache;
+            _renderEmbedModelList(embeddings.length ? embeddings : all, !embeddings.length, true);
+        } catch (err) {
+            error('Settings', 'OpenRouter model list fetch failed:', err);
+            toastr.error(`Could not fetch model list: ${err?.message || err}`);
+        } finally {
+            $btn.prop('disabled', false).html(orig);
+        }
+    });
+
+    $('#cnz-embedding-model-list').on('change', function () {
+        const val = String($(this).val() || '').trim();
+        if (val === '__toggle__') {
+            if (!_orModelCache) return;
+            const nowShowingAll = !$(this).data('showing-all');
+            _renderEmbedModelList(
+                nowShowingAll ? _orModelCache.all : _orModelCache.embeddings,
+                nowShowingAll, true,
+            );
+            return;
+        }
+        if (val) $('#cnz-set-embedding-model').val(val).trigger('input');
+        $(this).addClass('cnz-hidden');
+    });
 }
 
 export function updateRagAiControlsVisibility() {

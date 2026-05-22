@@ -186,23 +186,23 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
           <div class="cnz-settings-section-header">Retrieval Settings</div>
 
           <div class="cnz-settings-inline-row">
-            <label for="cnz-set-embedding-source">Embedding Source ${tip('Currently only OpenRouter is supported. Provide a model ID (e.g. qwen/qwen3-embedding-8b) and your OpenRouter API key below.')}</label>
+            <label for="cnz-set-embedding-source">Embedding Source ${tip('Embedding provider. Uses the API key already stored in ST\'s connection settings — no separate key needed.')}</label>
             <select id="cnz-set-embedding-source" class="cnz-select cnz-settings-select-sm">
               <option value="openrouter" selected>OpenRouter</option>
+              <option value="openai">OpenAI</option>
             </select>
           </div>
           <div id="cnz-rag-remote-embed-rows">
             <div class="cnz-settings-inline-row">
-              <label for="cnz-set-embedding-model">Embedding Model ${tip('OpenRouter model ID, e.g. qwen/qwen3-embedding-8b')}</label>
-              <input id="cnz-set-embedding-model" type="text" class="cnz-input cnz-settings-input-wide"
-                     placeholder="e.g. qwen/qwen3-embedding-8b"
-                     value="${escapeHtml(s.ragEmbeddingModel ?? '')}">
+              <label for="cnz-set-embedding-model">Embedding Model ${tip('Model ID for the selected provider. Click Browse to pick from a live list. OpenRouter: provider/model-name (e.g. openai/text-embedding-3-small). OpenAI: model name only (e.g. text-embedding-3-small).')}</label>
+              <div style="display:flex;gap:4px;align-items:center">
+                <input id="cnz-set-embedding-model" type="text" class="cnz-input cnz-settings-input-wide"
+                       placeholder="e.g. openai/text-embedding-3-small"
+                       value="${escapeHtml(s.ragEmbeddingModel ?? '')}">
+                <button id="cnz-browse-embedding-model" class="cnz-btn cnz-btn-secondary cnz-btn-sm" title="Browse available embedding models for the selected provider">Browse</button>
+              </div>
             </div>
-            <div class="cnz-settings-inline-row">
-              <label for="cnz-set-embedding-api-key">API Key</label>
-              <input id="cnz-set-embedding-api-key" type="password" class="cnz-input cnz-settings-input-wide"
-                     value="${escapeHtml(s.ragEmbeddingApiKey ?? '')}">
-            </div>
+            <select id="cnz-embedding-model-list" class="cnz-select cnz-hidden" style="width:100%;margin-top:4px;font-size:0.8rem"></select>
           </div>
 
           <div class="cnz-settings-inline-row">

@@ -1,14 +1,15 @@
 /**
  * @file data/default-user/extensions/canonize/core/healer.js
  * @stamp {"utc":"2026-05-22T00:00:00.000Z"}
- * @version 2.0.0
+ * @version 2.1.0
  * @architectural-role Orchestrator
  * @description
  * Branch detection and state restoration. Walks the DNA chain to find the
  * deepest still-valid anchor, then sequences the restore calls to bring
  * lorebook and hooks back into coherence with the current chat position.
  * Also reconciles world state silently when the timeline is intact but external
- * storage has drifted (e.g. left behind by a different chat).
+ * storage has drifted (e.g. left behind by a different chat). Includes auto
+ * RAG DB rebuild from chat stamp data when the vector DB is empty.
  *
  * Restore IO lives in healer-restore.js. User-initiated maintenance operations
  * (purgeAndRebuild, runNewChatCleanup, purgeCnzFiles) live in maintenance.js.
@@ -24,7 +25,8 @@
  *     purity: mutates
  *     state_ownership: [state._dnaChain, state._lorebookName]
  *     external_io: [callPopup, toastr, lorebook via healer-restore.js,
- *                   healer-restore.js, scheduler.setDnaChain]
+ *                   healer-restore.js, scheduler.setDnaChain,
+ *                   /api/plugins/cnz/health, /api/plugins/cnz/insert-chunks]
  */
 
 import { callPopup } from '../../../../../script.js';
@@ -32,18 +34,90 @@ import { state } from '../state.js';
 import { readDnaChain, findLkgAnchorByPosition, buildNodeFileFromAnchor } from './dna-chain.js';
 import { setDnaChain } from '../scheduler.js';
 import { lbGetLorebook } from '../lorebook/api.js';
-import { error } from '../log.js';
+import { error, log } from '../log.js';
 import { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
+import { getSettings } from './settings.js';
+import { buildProsePairs, formatPairsAsTranscript } from './transcript.js';
+import { anchorChunkCount, insertSyncChunks, insertLorebookEntries } from '../rag/vec-store.js';
+import { cnzAvatarKey } from '../rag/api.js';
 
 // Re-export restore ops — callers that import from healer.js keep working.
 export { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
+
+// ─── RAG Auto-Reconciliation ──────────────────────────────────────────────────
+
+/**
+ * Silently rebuilds the vector DB from cnz_chunk_header stamps already written
+ * to chat messages, when RAG is enabled but the DB is empty for this character.
+ * No-ops if RAG is disabled, the plugin is unreachable, or no stamps are found.
+ */
+async function _reconcileRagChunks(char, headAnchor) {
+    if (!getSettings().enableRag) return;
+
+    try {
+        const avatarKey = cnzAvatarKey(char.avatar);
+        const counts    = await anchorChunkCount(avatarKey);
+
+        // ── Chat chunks ───────────────────────────────────────────────────────
+        if ((counts.chunksForCharacter ?? 0) === 0) {
+            log('Healer', 'RAG DB empty — rebuilding chat chunks from stamps');
+
+            const ctx      = SillyTavern.getContext();
+            const allPairs = buildProsePairs(ctx.chat ?? []);
+            const chatFile = ctx.getCurrentChatFile?.() ?? null;
+            const chunks   = [];
+            let prevEnd    = 0;
+
+            for (let i = 0; i < allPairs.length; i++) {
+                const pair    = allPairs[i];
+                const lastMsg = pair?.messages?.[pair.messages.length - 1];
+                if (!lastMsg?.extra?.cnz_chunk_header) continue;
+                const content = formatPairsAsTranscript(allPairs.slice(prevEnd, i + 1));
+                chunks.push({
+                    chunkIndex: chunks.length,
+                    header:     lastMsg.extra.cnz_chunk_header,
+                    turnRange:  lastMsg.extra.cnz_turn_label?.replace(/^\*+\s*Memory:\s*/i, '') ?? `Pairs ${prevEnd + 1}–${i + 1}`,
+                    content,
+                    pairStart:  prevEnd,
+                    pairEnd:    i + 1,
+                    status:     'complete',
+                });
+                prevEnd = i + 1;
+            }
+
+            if (chunks.length) {
+                await insertSyncChunks(avatarKey, headAnchor.uuid, chatFile, chunks, 0);
+                log('Healer', `RAG auto-reconcile: indexed ${chunks.length} chat chunks`);
+                toastr.info(`CNZ: Auto-indexed ${chunks.length} chunks from chat history.`);
+            }
+        }
+
+        // ── Lorebook entries ──────────────────────────────────────────────────
+        if ((counts.lbEntriesForCharacter ?? 0) === 0) {
+            const lbSnapshot = headAnchor.lorebook ?? {};
+            const lbName     = lbSnapshot.name ?? char?.data?.extensions?.world ?? char?.name;
+            const rawEntries = Object.values(lbSnapshot.entries ?? {});
+            const entries    = rawEntries
+                .filter(e => e.disable !== true && e.content?.trim())
+                .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
+
+            if (entries.length && lbName) {
+                log('Healer', `Indexing ${entries.length} lorebook entries for "${lbName}"`);
+                await insertLorebookEntries(avatarKey, headAnchor.uuid, lbName, entries);
+                log('Healer', `Lorebook entries indexed`);
+            }
+        }
+    } catch (err) {
+        error('Healer', 'RAG auto-reconcile failed:', err);
+    }
+}
 
 // ─── Silent Reconciliation ────────────────────────────────────────────────────
 
 /**
  * Called when the timeline is intact (head hash matches). Checks whether the
- * lorebook on disk matches the head anchor. Restores silently if drifted —
- * no confirmation needed since the timeline is known-good.
+ * lorebook on disk matches the head anchor, and whether the RAG vector DB has
+ * chunks for this character. Restores/rebuilds silently if either has drifted.
  * @param {object} char        Current character object from context.
  * @param {object} headAnchor  The head CnzAnchor from the DNA chain.
  */
@@ -57,19 +131,21 @@ async function reconcileWorldState(char, headAnchor) {
         } catch (_) { /* unreachable lorebook — skip */ }
     }
 
-    if (!lorebookStale) return;
+    if (lorebookStale) {
+        try {
+            const nodeFile  = buildNodeFileFromAnchor(headAnchor);
+            const nodeDummy = { nodeId: headAnchor.uuid };
 
-    try {
-        const nodeFile  = buildNodeFileFromAnchor(headAnchor);
-        const nodeDummy = { nodeId: headAnchor.uuid };
-
-        await restoreLorebookToNode(char, nodeDummy, nodeFile);
-        restoreHooksToNode(char, nodeDummy, nodeFile);
-        toastr.info('CNZ: World state corrected to match current chat.');
-    } catch (err) {
-        error('Healer', 'reconcileWorldState failed:', err);
-        toastr.warning('CNZ: World state may not match current chat — use Purge & Rebuild if needed.');
+            await restoreLorebookToNode(char, nodeDummy, nodeFile);
+            restoreHooksToNode(char, nodeDummy, nodeFile);
+            toastr.info('CNZ: World state corrected to match current chat.');
+        } catch (err) {
+            error('Healer', 'reconcileWorldState failed:', err);
+            toastr.warning('CNZ: World state may not match current chat — use Purge & Rebuild if needed.');
+        }
     }
+
+    await _reconcileRagChunks(char, headAnchor);
 }
 
 // ─── New Chat Guard ───────────────────────────────────────────────────────────

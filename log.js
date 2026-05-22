@@ -47,6 +47,7 @@ const LOG_FILE   = 'cnz_debug.log';
 function _formatLine(level, tag, args) {
     const ts  = new Date().toISOString();
     const msg = args.map(a => {
+        if (a instanceof Error) return a.stack ?? a.toString();
         try { return typeof a === 'object' ? JSON.stringify(a) : String(a); }
         catch (_) { return String(a); }
     }).join(' ');

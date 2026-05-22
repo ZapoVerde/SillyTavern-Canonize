@@ -120,11 +120,8 @@ function refreshSettingsUI() {
     $('#cnz-set-rag-max-concurrent').val(s.maxConcurrentCalls ?? 3);
     $('#cnz-set-rag-retries').val(s.ragMaxRetries ?? 1);
 
-    const embSrc = s.ragEmbeddingSource ?? 'local';
-    $('#cnz-set-embedding-source').val(embSrc);
-    $('#cnz-rag-remote-embed-rows').toggleClass('cnz-hidden', embSrc === 'local');
+    $('#cnz-set-embedding-source').val(s.ragEmbeddingSource ?? 'openrouter');
     $('#cnz-set-embedding-model').val(s.ragEmbeddingModel ?? '');
-    $('#cnz-set-embedding-api-key').val(s.ragEmbeddingApiKey ?? '');
     $('#cnz-set-rag-score-threshold').val(s.ragScoreThreshold ?? 0.25);
     $('#cnz-set-rag-retrieval-topk').val(s.ragRetrievalTopK ?? 5);
     $('#cnz-set-rag-lb-retrieval-topk').val(s.ragLbRetrievalTopK ?? 3);
