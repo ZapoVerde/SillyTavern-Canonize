@@ -6,7 +6,7 @@
  * @description
  * Branch detection and state restoration. Walks the DNA chain to find the
  * deepest still-valid anchor, then sequences the restore calls to bring
- * lorebook, hooks, and RAG back into coherence with the current chat position.
+ * lorebook and hooks back into coherence with the current chat position.
  * Also reconciles world state silently when the timeline is intact but external
  * storage has drifted (e.g. left behind by a different chat).
  *
@@ -17,7 +17,7 @@
  * runHealer(char, chatFileName)
  *
  * Re-exports (from healer-restore.js, for backward compat):
- * restoreLorebookToNode, restoreHooksToNode, restoreRagToNode
+ * restoreLorebookToNode, restoreHooksToNode
  *
  * @contract
  *   assertions:
@@ -28,25 +28,22 @@
  */
 
 import { callPopup } from '../../../../../script.js';
-import { extension_settings } from '../../../../extensions.js';
 import { state } from '../state.js';
 import { readDnaChain, findLkgAnchorByPosition, buildNodeFileFromAnchor } from './dna-chain.js';
 import { setDnaChain } from '../scheduler.js';
 import { lbGetLorebook } from '../lorebook/api.js';
-import { cnzAvatarKey } from '../rag/api.js';
 import { error } from '../log.js';
-import { restoreLorebookToNode, restoreHooksToNode, restoreRagToNode } from './healer-restore.js';
+import { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
 
 // Re-export restore ops — callers that import from healer.js keep working.
-export { restoreLorebookToNode, restoreHooksToNode, restoreRagToNode } from './healer-restore.js';
+export { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
 
 // ─── Silent Reconciliation ────────────────────────────────────────────────────
 
 /**
  * Called when the timeline is intact (head hash matches). Checks whether the
- * lorebook on disk and RAG attachments match the head anchor. Restores silently
- * from the head anchor if either has drifted — no confirmation needed since the
- * timeline is known-good.
+ * lorebook on disk matches the head anchor. Restores silently if drifted —
+ * no confirmation needed since the timeline is known-good.
  * @param {object} char        Current character object from context.
  * @param {object} headAnchor  The head CnzAnchor from the DNA chain.
  */
@@ -60,46 +57,15 @@ async function reconcileWorldState(char, headAnchor) {
         } catch (_) { /* unreachable lorebook — skip */ }
     }
 
-    const cnzRagPrefix   = `cnz_${cnzAvatarKey(char.avatar)}_rag_`;
-    const allAttachments = extension_settings.character_attachments?.[char.avatar] ?? [];
-    const cnzAttachments = allAttachments.filter(a => a.name?.startsWith(cnzRagPrefix));
-
-    let ragStale = false;
-    const expectedRag = headAnchor.ragUrl ? headAnchor.ragUrl.split('/').pop() : null;
-    // Guard: if the anchor expects a RAG file but the character has no registry
-    // key at all, skip — the attachments registry likely hasn't loaded yet
-    // (cold-boot race). An absent key differs from []: [] means registered-but-empty.
-    const charKeyExists = Object.prototype.hasOwnProperty.call(
-        extension_settings.character_attachments ?? {}, char.avatar
-    );
-    if (!expectedRag || charKeyExists) {
-        ragStale = expectedRag
-            ? cnzAttachments.length !== 1 || cnzAttachments[0].name !== expectedRag
-            : cnzAttachments.length > 0;
-    }
-
-    if (!lorebookStale && !ragStale && !legacyRagCleared) return;
+    if (!lorebookStale) return;
 
     try {
         const nodeFile  = buildNodeFileFromAnchor(headAnchor);
         const nodeDummy = { nodeId: headAnchor.uuid };
 
-        if (lorebookStale) {
-            await restoreLorebookToNode(char, nodeDummy, nodeFile);
-            restoreHooksToNode(char, nodeDummy, nodeFile);
-        }
-        if (ragStale) {
-            try {
-                await restoreRagToNode(char, nodeFile);
-            } catch (err) {
-                error('Healer', 'reconcileWorldState: RAG reconciliation failed:', err);
-                toastr.warning('CNZ: World state partially corrected — RAG index may be inconsistent.');
-                return;
-            }
-        }
-        if (lorebookStale || ragStale || legacyRagCleared) {
-            toastr.info('CNZ: World state corrected to match current chat.');
-        }
+        await restoreLorebookToNode(char, nodeDummy, nodeFile);
+        restoreHooksToNode(char, nodeDummy, nodeFile);
+        toastr.info('CNZ: World state corrected to match current chat.');
     } catch (err) {
         error('Healer', 'reconcileWorldState failed:', err);
         toastr.warning('CNZ: World state may not match current chat — use Purge & Rebuild if needed.');
@@ -171,7 +137,6 @@ export async function runHealer(char, _chatFileName) {
         <ul>
             <li>Lorebook entries rolled back</li>
             <li>Narrative hooks rolled back</li>
-            <li>RAG file reconciled</li>
         </ul>
         <p>This cannot be undone.</p>`,
         'confirm',
@@ -191,14 +156,7 @@ export async function runHealer(char, _chatFileName) {
         const nodeDummy = { nodeId: lkgRef.anchor.uuid };
 
         await restoreLorebookToNode(char, nodeDummy, nodeFile);
-        await restoreHooksToNode(char, nodeDummy, nodeFile);
-
-        try {
-            await restoreRagToNode(char, nodeFile);
-        } catch (err) {
-            error('Healer', 'RAG reconciliation failed:', err);
-            toastr.warning('CNZ: Branch healed but RAG reconciliation failed — vector index may be inconsistent.');
-        }
+        restoreHooksToNode(char, nodeDummy, nodeFile);
 
         state._dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
         setDnaChain(state._dnaChain);

@@ -4,30 +4,24 @@
  * @version 1.0.0
  * @architectural-role IO Wrapper
  * @description
- * Moves lorebook, hooks, and RAG attachment state in and out of external
- * storage during a heal operation. Receives fully-resolved node file objects
- * from callers — no anchor resolution, no sequencing, no decisions about what
- * to restore. One function = one write.
+ * Moves lorebook and hook state in and out of external storage during a heal
+ * operation. Receives fully-resolved node file objects from callers — no
+ * anchor resolution, no sequencing, no decisions about what to restore.
+ * One function = one write.
  *
  * @api-declaration
  * restoreLorebookToNode(char, node, nodeFile)
  * restoreHooksToNode(char, node, nodeFile)
- * restoreRagToNode(char, nodeFile)
- * cnzDeleteFile(path)
  *
  * @contract
  *   assertions:
  *     purity: mutates
  *     state_ownership: [state._lorebookName, state._lorebookData, state._draftLorebook]
- *     external_io: [/api/worldinfo/*, /api/files/delete, /db-purge, /db-ingest,
- *                   extension_settings.character_attachments, saveSettingsDebounced]
+ *     external_io: [/api/worldinfo/*]
  */
 
-import { extension_settings } from '../../../../extensions.js';
-import { saveSettingsDebounced } from '../../../../../script.js';
 import { state } from '../state.js';
 import { lbSaveLorebook } from '../lorebook/api.js';
-import { cnzAvatarKey } from '../rag/api.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
 
 /**
@@ -60,42 +54,3 @@ export function restoreHooksToNode(char, _node, nodeFile = null) {
     writeCnzSummaryPrompt(char.avatar, hooksText, anchorUuid);
 }
 
-/**
- * Reconciles RAG character attachments to the state recorded in `nodeFile`.
- * Removes attachments belonging to orphaned nodes, deletes their files from
- * the Data Bank, then triggers a full vector purge and re-ingest.
- * @param {object} char      Character object from ST context.
- * @param {object} nodeFile  Full node file object with state.ragFiles.
- */
-export async function restoreRagToNode(char, nodeFile) {
-    const survivingFiles = nodeFile.state?.ragFiles ?? [];
-
-    const allAttachments = extension_settings.character_attachments?.[char.avatar] ?? [];
-    const cnzRagPrefix   = `cnz_${cnzAvatarKey(char.avatar)}_rag_`;
-
-    const toRemove = allAttachments.filter(
-        a => a.name?.startsWith(cnzRagPrefix) && !survivingFiles.includes(a.name)
-    );
-    const toKeep = allAttachments.filter(a => !toRemove.includes(a));
-
-    extension_settings.character_attachments[char.avatar] = toKeep;
-    saveSettingsDebounced();
-
-    for (const attachment of toRemove) {
-        await cnzDeleteFile(attachment.url);
-    }
-
-    const { executeSlashCommandsWithOptions } = SillyTavern.getContext();
-    await executeSlashCommandsWithOptions('/db-purge');
-    await executeSlashCommandsWithOptions('/db-ingest');
-}
-
-/**
- * Lazy-loaded delegation to rag/api.cnzDeleteFile.
- * Deferred to avoid a circular dependency at module load time.
- * @param {string} path
- */
-export async function cnzDeleteFile(path) {
-    const { cnzDeleteFile: _del } = await import('../rag/api.js');
-    return _del(path);
-}

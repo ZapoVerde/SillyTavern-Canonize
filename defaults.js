@@ -16,8 +16,9 @@
  * DEFAULT_LOREBOOK_SYNC_PROMPT    — lorebook curator system prompt.
  * DEFAULT_HOOKSEEKER_PROMPT       — narrative chronicler system prompt.
  * DEFAULT_RAG_CLASSIFIER_PROMPT   — narrative memory classifier system prompt.
- * DEFAULT_TARGETED_UPDATE_PROMPT  — targeted fact updater system prompt.
- * DEFAULT_TARGETED_NEW_PROMPT     — targeted fact extractor system prompt.
+ * DEFAULT_TARGETED_UPDATE_PROMPT   — targeted fact updater system prompt.
+ * DEFAULT_TARGETED_NEW_PROMPT      — targeted fact extractor system prompt.
+ * DEFAULT_RAG_INJECTION_TEMPLATE   — injection wrapper template ({{text}} placeholder).
  *
  * @contract
  *   assertions:
@@ -214,3 +215,7 @@ NO INFORMATION FOUND
 Keys: keyword1, keyword2
 [Full content for this record.]
 `;
+
+export const DEFAULT_RAG_INJECTION_TEMPLATE =
+`[The following are archived narrative memories retrieved for the current context:]
+{{text}}`;

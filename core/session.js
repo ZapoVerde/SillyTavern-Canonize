@@ -49,7 +49,6 @@ export function resetSessionState() {
     state._parentNodeLorebook  = null;
     state._priorSituation      = '';
     state._beforeSituation     = '';
-    state._lastRagUrl          = '';
     resetStagedState();
 }
 

@@ -20,7 +20,7 @@
  *       _lorebookData, _draftLorebook, _lastKnownAvatar,
  *       _lorebookName, _lorebookSuggestions,
  *       _ragChunks, _stagedProsePairs, _stagedPairOffset, _splitPairIdx,
- *       _lastRagUrl, _priorSituation, _beforeSituation, _parentNodeLorebook,
+ *       _priorSituation, _beforeSituation, _parentNodeLorebook,
  *       _pendingOrphans, _dnaChain,
  *       _currentStep, _lorebookLoading, _hooksLoading,
  *       _lbActiveIngesterIndex, _lbPendingWrite,
@@ -34,6 +34,7 @@ import {
     DEFAULT_RAG_CLASSIFIER_PROMPT,
     DEFAULT_TARGETED_UPDATE_PROMPT,
     DEFAULT_TARGETED_NEW_PROMPT,
+    DEFAULT_RAG_INJECTION_TEMPLATE,
 } from './defaults.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -69,6 +70,14 @@ export const PROFILE_DEFAULTS = Object.freeze({
     ragChunkSize:             2,
     ragChunkOverlap:          0,
     ragClassifierHistory:     0,
+    ragRetrievalTopK:         5,
+    ragLbRetrievalTopK:       3,
+    ragScoreThreshold:        0.25,
+    ragInjectionDepth:        0,
+    ragInjectionTemplate:     DEFAULT_RAG_INJECTION_TEMPLATE,
+    ragEmbeddingSource:       'local',
+    ragEmbeddingModel:        '',
+    ragEmbeddingApiKey:       '',
     ragClassifierPrompt:      DEFAULT_RAG_CLASSIFIER_PROMPT,
     targetedUpdatePrompt:     DEFAULT_TARGETED_UPDATE_PROMPT,
     targetedNewPrompt:        DEFAULT_TARGETED_NEW_PROMPT,
@@ -115,7 +124,6 @@ export const state = {
     _splitPairIdx:        0,
 
     // ── Anchor fields — set each sync cycle ────────────────────────────────────
-    _lastRagUrl:          '',
     _priorSituation:      '',
     /** hooks text from before the last sync; read from parent node's state.hooks */
     _beforeSituation:     '',

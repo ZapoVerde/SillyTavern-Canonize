@@ -1,0 +1,135 @@
+/**
+ * @file data/default-user/extensions/canonize/rag/vec-store.js
+ * @stamp {"utc":"2026-05-22T00:00:00.000Z"}
+ * @version 1.0.0
+ * @architectural-role IO Wrapper
+ * @description
+ * Client-side interface to the CNZ server plugin's SQLite vector store.
+ * Translates CNZ domain concepts (anchors, chunks, avatarKeys) into HTTP calls
+ * to /api/plugins/cnz/*. All embedding generation happens server-side.
+ *
+ * If the plugin is not installed, every call rejects with a clear error message
+ * so the caller can surface it via toastr rather than silently failing.
+ *
+ * @api-declaration
+ * insertSyncChunks(avatarKey, anchorUuid, chatFile, chunks, pairOffset)
+ * querySyncChunks(avatarKey, validAnchorUuids, queryText, topK)
+ * purgeAnchorChunks(anchorUuid)
+ * purgeCharacterChunks(avatarKey)
+ * anchorChunkCount(avatarKey, anchorUuid)
+ *
+ * @contract
+ *   assertions:
+ *     purity: mutates
+ *     state_ownership: [none]
+ *     external_io: [/api/plugins/cnz/*]
+ */
+
+import { getRequestHeaders } from '../../../../../script.js';
+import { getStringHash }     from '../../../../utils.js';
+import { getSettings }       from '../core/settings.js';
+
+const BASE = '/api/plugins/cnz';
+
+function embedCfg() {
+    const s = getSettings();
+    return { embeddingSource: s.ragEmbeddingSource ?? 'local', embeddingModel: s.ragEmbeddingModel ?? '', embeddingApiKey: s.ragEmbeddingApiKey ?? '' };
+}
+
+async function post(path, body) {
+    const res = await fetch(`${BASE}${path}`, {
+        method:  'POST',
+        headers: { ...getRequestHeaders(), 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(`CNZ vec-store ${path}: ${err.error ?? res.statusText}`);
+    }
+    return res.json();
+}
+
+async function get(path, params = {}) {
+    const qs  = new URLSearchParams(params).toString();
+    const url = qs ? `${BASE}${path}?${qs}` : `${BASE}${path}`;
+    const res = await fetch(url, { headers: getRequestHeaders() });
+    if (!res.ok) throw new Error(`CNZ vec-store GET ${path}: ${res.statusText}`);
+    return res.json();
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Inserts classified RAG chunks for an anchor into the DB. Skips chunks that
+ * are already indexed (upsert by hash + anchor_uuid unique constraint).
+ *
+ * @param {string} avatarKey    Sanitized avatar filename (from cnzAvatarKey).
+ * @param {string} anchorUuid   UUID of the committing anchor.
+ * @param {string|null} chatFile  ST chat filename, for catalog queries.
+ * @param {{ chunkIndex:number, header:string, turnRange:string, content:string,
+ *           pairStart:number, pairEnd:number, status:string }[]} chunks
+ *   Completed chunks from state._ragChunks.
+ * @param {number} pairOffset   Absolute pair offset (state._stagedPairOffset).
+ * @returns {Promise<{ inserted: number }>}
+ */
+export async function insertSyncChunks(avatarKey, anchorUuid, chatFile, chunks, pairOffset) {
+    const settled = chunks.filter(c => c.status === 'complete' || c.status === 'manual');
+    if (!settled.length) return { inserted: 0 };
+
+    const payload = settled.map(c => ({
+        hash:      getStringHash(c.content),
+        pairStart: pairOffset + c.pairStart,
+        pairEnd:   pairOffset + c.pairEnd,
+        header:    c.header,
+        turnRange: c.turnRange,
+        text:      c.content,
+    }));
+
+    return post('/insert-chunks', { avatarKey, anchorUuid, chatFile, chunks: payload, ...embedCfg() });
+}
+
+/**
+ * Queries the DB for chunks semantically similar to queryText, scoped to the
+ * provided valid ancestor UUIDs.
+ *
+ * @param {string[]} validAnchorUuids  UUIDs from the current DNA chain.
+ * @param {string}   queryText         Recent chat context used as the query.
+ * @param {number}   [topK=5]          Maximum results to return.
+ * @returns {Promise<{ text:string, header:string, turnRange:string,
+ *                     pairStart:number, pairEnd:number, score:number }[]>}
+ */
+export async function querySyncChunks(validAnchorUuids, queryText, topK = 5) {
+    return post('/query-chunks', { queryText, validAnchorUuids, topK, ...embedCfg() });
+}
+
+/**
+ * Deletes all chunks belonging to a specific anchor. Used by Purge & Rebuild
+ * before re-indexing.
+ * @param {string} anchorUuid
+ */
+export async function purgeAnchorChunks(anchorUuid) {
+    return post('/purge-anchor', { anchorUuid });
+}
+
+/**
+ * Deletes all chunks belonging to a character. Used by runNewChatCleanup and
+ * purgeCnzFiles.
+ * @param {string} avatarKey
+ */
+export async function purgeCharacterChunks(avatarKey) {
+    return post('/purge-character', { avatarKey });
+}
+
+/**
+ * Returns the number of indexed chunks for an anchor and/or character. Used
+ * by reconcileWorldState and for health checks.
+ * @param {string} [avatarKey]
+ * @param {string} [anchorUuid]
+ * @returns {Promise<{ chunksForAnchor?:number, chunksForCharacter?:number }>}
+ */
+export async function anchorChunkCount(avatarKey, anchorUuid) {
+    const params = {};
+    if (avatarKey)  params.avatarKey  = avatarKey;
+    if (anchorUuid) params.anchorUuid = anchorUuid;
+    return get('/health', params);
+}

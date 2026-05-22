@@ -5,9 +5,8 @@
  * @architectural-role Orchestrator
  * @description
  * RAG classifier dispatch and the full sync-time pipeline. Sequences chunk
- * building, header hydration, AI classification fan-out, document assembly,
- * upload, and character attachment registration. No DOM, no chat-message IO
- * — that lives in rag/chat-labels.js.
+ * building, header hydration, AI classification fan-out, and DB insertion.
+ * No DOM, no chat-message IO — that lives in rag/chat-labels.js.
  *
  * `waitForRagChunks` bridges the bus fan-out back to the pipeline caller.
  * `ragRegenCard` dispatches a single-chunk reclassification from the workshop.
@@ -25,8 +24,8 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: [state._ragChunks, state._stagedProsePairs,
- *                       state._stagedPairOffset, state._splitPairIdx, state._lastRagUrl]
- *     external_io: [generateRaw via cycleStore, /api/files/upload, bus]
+ *                       state._stagedPairOffset, state._splitPairIdx]
+ *     external_io: [generateRaw via cycleStore, /api/plugins/cnz/insert-chunks, bus]
  */
 
 import { state } from '../state.js';
@@ -34,9 +33,10 @@ import { on, off, BUS_EVENTS } from '../bus.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
 import { buildProsePairs, formatPairsAsTranscript } from '../core/transcript.js';
 import { getSettings } from '../core/settings.js';
-import { uploadRagFile, registerCharacterAttachment, cnzAvatarKey, cnzFileName } from './api.js';
+import { cnzAvatarKey } from './api.js';
+import { insertSyncChunks } from './vec-store.js';
 import { warn, error } from '../log.js';
-import { buildRagChunks, buildRagDocument } from './chunks.js';
+import { buildRagChunks } from './chunks.js';
 import { hydrateChunkHeadersFromChat } from './chat-labels.js';
 
 // Re-export pure functions so existing callers importing from pipeline.js keep working.
@@ -118,8 +118,8 @@ export function resolveClassifierHistory(pairStart, historyN, fullPairs, stagedP
 // ─── Full Sync Pipeline ───────────────────────────────────────────────────────
 
 /**
- * Builds RAG chunks for the current sync window, classifies them, uploads the
- * RAG document, and registers it as a character attachment.
+ * Builds RAG chunks for the current sync window, classifies them, and inserts
+ * completed chunks into the CNZ vector DB.
  * Expects state._stagedProsePairs and state._stagedPairOffset to be set by the caller.
  * @param {string|null} anchorUuid
  */
@@ -155,16 +155,9 @@ export async function runRagPipeline(anchorUuid = null) {
     }, ragSettings);
     await waitForRagChunks(120_000);
 
-    const settings2  = getSettings();
-    const ctx2       = SillyTavern.getContext();
-    const charName2  = ctx2?.characters?.[ctx2?.characterId]?.name ?? '';
-    const ragText    = buildRagDocument(state._ragChunks, settings2, charName2);
-    if (!ragText.trim()) return;
+    const settled = state._ragChunks.filter(c => c.status === 'complete' || c.status === 'manual');
+    if (!settled.length || !anchorUuid) return;
 
-    const anchorHash  = anchorUuid ? anchorUuid.slice(0, 8) : '';
-    const ragFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name, anchorHash);
-    state._lastRagUrl = await uploadRagFile(ragText, ragFileName);
-
-    const byteSize = new TextEncoder().encode(ragText).length;
-    registerCharacterAttachment(char.avatar, state._lastRagUrl, ragFileName, byteSize);
+    const chatFile = SillyTavern.getContext().getCurrentChatFile?.() ?? null;
+    await insertSyncChunks(cnzAvatarKey(char.avatar), anchorUuid, chatFile, state._ragChunks, state._stagedPairOffset);
 }

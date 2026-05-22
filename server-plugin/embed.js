@@ -1,0 +1,92 @@
+/**
+ * @file server-plugin/embed.js
+ * @description Embedding generation. Supports two sources:
+ *   - 'local'       — @xenova/transformers pipeline (Xenova/all-MiniLM-L6-v2), no API key required.
+ *   - 'openrouter'  — OpenAI-compatible embeddings via OpenRouter; requires model + apiKey.
+ *
+ * initEmbedder() warms the local pipeline at startup. embedWithSource() and
+ * embedBatchWithSource() dispatch to the correct backend at call time based on
+ * the cfg object supplied by the caller (built from CNZ settings).
+ */
+
+import { pipeline, env } from '@xenova/transformers';
+
+const LOCAL_MODEL = 'Xenova/all-MiniLM-L6-v2';
+const OR_BASE     = 'https://openrouter.ai/api/v1/embeddings';
+
+env.allowLocalModels = true;
+
+/** @type {import('@xenova/transformers').FeatureExtractionPipeline | null} */
+let _pipe = null;
+
+export async function initEmbedder() {
+    _pipe = await pipeline('feature-extraction', LOCAL_MODEL);
+}
+
+// ─── Local ────────────────────────────────────────────────────────────────────
+
+async function embedLocal(text) {
+    if (!_pipe) throw new Error('CNZ embed: local embedder not initialized');
+    const out = await _pipe(text, { pooling: 'mean', normalize: true });
+    return Array.from(out.data);
+}
+
+// ─── OpenRouter (OpenAI-compatible) ──────────────────────────────────────────
+
+async function embedRemote(model, apiKey, text) {
+    const res = await fetch(OR_BASE, {
+        method:  'POST',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ model, input: text }),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(`OpenRouter embed error: ${err.error ?? res.statusText}`);
+    }
+    const data = await res.json();
+    return data.data[0].embedding;
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Embed a single string using the configured source.
+ * @param {{ source: string, model: string, apiKey: string }} cfg
+ * @param {string} text
+ * @returns {Promise<number[]>}
+ */
+export async function embedWithSource(cfg, text) {
+    if (cfg.source === 'openrouter' && cfg.model && cfg.apiKey) {
+        return embedRemote(cfg.model, cfg.apiKey, text);
+    }
+    return embedLocal(text);
+}
+
+/**
+ * Embed an array of strings. Sequential to avoid OOM / rate-limit bursts.
+ * @param {{ source: string, model: string, apiKey: string }} cfg
+ * @param {string[]} texts
+ * @returns {Promise<number[][]>}
+ */
+export async function embedBatchWithSource(cfg, texts) {
+    const result = [];
+    for (const t of texts) result.push(await embedWithSource(cfg, t));
+    return result;
+}
+
+/**
+ * Cosine similarity between two equal-length vectors.
+ * @param {number[]} a
+ * @param {number[]} b
+ * @returns {number} score in [-1, 1]
+ */
+export function cosineSimilarity(a, b) {
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < a.length; i++) {
+        dot += a[i] * b[i];
+        na  += a[i] * a[i];
+        nb  += b[i] * b[i];
+    }
+    const denom = Math.sqrt(na) * Math.sqrt(nb);
+    return denom ? dot / denom : 0;
+}

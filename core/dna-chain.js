@@ -28,7 +28,6 @@
  * @property {string}          committedAt - ISO timestamp
  * @property {string}          hooks       - hookseeker text committed this cycle
  * @property {object}          lorebook    - full lorebook snapshot { name, entries }
- * @property {string|null}     ragUrl      - Data Bank URL of the RAG file, or null
  * @property {RagHeaderEntry[]} ragHeaders - chunk headers committed this cycle
  * @property {string|null}     parentUuid  - uuid of previous anchor, or null
  */
@@ -123,19 +122,17 @@ export function getLkgAnchor(messages) {
  * @param {string}            params.committedAt  - ISO timestamp from the caller
  * @param {string}            params.hooks        - hookseeker text committed this cycle
  * @param {object}            params.lorebook     - full lorebook snapshot { name, entries }
- * @param {string|null}       params.ragUrl       - uploaded RAG file URL, or null
  * @param {RagHeaderEntry[]}  params.ragHeaders   - chunk headers committed this cycle
  * @param {string|null}       params.parentUuid   - uuid of previous anchor, or null
  * @returns {CnzAnchor}
  */
-export function buildAnchorPayload({ uuid, committedAt, hooks, lorebook, ragUrl, ragHeaders, parentUuid }) {
+export function buildAnchorPayload({ uuid, committedAt, hooks, lorebook, ragHeaders, parentUuid }) {
     return {
         type: 'anchor',
         uuid,
         committedAt,
         hooks,
         lorebook:    structuredClone(lorebook),
-        ragUrl:      ragUrl ?? null,
         ragHeaders:  ragHeaders ?? [],
         parentUuid:  parentUuid ?? null,
     };
@@ -143,24 +140,18 @@ export function buildAnchorPayload({ uuid, committedAt, hooks, lorebook, ragUrl,
 
 /**
  * Builds a nodeFile-shaped object from a CnzAnchor so the existing restore
- * functions (restoreLorebookToNode, restoreHooksToNode, restoreRagToNode) can
- * consume DNA-chain anchors without modification.
+ * functions (restoreLorebookToNode, restoreHooksToNode) can consume DNA-chain
+ * anchors without modification.
  * Pure function — no state reads, no IO.
  * @param {CnzAnchor} anchor
- * @returns {{ state: { uuid: string|null, hooks: string, lorebook: object, ragFiles: string[] } }}
+ * @returns {{ state: { uuid: string|null, hooks: string, lorebook: object } }}
  */
 export function buildNodeFileFromAnchor(anchor) {
-    let ragFiles = [];
-    if (anchor.ragUrl) {
-        const fileName = anchor.ragUrl.split('/').pop();
-        if (fileName) ragFiles = [fileName];
-    }
     return {
         state: {
             uuid:     anchor.uuid ?? null,
             hooks:    anchor.hooks ?? '',
             lorebook: anchor.lorebook ?? { entries: {} },
-            ragFiles,
         },
     };
 }

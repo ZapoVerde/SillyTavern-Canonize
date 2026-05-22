@@ -21,25 +21,22 @@
  *     state_ownership: [state._stagedProsePairs, state._stagedPairOffset,
  *                       state._splitPairIdx, state._ragChunks,
  *                       state._lorebookData, state._draftLorebook]
- *     external_io: [callPopup, toastr, /api/files/delete, /api/chats/saveChat,
- *                   /db-purge, /db-ingest, extension_settings.character_attachments,
- *                   saveSettingsDebounced]
+ *     external_io: [callPopup, toastr, /api/plugins/cnz/*]
  */
 
-import { extension_settings } from '../../../../extensions.js';
-import { saveSettingsDebounced } from '../../../../../script.js';
 import { callPopup } from '../../../../../script.js';
 import { state } from '../state.js';
 import { readDnaChain } from './dna-chain.js';
 import { buildProsePairs, formatPairsAsTranscript } from './transcript.js';
-import { buildRagChunks, buildRagDocument } from '../rag/chunks.js';
+import { buildRagChunks } from '../rag/chunks.js';
 import { waitForRagChunks } from '../rag/pipeline.js';
-import { cnzAvatarKey, cnzFileName, uploadRagFile, registerCharacterAttachment } from '../rag/api.js';
+import { cnzAvatarKey } from '../rag/api.js';
+import { insertSyncChunks, purgeCharacterChunks } from '../rag/vec-store.js';
 import { getSettings } from './settings.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
 import { lbSaveLorebook } from '../lorebook/api.js';
 import { error } from '../log.js';
-import { restoreLorebookToNode, restoreHooksToNode, cnzDeleteFile } from './healer-restore.js';
+import { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
 
 // ─── Purge and Rebuild ────────────────────────────────────────────────────────
 
@@ -48,13 +45,10 @@ import { restoreLorebookToNode, restoreHooksToNode, cnzDeleteFile } from './heal
  * combined RAG file from all chunk data stored in the chain.
  *
  * Order of operations:
- *   1. Delete all CNZ RAG files for this character from the Data Bank.
- *   2. Restore the lorebook from the LKG anchor.
- *   3. Restore the hooks summary from the LKG anchor.
- *   4. Reconstruct one combined RAG document from every anchor's ragHeaders
- *      (using stored pairStart/pairEnd for content slicing, stored header text).
- *   5. Upload, register, update LKG anchor ragUrl, save chat.
- *   6. Purge and re-ingest the vector index.
+ *   1. Restore the lorebook from the LKG anchor.
+ *   2. Restore the hooks summary from the LKG anchor.
+ *   3. Reconstruct chunks from the full chain history (fast: stamp scan; deep: AI reclassify).
+ *   4. Purge all existing DB chunks for this character, then re-insert rebuilt chunks.
  */
 export async function purgeAndRebuild() {
     const { isSyncInProgress } = await import('../scheduler.js');
@@ -78,10 +72,9 @@ export async function purgeAndRebuild() {
 <h3>Purge &amp; Rebuild</h3>
 <p>For <strong>${escapeHtml(char.name)}</strong>, this will:</p>
 <ul>
-  <li>Delete all CNZ RAG files from the Data Bank</li>
   <li>Clear and restore the lorebook from the last anchor</li>
   <li>Restore the hooks summary from the last anchor</li>
-  <li>Rebuild a single RAG file from the full chain history</li>
+  <li>Purge the vector DB and re-index all chunks from the full chain history</li>
 </ul>
 <label style="display:flex;align-items:center;gap:0.5em;margin-top:0.75em;">
   <input type="checkbox" id="cnz-purge-deep">
@@ -93,22 +86,12 @@ export async function purgeAndRebuild() {
     const deepReclassify = document.getElementById('cnz-purge-deep')?.checked ?? false;
 
     try {
-        // ── 1. Delete all CNZ RAG files ──────────────────────────────────────────
-        const cnzRagPrefix   = `cnz_${cnzAvatarKey(char.avatar)}_rag_`;
-        const allAttachments = extension_settings.character_attachments?.[char.avatar] ?? [];
-        const cnzFiles       = allAttachments.filter(a => a.name?.startsWith(cnzRagPrefix));
-        for (const f of cnzFiles) {
-            await cnzDeleteFile(f.url);
-        }
-        extension_settings.character_attachments[char.avatar] = allAttachments.filter(a => !cnzFiles.includes(a));
-        saveSettingsDebounced();
-
-        // ── 2 & 3. Restore lorebook and hooks from LKG ───────────────────────────
+        // ── 1 & 2. Restore lorebook and hooks from LKG ───────────────────────────
         const fakeNodeFile = { state: { uuid: chain.lkg.uuid ?? null, lorebook: chain.lkg.lorebook, hooks: chain.lkg.hooks } };
         await restoreLorebookToNode(char, { nodeId: 'rebuild' }, fakeNodeFile);
-        await restoreHooksToNode(char, { nodeId: 'rebuild' }, fakeNodeFile);
+        restoreHooksToNode(char, { nodeId: 'rebuild' }, fakeNodeFile);
 
-        // ── 4. Reconstruct combined RAG document ──────────────────────────────────
+        // ── 3. Reconstruct chunks ─────────────────────────────────────────────────
         const allPairs    = buildProsePairs(messages);
         const ragSettings = getSettings();
 
@@ -146,6 +129,8 @@ export async function purgeAndRebuild() {
                     header:     lastMsg.extra.cnz_chunk_header,
                     turnRange:  lastMsg.extra.cnz_turn_label?.replace(/^\*+\s*Memory:\s*/i, '') ?? `Pairs ${pairStart + 1}–${pairEnd}`,
                     content,
+                    pairStart,
+                    pairEnd,
                     status:     'complete',
                 });
                 prevPairEnd = pairEnd;
@@ -153,31 +138,15 @@ export async function purgeAndRebuild() {
         }
 
         if (combinedChunks.length === 0) {
-            toastr.warning('CNZ: No classified chunks found in chain — RAG file not rebuilt. Run a sync first.');
+            toastr.warning('CNZ: No classified chunks found in chain — RAG DB not rebuilt. Run a sync first.');
             return;
         }
 
-        // ── 5. Upload chunks to Data Bank ─────────────────────────────────────────
-        const ragText    = buildRagDocument(combinedChunks, ragSettings, char.name ?? '');
-        const anchorHash = chain.lkg.uuid?.slice(0, 8) ?? '';
-        const ragFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name, anchorHash);
-        const ragUrl      = await uploadRagFile(ragText, ragFileName);
-        const byteSize    = new TextEncoder().encode(ragText).length;
-        registerCharacterAttachment(char.avatar, ragUrl, ragFileName, byteSize);
-
-        for (const { msgIdx } of chain.anchors) {
-            const msg = messages[msgIdx];
-            if (msg?.extra?.cnz) {
-                msg.extra.cnz = Object.assign({}, msg.extra.cnz, { ragUrl });
-            }
-        }
-
-        await ctx.saveChat();
-
-        // ── 6. Re-vectorize ───────────────────────────────────────────────────────
-        const { executeSlashCommandsWithOptions } = ctx;
-        await executeSlashCommandsWithOptions('/db-purge');
-        await executeSlashCommandsWithOptions('/db-ingest');
+        // ── 4. Purge DB and re-insert ─────────────────────────────────────────────
+        const avatarKey = cnzAvatarKey(char.avatar);
+        await purgeCharacterChunks(avatarKey);
+        const chatFile = ctx.getCurrentChatFile?.() ?? null;
+        await insertSyncChunks(avatarKey, chain.lkg.uuid, chatFile, combinedChunks, 0);
 
         toastr.success(`CNZ: Rebuild complete — ${combinedChunks.length} chunks re-indexed.`);
     } catch (err) {
@@ -197,12 +166,11 @@ export async function runNewChatCleanup(char) {
     try {
         const confirmed = await callPopup(
             `<h3>CNZ: New Chat — Clear Previous Session?</h3>
-            <p>The lorebook and vector index still contain entries from the previous session.</p>
+            <p>The lorebook and vector DB still contain entries from the previous session.</p>
             <p>The following will be cleared:</p>
             <ul>
                 <li>Lorebook entries wiped</li>
-                <li>CNZ RAG files removed</li>
-                <li>Vector index purged</li>
+                <li>Vector DB chunks purged</li>
             </ul>
             <p><em>Skip to manage manually via Settings → Purge &amp; Rebuild.</em></p>`,
             'confirm',
@@ -215,19 +183,9 @@ export async function runNewChatCleanup(char) {
                 state._draftLorebook = structuredClone(state._lorebookData);
             }
 
-            const cnzRagPrefix   = `cnz_${cnzAvatarKey(char.avatar)}_rag_`;
-            const allAttachments = extension_settings.character_attachments?.[char.avatar] ?? [];
-            const cnzFiles       = allAttachments.filter(a => a.name?.startsWith(cnzRagPrefix));
-            for (const f of cnzFiles) {
-                await cnzDeleteFile(f.url);
-            }
-            extension_settings.character_attachments[char.avatar] =
-                allAttachments.filter(a => !cnzFiles.includes(a));
-            saveSettingsDebounced();
+            await purgeCharacterChunks(cnzAvatarKey(char.avatar));
 
-            await SillyTavern.getContext().executeSlashCommandsWithOptions('/db-purge');
-
-            toastr.success('CNZ: Lorebook and vector index cleared for new chat.');
+            toastr.success('CNZ: Lorebook and vector DB cleared for new chat.');
         } else {
             toastr.info('CNZ: Previous session data retained — adjust manually via Settings if needed.');
         }
@@ -240,8 +198,8 @@ export async function runNewChatCleanup(char) {
 // ─── Purge Only ───────────────────────────────────────────────────────────────
 
 /**
- * Deletes all CNZ RAG files for the current character from the Data Bank and
- * purges the vector index. Does not touch the lorebook or hooks.
+ * Purges all CNZ vector DB chunks for the current character. Does not touch
+ * the lorebook or hooks. Chunks can be rebuilt via Purge & Rebuild.
  */
 export async function purgeCnzFiles() {
     const ctx  = SillyTavern.getContext();
@@ -250,32 +208,20 @@ export async function purgeCnzFiles() {
 
     const { escapeHtml } = await import('../state.js');
     const confirmed = await callPopup(
-        `<h3>Purge CNZ Files</h3>
+        `<h3>Purge CNZ Vector DB</h3>
         <p>For <strong>${escapeHtml(char.name)}</strong>, this will:</p>
         <ul>
-            <li>Delete all CNZ RAG files from the Data Bank</li>
-            <li>Purge the vector index</li>
+            <li>Purge all CNZ chunks from the vector DB</li>
         </ul>
         <p>The lorebook and hooks will not be changed.</p>
-        <p>RAG files can be rebuilt at any time by switching back to the original chat and using Purge &amp; Rebuild.</p>`,
+        <p>Chunks can be rebuilt at any time via Purge &amp; Rebuild.</p>`,
         'confirm',
     );
     if (!confirmed) return;
 
     try {
-        const cnzRagPrefix   = `cnz_${cnzAvatarKey(char.avatar)}_rag_`;
-        const allAttachments = extension_settings.character_attachments?.[char.avatar] ?? [];
-        const cnzFiles       = allAttachments.filter(a => a.name?.startsWith(cnzRagPrefix));
-        for (const f of cnzFiles) {
-            await cnzDeleteFile(f.url);
-        }
-        extension_settings.character_attachments[char.avatar] =
-            allAttachments.filter(a => !cnzFiles.includes(a));
-        saveSettingsDebounced();
-
-        await ctx.executeSlashCommandsWithOptions('/db-purge');
-
-        toastr.success(`CNZ: Purged ${cnzFiles.length} RAG file(s) and cleared vector index.`);
+        await purgeCharacterChunks(cnzAvatarKey(char.avatar));
+        toastr.success('CNZ: Vector DB chunks purged.');
     } catch (err) {
         error('Maintenance', 'purgeCnzFiles:', err);
         toastr.error(`CNZ: Purge failed: ${err.message}`);

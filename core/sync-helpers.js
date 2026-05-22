@@ -119,7 +119,6 @@ export async function commitDnaAnchor(messages, anchorUuid) {
         committedAt: new Date().toISOString(),
         hooks:       state._priorSituation,
         lorebook:    Object.assign({ name: state._lorebookName }, structuredClone(state._draftLorebook ?? { entries: {} })),
-        ragUrl:      state._lastRagUrl || null,
         ragHeaders,
         parentUuid,
     });

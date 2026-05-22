@@ -18,19 +18,16 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: []
- *     external_io: [/api/characters/edit, /api/files/upload, /api/chats/saveChat]
+ *     external_io: [/api/characters/edit, /api/chats/saveChat]
  */
 
 import { getRequestHeaders } from '../../../../../script.js';
-import { extension_settings as ext_settings } from '../../../../extensions.js';
 import { state, escapeHtml } from '../state.js';
 import { getSettings } from '../core/settings.js';
 import { readDnaChain } from '../core/dna-chain.js';
 import { writeCnzSummaryPrompt } from '../core/summary-prompt.js';
 import { isDraftDirty, stripProtectedBlock, stitchProtectedBlock } from '../lorebook/utils.js';
 import { lbSaveLorebook } from '../lorebook/api.js';
-import { buildRagDocument } from '../rag/pipeline.js';
-import { uploadRagFile, registerCharacterAttachment, cnzAvatarKey, cnzFileName } from '../rag/api.js';
 import { warn, error } from '../log.js';
 
 // ─── Character World Patch ────────────────────────────────────────────────────
@@ -114,20 +111,10 @@ export function populateRagPanel() {
     const context = SillyTavern.getContext();
     const char    = context.characters[context.characterId];
     if (!char || !getSettings().enableRag) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
-    const allAttachments = ext_settings.character_attachments?.[char.avatar] ?? [];
-    const headAnchor     = state._dnaChain?.lkg;
-    const ragExpected    = headAnchor && (headAnchor.ragHeaders?.length > 0 || headAnchor.ragUrl);
-    if (!allAttachments.length && !ragExpected) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
-    if (ragExpected && !allAttachments.length) {
-        $('#cnz-rag-timeline').empty();
-        $('#cnz-rag-warning').text('Narrative Memory file missing — confirm to rebuild from current chunks.').removeClass('cnz-hidden');
-        $('#cnz-step4-rag').removeClass('cnz-hidden');
-        return;
-    }
-    const rows = allAttachments.map(a =>
-        `<div class="cnz-rag-item cnz-rag-item--existing">&#x2713; ${escapeHtml(a.name.replace(/\.txt$/i, ''))}</div>`,
-    );
-    $('#cnz-rag-timeline').html(rows.join(''));
+    const settled = state._ragChunks.filter(c => c.status === 'complete' || c.status === 'manual');
+    if (!settled.length) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
+    const label = `${settled.length} chunk${settled.length !== 1 ? 's' : ''} indexed in vector DB`;
+    $('#cnz-rag-timeline').html(`<div class="cnz-rag-item cnz-rag-item--existing">&#x2713; ${escapeHtml(label)}</div>`);
     $('#cnz-rag-warning').addClass('cnz-hidden');
     $('#cnz-step4-rag').removeClass('cnz-hidden');
 }
@@ -164,9 +151,6 @@ async function commitChanges(char, hooksText) {
 
     let hooksChanged    = false;
     let lorebookChanged = false;
-    let ragChanged      = false;
-    let newRagUrl       = null;
-    let newRagFileName  = null;
 
     // ── Step 1: Hooks save ───────────────────────────────────────────────────
     if (hooksText !== state._priorSituation) {
@@ -219,36 +203,18 @@ async function commitChanges(char, hooksText) {
         lorebookChanged = true;
     }
 
-    // ── Step 3: RAG upload ───────────────────────────────────────────────────
-    const hasManualChunks  = state._ragChunks.some(c => c.status === 'manual');
-    const hasSettledChunks = state._ragChunks.some(c => c.status === 'complete' || c.status === 'manual');
-    const ragAttachments   = ext_settings.character_attachments?.[char.avatar] ?? [];
-    const ragFileMissing   = hasSettledChunks && ragAttachments.length === 0;
-    if (hasManualChunks || state._ragRawDetached || ragFileMissing) {
-        try {
-            const _ragCtx      = SillyTavern.getContext();
-            const _ragCharName = _ragCtx?.characters?.[_ragCtx?.characterId]?.name ?? '';
-            const ragText = state._ragRawDetached ? $('#cnz-rag-raw').val() : buildRagDocument(state._ragChunks, getSettings(), _ragCharName);
-            if (ragText.trim()) {
-                newRagFileName = cnzFileName(cnzAvatarKey(char.avatar), 'rag', Date.now(), char.name);
-                newRagUrl      = await uploadRagFile(ragText, newRagFileName);
-                state._lastRagUrl = newRagUrl;
-                const byteSize = new TextEncoder().encode(ragText).length;
-                registerCharacterAttachment(char.avatar, newRagUrl, newRagFileName, byteSize);
-                ragChanged = true;
-                results.push({ task: 'rag', status: 'success', detail: `Narrative Memory saved: "${newRagFileName}" (${state._ragChunks.length} chunks)` });
-            } else {
-                results.push({ task: 'rag', status: 'skipped' });
-            }
-        } catch (err) {
-            results.push({ task: 'rag', status: 'failed', error: `RAG upload failed: ${err.message}` });
-        }
+    // ── Step 3: RAG status ───────────────────────────────────────────────────
+    // Chunks are inserted into the vector DB by runRagPipeline at sync time.
+    const settledChunks = state._ragChunks.filter(c => c.status === 'complete' || c.status === 'manual');
+    if (settledChunks.length > 0) {
+        results.push({ task: 'rag', status: 'success', detail: `Narrative Memory: ${settledChunks.length} chunk${settledChunks.length !== 1 ? 's' : ''} indexed in vector DB` });
     } else {
         results.push({ task: 'rag', status: 'skipped' });
     }
 
     // ── Step 4: Patch DNA anchor in chat ─────────────────────────────────────
-    if (hooksChanged || lorebookChanged || ragChanged) {
+    const hasRagHeaders = settledChunks.length > 0;
+    if (hooksChanged || lorebookChanged || hasRagHeaders) {
         try {
             const liveChain = readDnaChain(SillyTavern.getContext().chat ?? []);
             const lkgRef    = liveChain.lkg ? { anchor: liveChain.lkg, msgIdx: liveChain.lkgMsgIdx } : null;
@@ -263,14 +229,12 @@ async function commitChanges(char, hooksText) {
                     results.push({ task: 'anchor', status: 'skipped' });
                 } else {
                     const existing      = lkgRef.anchor;
-                    const ragHeadersNew = state._ragChunks
-                        .filter(c => c.status === 'complete' || c.status === 'manual')
+                    const ragHeadersNew = settledChunks
                         .map(c => ({ chunkIndex: c.chunkIndex, header: c.header, turnRange: c.turnRange, pairStart: state._stagedPairOffset + c.pairStart, pairEnd: state._stagedPairOffset + c.pairEnd }));
                     anchorMsg.extra.cnz = Object.assign({}, existing, {
                         hooks:      hooksChanged    ? state._priorSituation                                                               : existing.hooks,
                         lorebook:   lorebookChanged ? Object.assign({ name: state._lorebookName }, structuredClone(state._draftLorebook)) : existing.lorebook,
-                        ragUrl:     ragChanged      ? newRagUrl     : existing.ragUrl,
-                        ragHeaders: ragChanged      ? ragHeadersNew : existing.ragHeaders,
+                        ragHeaders: hasRagHeaders   ? ragHeadersNew : existing.ragHeaders,
                     });
                     try {
                         await SillyTavern.getContext().saveChat();
