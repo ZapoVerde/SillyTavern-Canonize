@@ -85,10 +85,13 @@ function _newController() {
     return _abortController.signal;
 }
 
-function _abortCurrent() {
+function _abortCurrent(reason = 'unknown') {
     if (_abortController) {
+        log('RagHook', `abort: controller fired (reason=${reason})`);
         _abortController.abort();
         _abortController = null;
+    } else {
+        log('RagHook', `abort: no controller active (reason=${reason}) — no-op`);
     }
 }
 
@@ -97,16 +100,15 @@ function _abortCurrent() {
 // fetch makes it reject with AbortError, which we catch and treat as a clean
 // cancellation so the mask function returns immediately.
 eventSource.on(event_types.GENERATION_STOPPED, () => {
-    if (_prefetchPromise) {
-        log('RagHook', 'GENERATION_STOPPED — aborting in-flight embed');
-        _abortCurrent();
-    }
+    log('RagHook', `GENERATION_STOPPED — prefetchInFlight=${_prefetchPromise !== null} controller=${_abortController !== null} prefetchChatLen=${_prefetchChatLen}`);
+    _abortCurrent('generation_stopped');
 });
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function resetRagState(ctx) {
-    _abortCurrent();
+    log('RagHook', `resetRagState — prefetchInFlight=${_prefetchPromise !== null} controller=${_abortController !== null}`);
+    _abortCurrent('chat_changed');
     _prefetchPromise = null;
     _prefetchChatLen = -1;
     _timing          = null;
@@ -181,8 +183,11 @@ export async function onGenerationStarted() {
             const signal = _newController();
             result = await doRagFetch(ctx, settings, chain, signal);
         } catch (err) {
-            if (err.name !== 'AbortError')
+            if (err.name === 'AbortError') {
+                log('RagHook', `fresh-fetch aborted — mask function returning early, send button unblocked`);
+            } else {
                 error('RagHook', 'Failed to query CNZ vector store:', err);
+            }
             _timing = null;
             return;
         }
