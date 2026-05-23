@@ -11,7 +11,7 @@
  * used across multiple modules.
  *
  * @api-declaration
- * state, EXT_NAME, CNZ_SUMMARY_ID, PROFILE_DEFAULTS, escapeHtml
+ * state, EXT_NAME, CNZ_SUMMARY_ID, CNZ_RAG_ID, PROFILE_DEFAULTS, escapeHtml
  *
  * @contract
  *   assertions:
@@ -35,12 +35,14 @@ import {
     DEFAULT_TARGETED_UPDATE_PROMPT,
     DEFAULT_TARGETED_NEW_PROMPT,
     DEFAULT_RAG_INJECTION_TEMPLATE,
+    DEFAULT_RAG_CHUNK_TEMPLATE,
 } from './defaults.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 export const EXT_NAME       = 'cnz';
 export const CNZ_SUMMARY_ID = 'cnz_summary';
+export const CNZ_RAG_ID     = 'cnz_rag';
 
 /**
  * Profile-level configuration keys — saved per profile, loaded into activeState.
@@ -62,7 +64,8 @@ export const PROFILE_DEFAULTS = Object.freeze({
     autoAdvanceMask:          false,
     // RAG
     enableRag:                false,
-    ragSeparator:             'Chunk {{chunk_number}} ({{turn_range}})',
+    ragSeparator:             '%%%',
+    ragChunkTemplate:         DEFAULT_RAG_CHUNK_TEMPLATE,
     ragContents:              'summary+full',
     ragSummarySource:         'defined',
     ragProfileId:             null,
@@ -73,7 +76,6 @@ export const PROFILE_DEFAULTS = Object.freeze({
     ragRetrievalTopK:         5,
     ragLbRetrievalTopK:       3,
     ragScoreThreshold:        0.25,
-    ragInjectionDepth:        0,
     ragInjectionTemplate:     DEFAULT_RAG_INJECTION_TEMPLATE,
     ragEmbeddingSource:       'local',
     ragEmbeddingModel:        '',

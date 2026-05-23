@@ -220,20 +220,20 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
             <input id="cnz-set-rag-lb-retrieval-topk" type="number" min="0" max="20" step="1"
                    value="${escapeHtml(String(s.ragLbRetrievalTopK ?? 3))}">
           </div>
-          <div class="cnz-settings-inline-row">
-            <label for="cnz-set-rag-injection-depth">Injection Depth ${tip('How many messages from the end of the chat to insert the RAG block at. 0 = before the most recent message.')}</label>
-            <input id="cnz-set-rag-injection-depth" type="number" min="0" step="1"
-                   value="${escapeHtml(String(s.ragInjectionDepth ?? 0))}">
-          </div>
           <div class="cnz-setting-row">
             <label class="cnz-label">Injection Template ${tip('Wraps the retrieved chunks before injection. Use {{text}} where the chunks should appear.')}</label>
             <button id="cnz-edit-injection-template" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
           </div>
 
+          <div class="cnz-setting-row">
+            <label class="cnz-label">Chunk Template ${tip('Wraps each individual retrieved chunk. Supports {{text}}, {{turn_range}}, {{header}}, {{char_name}}.')}</label>
+            <button id="cnz-edit-chunk-template" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
+          </div>
+
           <div class="cnz-settings-inline-row" id="cnz-rag-separator-row">
-            <label for="cnz-set-rag-separator">Chunk Separator ${tip('Separator placed between injected chunks. Supports {{turn_number}}, {{char_name}}, {{turn_range}}.')}</label>
+            <label for="cnz-set-rag-separator">Sync Separator ${tip('Separator used between chunks in classifier documents during sync. Changing this invalidates stored chunk headers.')}</label>
             <input id="cnz-set-rag-separator" type="text" class="cnz-input cnz-settings-input-wide"
-                   placeholder="e.g. ***" value="${escapeHtml(s.ragSeparator ?? '')}">
+                   placeholder="e.g. %%%" value="${escapeHtml(s.ragSeparator ?? '%%%')}">
           </div>
 
         </div><!-- /cnz-rag-settings-body -->

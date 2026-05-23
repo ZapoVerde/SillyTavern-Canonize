@@ -125,8 +125,7 @@ function refreshSettingsUI() {
     $('#cnz-set-rag-score-threshold').val(s.ragScoreThreshold ?? 0.25);
     $('#cnz-set-rag-retrieval-topk').val(s.ragRetrievalTopK ?? 5);
     $('#cnz-set-rag-lb-retrieval-topk').val(s.ragLbRetrievalTopK ?? 3);
-    $('#cnz-set-rag-injection-depth').val(s.ragInjectionDepth ?? 0);
-    $('#cnz-set-rag-separator').val(s.ragSeparator ?? '');
+    $('#cnz-set-rag-separator').val(s.ragSeparator ?? '%%%');
 
     updateRagAiControlsVisibility();
 

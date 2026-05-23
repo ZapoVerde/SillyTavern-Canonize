@@ -23,7 +23,7 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: [_prefetchPromise, _prefetchChatLen, _abortController]
- *     external_io: [rag-fetch.js, setExtensionPrompt, WORLDINFO_FORCE_ACTIVATE]
+ *     external_io: [rag-fetch.js, writeCnzRagPrompt, clearCnzRagPrompt, WORLDINFO_FORCE_ACTIVATE]
  */
 
 import { state }             from '../state.js';
@@ -31,9 +31,7 @@ import { getSettings }       from '../core/settings.js';
 import { doRagFetch }        from './rag-fetch.js';
 import { log, error }        from '../log.js';
 import { eventSource, event_types } from '../../../../../script.js';
-
-const EXT_PROMPT_KEY  = 'cnz_rag';
-const INJECT_POSITION = 2;
+import { writeCnzRagPrompt, clearCnzRagPrompt } from '../core/summary-prompt.js';
 
 let _prefetchPromise  = null;
 let _prefetchChatLen  = -1;
@@ -106,13 +104,13 @@ eventSource.on(event_types.GENERATION_STOPPED, () => {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-export function resetRagState(ctx) {
+export function resetRagState() {
     log('RagHook', `resetRagState — prefetchInFlight=${_prefetchPromise !== null} controller=${_abortController !== null}`);
     _abortCurrent('chat_changed');
     _prefetchPromise = null;
     _prefetchChatLen = -1;
     _timing          = null;
-    ctx?.setExtensionPrompt?.(EXT_PROMPT_KEY, '', INJECT_POSITION, 0);
+    clearCnzRagPrompt();
 }
 
 export function prefetchRag() {
@@ -142,12 +140,12 @@ export async function onGenerationStarted() {
     const ctx      = SillyTavern.getContext();
     const settings = getSettings();
     if (!settings.enableRag) {
-        ctx.setExtensionPrompt(EXT_PROMPT_KEY, '', INJECT_POSITION, 0);
+        clearCnzRagPrompt();
         return;
     }
     const chain = state._dnaChain;
     if (!chain || chain.anchors.length === 0) {
-        ctx.setExtensionPrompt(EXT_PROMPT_KEY, '', INJECT_POSITION, 0);
+        clearCnzRagPrompt();
         return;
     }
     const messages = ctx.chat ?? [];
@@ -196,7 +194,11 @@ export async function onGenerationStarted() {
     const tRagDone = performance.now();
     if (_timing) _timing.tRagDone = tRagDone;
     log('RagHook', `${result.chunks} chunks injected | rag=${Math.round(tRagDone - tInterceptor)}ms`);
-    ctx.setExtensionPrompt(EXT_PROMPT_KEY, result.injection, INJECT_POSITION, result.depth);
+    if (result.injection) {
+        writeCnzRagPrompt(result.injection);
+    } else {
+        clearCnzRagPrompt();
+    }
 
     if (result.toActivate.length) {
         log('RagHook', `Semantic LB activation: ${result.toActivate.length} entries`);

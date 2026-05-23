@@ -55,7 +55,7 @@ export function resetSessionState() {
 
 export function onChatChanged() {
     const context = SillyTavern.getContext();
-    resetRagState(context); // discard stale prefetch + extension prompt before healer runs
+    resetRagState(); // discard stale prefetch + clear RAG prompt before healer runs
     if (!context || context.characterId == null) {
         state._lastKnownAvatar = null;
         return;

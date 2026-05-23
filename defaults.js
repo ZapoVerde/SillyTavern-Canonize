@@ -19,6 +19,7 @@
  * DEFAULT_TARGETED_UPDATE_PROMPT   — targeted fact updater system prompt.
  * DEFAULT_TARGETED_NEW_PROMPT      — targeted fact extractor system prompt.
  * DEFAULT_RAG_INJECTION_TEMPLATE   — injection wrapper template ({{text}} placeholder).
+ * DEFAULT_RAG_CHUNK_TEMPLATE       — per-chunk wrapper template ({{text}}, {{turn_range}}, {{header}}, {{char_name}}).
  *
  * @contract
  *   assertions:
@@ -219,3 +220,8 @@ Keys: keyword1, keyword2
 export const DEFAULT_RAG_INJECTION_TEMPLATE =
 `[The following are archived narrative memories retrieved for the current context:]
 {{text}}`;
+
+export const DEFAULT_RAG_CHUNK_TEMPLATE =
+`<memory turns="{{turn_range}}">
+{{text}}
+</memory>`;

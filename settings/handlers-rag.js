@@ -20,7 +20,7 @@
 
 import { saveSettingsDebounced } from '../../../../../script.js';
 import { state } from '../state.js';
-import { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE } from '../defaults.js';
+import { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 import { getSettings } from './data.js';
 import { error } from '../log.js';
 
@@ -156,13 +156,11 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
-    $('#cnz-set-rag-injection-depth').on('input', function () {
-        getSettings().ragInjectionDepth = Math.max(0, parseInt($(this).val()) || 0);
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
     $('#cnz-edit-injection-template').on('click', () =>
         openPromptModal('ragInjectionTemplate', 'Edit Injection Template', DEFAULT_RAG_INJECTION_TEMPLATE, ['text']));
+
+    $('#cnz-edit-chunk-template').on('click', () =>
+        openPromptModal('ragChunkTemplate', 'Edit Chunk Template', DEFAULT_RAG_CHUNK_TEMPLATE, ['text', 'turn_range', 'header', 'char_name']));
 
     // ── Embedding model browser ───────────────────────────────────────────────
     $('#cnz-browse-embedding-model').on('click', async function () {

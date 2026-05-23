@@ -23,10 +23,10 @@
 import { buildProsePairs, formatPairsAsTranscript, cleanForEmbedding } from '../core/transcript.js';
 import { querySyncChunks, queryLorebookEntries } from './vec-store.js';
 import { log, error } from '../log.js';
-import { DEFAULT_RAG_INJECTION_TEMPLATE } from '../defaults.js';
+import { DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 
 /**
- * @typedef {{ chunks:number, injection:string, depth:number, toActivate:object[] }} RagResult
+ * @typedef {{ chunks:number, injection:string, toActivate:object[] }} RagResult
  */
 
 /**
@@ -108,17 +108,20 @@ export async function doRagFetch(ctx, settings, chain, signal) {
         .map(h => ({ world: h.lorebookName, uid: h.entryUid }));
 
     let injection = '';
-    const depth = settings.ragInjectionDepth ?? 0;
     if (chunks.length) {
-        const separator = settings.ragSeparator || '***';
-        const lines     = chunks.map(r => {
-            const label = r.header ? `[${r.header}]` : (r.turnRange ?? '');
-            return label ? `${label}\n${r.text}` : r.text;
-        });
-        const body = lines.join(`\n${separator}\n`);
+        const charName   = ctx.name2 ?? ctx.name ?? '';
+        const chunkTmpl  = settings.ragChunkTemplate || DEFAULT_RAG_CHUNK_TEMPLATE;
+        const body = chunks.map(r => {
+            const content = r.header ? `[${r.header}]\n${r.text}` : r.text;
+            return chunkTmpl
+                .replace(/\{\{text\}\}/g,       content)
+                .replace(/\{\{turn_range\}\}/g,  r.turnRange ?? '')
+                .replace(/\{\{header\}\}/g,      r.header ?? '')
+                .replace(/\{\{char_name\}\}/g,   charName);
+        }).join('\n\n');
         const tmpl = settings.ragInjectionTemplate || DEFAULT_RAG_INJECTION_TEMPLATE;
         injection  = tmpl.replace('{{text}}', body);
     }
 
-    return { chunks: chunks.length, injection, depth, toActivate };
+    return { chunks: chunks.length, injection, toActivate };
 }

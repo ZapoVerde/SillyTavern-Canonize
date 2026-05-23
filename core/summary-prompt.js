@@ -10,7 +10,8 @@
  *
  * @api-declaration
  * getCnzPromptManager, ensureCnzSummaryPrompt, writeCnzSummaryPrompt,
- * syncCnzSummaryOnCharacterSwitch
+ * syncCnzSummaryOnCharacterSwitch, ensureCnzRagPrompt, writeCnzRagPrompt,
+ * clearCnzRagPrompt
  *
  * @contract
  *   assertions:
@@ -20,7 +21,7 @@
  */
 
 import { promptManager } from '../../../../../scripts/openai.js';
-import { CNZ_SUMMARY_ID } from '../state.js';
+import { CNZ_SUMMARY_ID, CNZ_RAG_ID } from '../state.js';
 
 // ─── CNZ Summary Prompt Management ────────────────────────────────────────────
 
@@ -111,4 +112,61 @@ export function syncCnzSummaryOnCharacterSwitch(char, chain) {
     prompt.content         = head?.hooks ?? '';
     prompt.cnz_avatar      = char.avatar;
     prompt.cnz_anchor_uuid = head?.uuid ?? null;
+}
+
+// ─── CNZ RAG Prompt Management ────────────────────────────────────────────────
+
+/**
+ * IO Executor. Ensures the CNZ RAG prompt exists in the prompt manager and is
+ * registered in the active prompt order above chatHistory.
+ * No-op if already present. Calls saveServiceSettings if it creates the prompt.
+ * @param {import('../../../../../scripts/PromptManager.js').PromptManager} pm
+ */
+export function ensureCnzRagPrompt(pm) {
+    if (pm.getPromptById(CNZ_RAG_ID)) return;
+
+    pm.addPrompt({
+        name:    'CNZ RAG',
+        content: '',
+        role:    'system',
+        enabled: true,
+    }, CNZ_RAG_ID);
+
+    const order          = pm.getPromptOrderForCharacter(pm.activeCharacter);
+    const chatHistoryIdx = order.findIndex(e => e.identifier === 'chatHistory');
+    if (chatHistoryIdx !== -1) {
+        order.splice(chatHistoryIdx, 0, { identifier: CNZ_RAG_ID, enabled: true });
+    } else {
+        order.push({ identifier: CNZ_RAG_ID, enabled: true });
+    }
+
+    pm.saveServiceSettings();
+}
+
+/**
+ * IO Executor. Writes RAG retrieval text to the CNZ RAG prompt, creating it
+ * if absent. No-op if PromptManager is unavailable.
+ * @param {string} content  Formatted RAG injection text.
+ */
+export function writeCnzRagPrompt(content) {
+    const pm = getCnzPromptManager();
+    if (!pm) return;
+    ensureCnzRagPrompt(pm);
+    const prompt = pm.getPromptById(CNZ_RAG_ID);
+    if (!prompt) return;
+    prompt.content = content;
+    pm.saveServiceSettings();
+}
+
+/**
+ * IO Executor. Clears the CNZ RAG prompt content.
+ * No-op if the prompt does not yet exist or PromptManager is unavailable.
+ */
+export function clearCnzRagPrompt() {
+    const pm = getCnzPromptManager();
+    if (!pm) return;
+    const prompt = pm.getPromptById(CNZ_RAG_ID);
+    if (!prompt) return;
+    prompt.content = '';
+    pm.saveServiceSettings();
 }
