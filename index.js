@@ -61,7 +61,6 @@ async function init() {
 
         eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
         eventSource.on(event_types.MESSAGE_SENT, () => prefetchRag());
-        eventSource.on(event_types.GENERATION_STARTED, () => onGenerationStarted().catch(err => error('RagHook', err)));
 
         $(document).on('click', '.cnz-review-link', (e) => {
             e.preventDefault();
@@ -161,25 +160,77 @@ async function init() {
             })();
         });
 
-        globalThis.cnzMaskMessages = function(chat) {
-            if (!getSettings().autoAdvanceMask) return;
-            const IGNORE = SillyTavern.getContext().symbols.ignore;
-            let anchorIdx = -1;
-            for (let i = chat.length - 2; i >= 0; i--) {
-                if (chat[i]?.extra?.cnz?.type === 'anchor') { anchorIdx = i; break; }
+        globalThis.cnzMaskMessages = async function(chat, _contextSize, _abort, type) {
+            if (getSettings().autoAdvanceMask) {
+                const IGNORE = SillyTavern.getContext().symbols.ignore;
+                let anchorIdx = -1;
+                for (let i = chat.length - 2; i >= 0; i--) {
+                    if (chat[i]?.extra?.cnz?.type === 'anchor') { anchorIdx = i; break; }
+                }
+                if (anchorIdx >= 0) {
+                    for (let i = 0; i <= anchorIdx; i++) {
+                        chat[i] = structuredClone(chat[i]);
+                        chat[i].extra ??= {};
+                        chat[i].extra[IGNORE] = true;
+                    }
+                }
             }
-            if (anchorIdx < 0) return;
-            for (let i = 0; i <= anchorIdx; i++) {
-                chat[i] = structuredClone(chat[i]);
-                chat[i].extra ??= {};
-                chat[i].extra[IGNORE] = true;
+            if (type !== 'quiet') {
+                await onGenerationStarted().catch(err => error('RagHook', err));
             }
         };
 
+        startEmbedMonitor();
         log('Init', 'Full sequence complete.');
     } catch (err) {
         error('Init', 'CRITICAL FAILURE during init:', err);
     }
+}
+
+// ── Embed progress monitor ────────────────────────────────────────────────────
+// Connects to the plugin's SSE stream. The plugin pushes a stat update whenever
+// the embed queue changes — no polling. If the plugin isn't installed the fetch
+// rejects and the monitor exits cleanly without retrying.
+async function startEmbedMonitor() {
+    const THRESHOLD = 20; // matches MAX_CONCURRENT in embed.js
+    let _toast = null;
+
+    function _update({ total, done, running }) {
+        if (total > THRESHOLD) {
+            const msg = `CNZ: Embedding ${done}/${total}...`;
+            if (_toast?.is(':visible')) {
+                _toast.find('.toast-message').text(msg);
+            } else {
+                _toast = toastr.info(msg, '', { timeOut: 0, extendedTimeOut: 0 });
+            }
+        } else if (_toast) {
+            toastr.clear(_toast);
+            _toast = null;
+        }
+    }
+
+    try {
+        const { getRequestHeaders } = await import('../../../../script.js');
+        const res = await fetch('/api/plugins/cnz/embed-stream', { headers: getRequestHeaders() });
+        if (!res.ok) return; // plugin not installed
+
+        const reader  = res.body.getReader();
+        const decoder = new TextDecoder();
+        let   buf     = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const parts = buf.split('\n\n');
+            buf = parts.pop();
+            for (const part of parts) {
+                if (part.startsWith('data: ')) {
+                    try { _update(JSON.parse(part.slice(6))); } catch { /* malformed */ }
+                }
+            }
+        }
+    } catch { /* plugin not installed or stream closed — exit silently */ }
 }
 
 await init().catch(err => error('Init', 'init() top-level rejection:', err));

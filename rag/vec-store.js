@@ -173,3 +173,7 @@ export async function insertLorebookEntries(avatarKey, anchorUuid, lorebookName,
 export async function queryLorebookEntries(validAnchorUuids, queryText, topK = 3) {
     return post('/query-lorebook', { queryText, validAnchorUuids, topK, ...embedCfg() });
 }
+
+export async function fetchEmbedStats() {
+    return get('/embed-stats');
+}

@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/maintenance.js
- * @stamp {"utc":"2026-05-21T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-23T00:00:00.000Z"}
  * @version 1.0.0
  * @architectural-role Orchestrator
  * @description
@@ -35,6 +35,7 @@ import { insertSyncChunks, purgeCharacterChunks } from '../rag/vec-store.js';
 import { getSettings } from './settings.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
 import { lbSaveLorebook } from '../lorebook/api.js';
+import { writeCnzSummaryPrompt } from './summary-prompt.js';
 import { error } from '../log.js';
 import { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
 
@@ -145,10 +146,14 @@ export async function purgeAndRebuild() {
         // ── 4. Purge DB and re-insert ─────────────────────────────────────────────
         const avatarKey = cnzAvatarKey(char.avatar);
         await purgeCharacterChunks(avatarKey);
+
         const chatFile = ctx.getCurrentChatFile?.() ?? null;
+        const total    = combinedChunks.length;
+
+        // Embed monitor in index.js shows live progress automatically.
         await insertSyncChunks(avatarKey, chain.lkg.uuid, chatFile, combinedChunks, 0);
 
-        toastr.success(`CNZ: Rebuild complete — ${combinedChunks.length} chunks re-indexed.`);
+        toastr.success(`CNZ: Rebuild complete — ${total} chunks re-indexed.`);
     } catch (err) {
         error('Maintenance', 'purgeAndRebuild:', err);
         toastr.error(`CNZ: Rebuild failed: ${err.message}`);
@@ -184,8 +189,9 @@ export async function runNewChatCleanup(char) {
             }
 
             await purgeCharacterChunks(cnzAvatarKey(char.avatar));
+            writeCnzSummaryPrompt(char.avatar, '', null);
 
-            toastr.success('CNZ: Lorebook and vector DB cleared for new chat.');
+            toastr.success('CNZ: Lorebook, hooks, and vector DB cleared for new chat.');
         } else {
             toastr.info('CNZ: Previous session data retained — adjust manually via Settings if needed.');
         }

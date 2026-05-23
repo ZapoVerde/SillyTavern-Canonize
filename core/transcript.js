@@ -94,6 +94,25 @@ export function formatPairsAsTranscript(pairs) {
 }
 
 /**
+ * Strips formatting noise from a transcript string before it is embedded.
+ * Removes HTML tags, HTML entities, markdown symbols, *stage directions*,
+ * and the [NAME] turn labels added by formatPairsAsTranscript — none of
+ * these carry semantic meaning for vector search.
+ * @param {string} text
+ * @returns {string}
+ */
+export function cleanForEmbedding(text) {
+    return text
+        .replace(/<[^>]+>/g, ' ')              // HTML tags (color spans, etc.)
+        .replace(/&[a-z]+;|&#\d+;/gi, ' ')     // HTML entities (&amp; &#39; etc.)
+        .replace(/\*[^*\n]*\*/g, ' ')          // *stage directions / italic actions*
+        .replace(/^\[[A-Z0-9 _'-]+\]\n?/gm, '') // [CHAR NAME] turn labels at line start
+        .replace(/[_~`#]/g, ' ')               // remaining markdown symbols
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/**
  * Slices `pairs` so the total UTF-8 byte size of all message text stays under
  * `maxBytes`. Counts from the end (most recent pairs kept).
  * @param {object[]} pairs

@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/session.js
- * @stamp {"utc":"2026-05-21T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-23T00:00:00.000Z"}
  * @version 1.0.0
  * @architectural-role Orchestrator
  * @description
@@ -26,6 +26,7 @@ import { readDnaChain } from './dna-chain.js';
 import { syncCnzSummaryOnCharacterSwitch } from './summary-prompt.js';
 import { runHealer } from './healer.js';
 import { clearChunkChatLabels } from '../rag/chat-labels.js';
+import { resetRagState } from '../rag/generation-hook.js';
 import { checkOrphans } from './orphans.js';
 import { state } from '../state.js';
 
@@ -54,6 +55,7 @@ export function resetSessionState() {
 
 export function onChatChanged() {
     const context = SillyTavern.getContext();
+    resetRagState(context); // discard stale prefetch + extension prompt before healer runs
     if (!context || context.characterId == null) {
         state._lastKnownAvatar = null;
         return;
