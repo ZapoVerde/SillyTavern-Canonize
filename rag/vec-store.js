@@ -41,11 +41,12 @@ function embedCfg() {
     return cfg;
 }
 
-async function post(path, body) {
+async function post(path, body, signal) {
     const res = await fetch(`${BASE}${path}`, {
         method:  'POST',
         headers: { ...getRequestHeaders(), 'Content-Type': 'application/json' },
         body:    JSON.stringify(body),
+        signal,
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({ error: res.statusText }));
@@ -103,8 +104,8 @@ export async function insertSyncChunks(avatarKey, anchorUuid, chatFile, chunks, 
  * @returns {Promise<{ text:string, header:string, turnRange:string,
  *                     pairStart:number, pairEnd:number, score:number }[]>}
  */
-export async function querySyncChunks(validAnchorUuids, queryText, topK = 5) {
-    return post('/query-chunks', { queryText, validAnchorUuids, topK, ...embedCfg() });
+export async function querySyncChunks(validAnchorUuids, queryText, topK = 5, signal) {
+    return post('/query-chunks', { queryText, validAnchorUuids, topK, ...embedCfg() }, signal);
 }
 
 /**
@@ -170,8 +171,8 @@ export async function insertLorebookEntries(avatarKey, anchorUuid, lorebookName,
  * @param {number}   [topK=3]
  * @returns {Promise<{ lorebookName:string, entryUid:number, score:number }[]>}
  */
-export async function queryLorebookEntries(validAnchorUuids, queryText, topK = 3) {
-    return post('/query-lorebook', { queryText, validAnchorUuids, topK, ...embedCfg() });
+export async function queryLorebookEntries(validAnchorUuids, queryText, topK = 3, signal) {
+    return post('/query-lorebook', { queryText, validAnchorUuids, topK, ...embedCfg() }, signal);
 }
 
 export async function fetchEmbedStats() {
