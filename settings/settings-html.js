@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/settings/settings-html.js
- * @stamp {"utc":"2026-05-22T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role Pure Functions
  * @description
  * Builds and returns the HTML string for the Canonize extension settings panel.
@@ -28,7 +28,7 @@
  * @param {boolean}  verboseLogging  Current verbose logging state.
  * @returns {string}
  */
-export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default'], currentProfile = 'Default', verboseLogging = false) {
+export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default'], currentProfile = 'Default', verboseLogging = false, enableCnz = true) {
     const s = settings;
     const ragContents      = s.ragContents      ?? 'summary+full';
     const ragSummarySource = s.ragSummarySource ?? 'defined';
@@ -52,6 +52,16 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
       <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
     </div>
     <div class="inline-drawer-content">
+
+      <!-- ── Master enable toggle ── -->
+      <div class="cnz-settings-row cnz-enable-row">
+        <label class="cnz-checkbox-label">
+          <input id="cnz-set-enable-cnz" type="checkbox" ${enableCnz ? 'checked' : ''}>
+          <span>Enable Canonize</span>
+        </label>
+      </div>
+
+      <div id="cnz-main-settings"${enableCnz ? '' : ' class="cnz-disabled"'}>
       <div class="cnz-settings-group">
 
         <!-- ── Profile bar ── -->
@@ -253,6 +263,8 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
           <button id="cnz-purge-files"   class="cnz-btn cnz-btn-danger cnz-btn-sm">Purge</button>
         </div>
       </div>
+
+      </div><!-- /cnz-main-settings -->
 
     </div>
   </div>

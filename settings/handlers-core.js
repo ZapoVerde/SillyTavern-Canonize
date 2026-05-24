@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/settings/handlers-core.js
- * @stamp {"utc":"2026-05-22T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role IO Wrapper
  * @description
  * Binds summary, lorebook, profile management, and utility settings panel
@@ -27,8 +27,18 @@ import { getSettings, getMetaSettings } from './data.js';
 import { setVerbose } from '../log.js';
 import { openDnaChainInspector } from '../modal/dna-inspector.js';
 import { purgeAndRebuild, purgeCnzFiles } from '../core/maintenance.js';
+import { mountCnz, unmountCnz } from '../lifecycle.js';
 
 export function bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refreshProfileDropdown, refreshSettingsUI }) {
+
+    // ── Master enable toggle ──────────────────────────────────────────────────
+    $('#cnz-set-enable-cnz').on('change', function () {
+        const enabled = $(this).prop('checked');
+        getMetaSettings().enableCnz = enabled;
+        saveSettingsDebounced();
+        $('#cnz-main-settings').toggleClass('cnz-disabled', !enabled);
+        if (enabled) { mountCnz(); } else { unmountCnz(); }
+    });
 
     // ── Summary / Lorebook ────────────────────────────────────────────────────
     $('#cnz-set-live-context-buffer').on('input', function () {

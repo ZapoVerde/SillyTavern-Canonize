@@ -182,7 +182,7 @@ export function injectSettingsPanel() {
     if ($parent.length === 0) { warn('Init', 'injectSettingsPanel: #extensions_settings not found in DOM!'); return; }
     const meta = getMetaSettings();
     $parent.append(
-        buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName, meta.verboseLogging ?? false),
+        buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName, meta.verboseLogging ?? false, meta.enableCnz ?? true),
     );
     setVerbose(meta.verboseLogging ?? false);
     bindSettingsHandlers();

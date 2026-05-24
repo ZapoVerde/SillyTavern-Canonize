@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/scheduler.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.1
+ * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role Stateful Owner
  * @description
  * Scheduler — owns snooze state and the sync-in-progress flag, and drives
@@ -19,13 +19,15 @@
  * isSyncInProgress()                    — read the sync-in-progress flag.
  * snooze(pairs, currentPairCount)       — advance snooze boundary by `pairs` from `currentPairCount`.
  * resetScheduler()                      — clear snooze and sync-in-progress (on char switch).
+ * stopScheduler()                       — clear snooze/sync state and detach all ST eventSource listeners (unmount).
+ * startScheduler()                      — reattach all ST eventSource listeners (remount).
  * setDnaChain(chain)                    — update the scheduler's copy of the DNA chain.
  * getGap(settings)                      — compute uncommitted gap in pairs from current context + DNA chain.
  *
  * @contract
  *   assertions:
  *     purity: stateful
- *     state_ownership: [_snoozeUntilCount, _syncInProgress, _dnaChain, _getSettings, _triggers]
+ *     state_ownership: [_snoozeUntilCount, _syncInProgress, _dnaChain, _getSettings, _triggers, _stHandlers]
  *     external_io: [SillyTavern.getContext, eventSource]
  */
 // ─── CNZ Scheduler ────────────────────────────────────────────────────────────
@@ -43,6 +45,8 @@ let _syncInProgress   = false;
 let _dnaChain         = null;
 let _getSettings      = () => ({});
 let _triggers         = [];
+/** @type {{ event: string, handler: Function }[]} */
+let _stHandlers       = [];
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -57,10 +61,34 @@ export function initScheduler(triggers, getSettings) {
 
     for (const trigger of _triggers) {
         if (trigger.source === 'st') {
-            eventSource.on(trigger.watchEvent, (eventData) => _evaluate(trigger, eventData));
+            // Build handler ref for later bind/unbind by startScheduler/stopScheduler.
+            const handler = (eventData) => _evaluate(trigger, eventData);
+            _stHandlers.push({ event: trigger.watchEvent, handler });
         } else if (trigger.source === 'bus') {
+            // Bus-sourced triggers stay permanently registered; setBusEnabled controls activation.
             on(trigger.watchEvent, (eventData) => _evaluate(trigger, eventData));
         }
+    }
+}
+
+/**
+ * Detaches all ST eventSource listeners and resets snooze/sync state.
+ * Call on extension unmount.
+ */
+export function stopScheduler() {
+    _snoozeUntilCount = 0;
+    _syncInProgress   = false;
+    for (const { event, handler } of _stHandlers) {
+        eventSource.off(event, handler);
+    }
+}
+
+/**
+ * Reattaches all ST eventSource listeners. Call on extension remount.
+ */
+export function startScheduler() {
+    for (const { event, handler } of _stHandlers) {
+        eventSource.on(event, handler);
     }
 }
 
