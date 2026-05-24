@@ -25,7 +25,9 @@
  * purgeLbEntriesByAnchor(anchorUuid)                 → Promise<void>
  * purgeLbEntriesByAvatarKey(avatarKey)               → Promise<void>
  * chunkCountForAvatar(avatarKey)                     → Promise<number>
+ * chunkCountForAnchor(anchorUuid)                    → Promise<number>
  * lbEntryCountForAvatar(avatarKey)                   → Promise<number>
+ * lbEntryCountForAnchor(anchorUuid)                  → Promise<number>
  * lbHashesForAnchor(anchorUuid)                      → Promise<number[]>
  *
  * @contract
@@ -207,6 +209,12 @@ export async function chunkCountForAvatar(avatarKey) {
     return Number(r.rows[0].n);
 }
 
+export async function chunkCountForAnchor(anchorUuid) {
+    if (!_schemaReady) return 0;
+    const r = await _db.query('SELECT COUNT(*) AS n FROM rag_chunks WHERE anchor_uuid = $1', [anchorUuid]);
+    return Number(r.rows[0].n);
+}
+
 // ── Lorebook entries ──────────────────────────────────────────────────────────
 
 export async function upsertLbEntries(rows) {
@@ -264,6 +272,12 @@ export async function purgeLbEntriesByAvatarKey(avatarKey) {
 export async function lbEntryCountForAvatar(avatarKey) {
     if (!_schemaReady) return 0;
     const r = await _db.query('SELECT COUNT(*) AS n FROM lb_entries WHERE avatar_key = $1', [avatarKey]);
+    return Number(r.rows[0].n);
+}
+
+export async function lbEntryCountForAnchor(anchorUuid) {
+    if (!_schemaReady) return 0;
+    const r = await _db.query('SELECT COUNT(*) AS n FROM lb_entries WHERE anchor_uuid = $1', [anchorUuid]);
     return Number(r.rows[0].n);
 }
 

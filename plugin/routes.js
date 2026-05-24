@@ -37,7 +37,8 @@ import {
     upsertLbEntries, queryLbEntries, queryLbEntriesByKeyword,
     purgeChunksByAnchor, purgeChunksByAvatarKey,
     purgeLbEntriesByAnchor, purgeLbEntriesByAvatarKey,
-    chunkCountForAvatar, lbEntryCountForAvatar, lbHashesForAnchor,
+    chunkCountForAvatar, chunkCountForAnchor,
+    lbEntryCountForAvatar, lbEntryCountForAnchor, lbHashesForAnchor,
 } from './db.js';
 import { rrf } from './rrf.js';
 
@@ -221,6 +222,8 @@ export function registerRoutes(router) {
             const result = {};
             if (avatarKey)  result.chunksForCharacter    = await chunkCountForAvatar(String(avatarKey));
             if (avatarKey)  result.lbEntriesForCharacter = await lbEntryCountForAvatar(String(avatarKey));
+            if (anchorUuid) result.chunksForAnchor       = await chunkCountForAnchor(String(anchorUuid));
+            if (anchorUuid) result.lbEntriesForAnchor    = await lbEntryCountForAnchor(String(anchorUuid));
             if (anchorUuid) result.lbHashesForAnchor     = await lbHashesForAnchor(String(anchorUuid));
             return res.json(result);
         } catch (err) {

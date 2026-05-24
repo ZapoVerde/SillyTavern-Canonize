@@ -19,6 +19,7 @@
  * purgeAnchorChunks(anchorUuid)
  * purgeCharacterChunks(avatarKey)
  * anchorChunkCount(avatarKey, anchorUuid)
+ * anchorStats(anchorUuid)
  *
  * @contract
  *   assertions:
@@ -138,6 +139,15 @@ export async function anchorChunkCount(avatarKey, anchorUuid) {
     if (avatarKey)  params.avatarKey  = avatarKey;
     if (anchorUuid) params.anchorUuid = anchorUuid;
     return get('/health', params);
+}
+
+/**
+ * Returns per-anchor DB record counts for the DNA inspector.
+ * @param {string} anchorUuid
+ * @returns {Promise<{ chunksForAnchor:number, lbEntriesForAnchor:number }>}
+ */
+export async function anchorStats(anchorUuid) {
+    return get('/health', { anchorUuid });
 }
 
 /**

@@ -1,13 +1,13 @@
 /**
  * @file data/default-user/extensions/canonize/modal/dna-inspector.js
- * @stamp {"utc":"2026-05-21T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role IO Wrapper
  * @description
  * Opens, populates, and closes the DNA Chain Inspector modal. Reads the DNA
- * chain from the current chat, verifies RAG files on disk via a single batch
- * request, then renders the anchor list and RAG coverage map. Owns its own
- * open/close DOM lifecycle. No orchestration, no state mutation outside the DOM.
+ * chain from the current chat, queries the DB for per-anchor record counts,
+ * then renders the anchor list and DB coverage map. Owns its own open/close
+ * DOM lifecycle. No orchestration, no state mutation outside the DOM.
  *
  * @api-declaration
  * openDnaChainInspector()
@@ -16,14 +16,13 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: [none]
- *     external_io: [DOM, /api/files/verify, extension_settings.character_attachments]
+ *     external_io: [DOM, /api/plugins/cnz/health]
  */
 
-import { extension_settings } from '../../../../extensions.js';
-import { getRequestHeaders } from '../../../../../script.js';
 import { escapeHtml } from '../state.js';
 import { readDnaChain } from '../core/dna-chain.js';
 import { warn } from '../log.js';
+import { anchorStats } from '../rag/vec-store.js';
 
 function closeDnaChainInspector() {
     $('#cnz-li-overlay').addClass('cnz-hidden');
@@ -58,68 +57,54 @@ export async function openDnaChainInspector() {
     const pairWord    = uncommitted === 1 ? 'pair' : 'pairs';
     $body.append(`<div class="cnz-li-summary">${uncommitted} uncommitted ${pairWord} since last update</div>`);
 
-    // ── Section 2: RAG coverage map ───────────────────────────────────────────
-    $body.append('<div class="cnz-li-section-label">Narrative Memory</div>');
+    // ── Section 2: DB coverage ────────────────────────────────────────────────
+    $body.append('<div class="cnz-li-section-label">DB Coverage</div>');
 
-    const verifiedOnDisk = new Set();
+    const statsMap = new Map(); // anchorUuid → { chunksForAnchor, lbEntriesForAnchor }
 
     if (chain.anchors.length === 0) {
         $body.append('<div class="cnz-li-rag-row"><span class="cnz-li-rag-name cnz-li-status-muted">No syncs committed yet.</span></div>');
     } else {
-        const attachments = extension_settings.character_attachments?.[char?.avatar] ?? [];
-        const anchorUrls  = chain.anchors.map(({ anchor }) => anchor.ragUrl).filter(Boolean);
-        const allUrls     = [...new Set([...anchorUrls, ...attachments.map(a => a.url)])];
-
-        if (allUrls.length > 0) {
-            try {
-                const res = await fetch('/api/files/verify', {
-                    method:  'POST',
-                    headers: getRequestHeaders(),
-                    body:    JSON.stringify({ urls: allUrls }),
-                });
-                if (res.ok) {
-                    const verified = await res.json();
-                    for (const [url, exists] of Object.entries(verified)) {
-                        if (exists) verifiedOnDisk.add(url);
-                    }
-                }
-            } catch (err) {
-                warn('DnaInspector', 'RAG verify failed:', err);
-            }
+        const statsList = await Promise.all(
+            chain.anchors.map(({ anchor }) => anchorStats(anchor.uuid).catch(err => {
+                warn('DnaInspector', 'DB stats failed for', anchor.uuid, err);
+                return null;
+            }))
+        );
+        for (let i = 0; i < chain.anchors.length; i++) {
+            if (statsList[i]) statsMap.set(chain.anchors[i].anchor.uuid, statsList[i]);
         }
 
-        const total          = chain.anchors.length;
-        const firstSeenLabel = new Map();
-
+        const total = chain.anchors.length;
         for (let i = 0; i < chain.anchors.length; i++) {
-            const { anchor } = chain.anchors[i];
-            const label      = i === total - 1 ? 'HEAD' : `#${i + 1}`;
-            const shortUuid  = anchor.uuid?.slice(0, 8) ?? '—';
-            const labelText  = `${label}  ${shortUuid}`;
+            const { anchor }  = chain.anchors[i];
+            const label       = i === total - 1 ? 'HEAD' : `#${i + 1}`;
+            const shortUuid   = anchor.uuid?.slice(0, 8) ?? '—';
+            const expected    = anchor.ragHeaders?.length ?? 0;
+            const s           = statsMap.get(anchor.uuid);
+            const dbChunks    = s?.chunksForAnchor ?? null;
+            const dbLb        = s?.lbEntriesForAnchor ?? null;
 
-            let statusCls, statusChr, nameHtml;
-            if (!anchor.ragUrl) {
+            let statusCls, statusChr;
+            if (dbChunks === null) {
                 statusCls = 'cnz-li-status-warn';
-                statusChr = '⚠';
-                nameHtml  = '<span class="cnz-li-rag-name cnz-li-status-muted">no file</span>';
+                statusChr = '?';
+            } else if (expected === 0 ? dbChunks === 0 : dbChunks === expected) {
+                statusCls = 'cnz-li-status-ok';
+                statusChr = '✓';
             } else {
-                const onDisk = verifiedOnDisk.has(anchor.ragUrl);
-                statusCls = onDisk ? 'cnz-li-status-ok' : 'cnz-li-status-warn';
-                statusChr = onDisk ? '✓' : '✗';
-                if (firstSeenLabel.has(anchor.ragUrl)) {
-                    const ref = escapeHtml(firstSeenLabel.get(anchor.ragUrl));
-                    nameHtml = `<span class="cnz-li-rag-name cnz-li-status-muted">(same as ${ref})</span>`;
-                } else {
-                    firstSeenLabel.set(anchor.ragUrl, label);
-                    const fileName = escapeHtml(anchor.ragUrl.split('/').pop());
-                    nameHtml = `<span class="cnz-li-rag-name">${fileName}</span>`;
-                }
+                statusCls = 'cnz-li-status-warn';
+                statusChr = dbChunks > expected ? '⚠' : '✗';
             }
 
+            const chunkLabel = dbChunks === null ? '—'
+                : expected > 0 ? `${dbChunks}/${expected} chunks` : `${dbChunks} chunks`;
+            const lbLabel    = dbLb === null ? '' : `  ${dbLb} lb`;
+
             $body.append(`<div class="cnz-li-rag-row">
-                <span class="cnz-li-rag-label">${escapeHtml(labelText)}</span>
+                <span class="cnz-li-rag-label">${escapeHtml(`${label}  ${shortUuid}`)}</span>
                 <span class="cnz-li-rag-status ${statusCls}">${statusChr}</span>
-                ${nameHtml}
+                <span class="cnz-li-rag-name">${escapeHtml(chunkLabel + lbLabel)}</span>
             </div>`);
         }
     }
@@ -157,22 +142,16 @@ export async function openDnaChainInspector() {
             if (expanding && !loaded) {
                 loaded = true;
                 const lbName = escapeHtml(anchor.lorebook?.name ?? '—');
-                let ragFileHtml;
-                if (!anchor.ragUrl) {
-                    ragFileHtml = '<span class="cnz-li-status-muted">none</span>';
-                } else {
-                    const fileName  = escapeHtml(anchor.ragUrl.split('/').pop());
-                    const onDisk    = verifiedOnDisk.has(anchor.ragUrl);
-                    const statusCls = onDisk ? 'cnz-li-status-ok' : 'cnz-li-status-warn';
-                    const statusChr = onDisk ? '✓' : '✗';
-                    ragFileHtml = `<span class="${statusCls}">${statusChr}</span> ${fileName}`;
-                }
+                const s      = statsMap.get(anchor.uuid);
+                const dbLine = s
+                    ? escapeHtml(`${s.chunksForAnchor ?? 0} chunks / ${s.lbEntriesForAnchor ?? 0} lb entries`)
+                    : '<span class="cnz-li-status-muted">unavailable</span>';
                 $nodeBody.html(`
                     <div class="cnz-li-field"><span class="cnz-li-field-label">UUID: </span>${escapeHtml(anchor.uuid ?? '—')}</div>
                     <div class="cnz-li-field"><span class="cnz-li-field-label">Parent: </span>${escapeHtml(anchor.parentUuid ?? 'root')}</div>
                     <div class="cnz-li-field"><span class="cnz-li-field-label">Committed: </span>${escapeHtml(anchor.committedAt ?? '—')}</div>
                     <div class="cnz-li-field"><span class="cnz-li-field-label">Lorebook: </span>${lbName}</div>
-                    <div class="cnz-li-field"><span class="cnz-li-field-label">RAG file: </span>${ragFileHtml}</div>
+                    <div class="cnz-li-field"><span class="cnz-li-field-label">DB: </span>${dbLine}</div>
                     <div class="cnz-li-field cnz-li-hooks-block">
                         <span class="cnz-li-field-label">Hooks:</span>
                         <div class="cnz-li-hooks-preview">${escapeHtml(anchor.hooks || '(none)')}</div>

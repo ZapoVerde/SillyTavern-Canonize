@@ -143,15 +143,38 @@ export async function purgeAndRebuild() {
             return;
         }
 
-        // ── 4. Purge DB and re-insert ─────────────────────────────────────────────
+        // ── 4. Purge DB and re-insert, preserving per-anchor identity ────────────
         const avatarKey = cnzAvatarKey(char.avatar);
         await purgeCharacterChunks(avatarKey);
 
         const chatFile = ctx.getCurrentChatFile?.() ?? null;
         const total    = combinedChunks.length;
 
-        // Embed monitor in index.js shows live progress automatically.
-        await insertSyncChunks(avatarKey, chain.lkg.uuid, chatFile, combinedChunks, 0);
+        // Assign each chunk to the anchor that owns its pairStart.
+        // Each anchor's boundary is the max pairEnd across its ragHeaders.
+        // Works for both fast (exact boundary preservation) and deep (AI may
+        // redraw boundaries — chunks pop up to the next anchor rather than
+        // creating gaps). Chunks beyond all anchor boundaries fall to HEAD.
+        const boundaries = chain.anchors
+            .map(({ anchor }) => ({
+                uuid:       anchor.uuid,
+                maxPairEnd: (anchor.ragHeaders ?? []).reduce((m, rh) => Math.max(m, rh.pairEnd ?? 0), 0),
+            }))
+            .filter(b => b.maxPairEnd > 0)
+            .sort((a, b) => a.maxPairEnd - b.maxPairEnd);
+
+        const byAnchor = new Map();
+        for (const chunk of combinedChunks) {
+            let uuid = chain.lkg.uuid;
+            for (const b of boundaries) {
+                if (chunk.pairStart < b.maxPairEnd) { uuid = b.uuid; break; }
+            }
+            if (!byAnchor.has(uuid)) byAnchor.set(uuid, []);
+            byAnchor.get(uuid).push(chunk);
+        }
+        for (const [uuid, chunks] of byAnchor) {
+            await insertSyncChunks(avatarKey, uuid, chatFile, chunks, 0);
+        }
 
         toastr.success(`CNZ: Rebuild complete — ${total} chunks re-indexed.`);
     } catch (err) {
