@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/settings/data.js
- * @stamp {"utc":"2026-03-27T00:00:00.000Z"}
- * @version 1.1.0
+ * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @version 1.2.0
  * @architectural-role Stateful Owner
  * @description
  * Owns CNZ extension settings: reading the active profile, bootstrapping the
@@ -96,6 +96,9 @@ export function initSettings() {
         // Existing profile structure — fill in any keys added by newer versions.
         root.activeState = Object.assign({}, PROFILE_DEFAULTS, root.activeState);
     }
+
+    // Root-level meta defaults (not per-profile).
+    if (root.enableCnz === undefined) root.enableCnz = true;
 
     // Clean up legacy keys no longer part of any profile.
     delete root.activeState.enablePersonalyze;

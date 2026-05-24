@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/summary-prompt.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
+ * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role IO Wrapper
  * @description
  * Owns the CNZ Summary prompt lifecycle in the ST PromptManager: ensures the
@@ -11,7 +11,7 @@
  * @api-declaration
  * getCnzPromptManager, ensureCnzSummaryPrompt, writeCnzSummaryPrompt,
  * syncCnzSummaryOnCharacterSwitch, ensureCnzRagPrompt, writeCnzRagPrompt,
- * clearCnzRagPrompt
+ * clearCnzRagPrompt, removeCnzPromptFromStack
  *
  * @contract
  *   assertions:
@@ -168,5 +168,23 @@ export function clearCnzRagPrompt() {
     const prompt = pm.getPromptById(CNZ_RAG_ID);
     if (!prompt) return;
     prompt.content = '';
+    pm.saveServiceSettings();
+}
+
+/**
+ * IO Executor. Removes a CNZ prompt from the active character's prompt order
+ * and deletes its definition from the PromptManager registry, then persists.
+ * No-op if the prompt does not exist or PromptManager is unavailable.
+ * @param {import('../../../../../scripts/PromptManager.js').PromptManager} pm
+ * @param {string} promptId  The identifier to remove (e.g. CNZ_SUMMARY_ID, CNZ_RAG_ID).
+ */
+export function removeCnzPromptFromStack(pm, promptId) {
+    if (!pm || !pm.getPromptById(promptId)) return;
+    const order = pm.getPromptOrderForCharacter(pm.activeCharacter);
+    const orderIdx = order.findIndex(e => e.identifier === promptId);
+    if (orderIdx !== -1) order.splice(orderIdx, 1);
+    const prompts    = pm.serviceSettings?.prompts;
+    const promptsIdx = prompts?.findIndex(p => p.identifier === promptId) ?? -1;
+    if (promptsIdx !== -1) prompts.splice(promptsIdx, 1);
     pm.saveServiceSettings();
 }

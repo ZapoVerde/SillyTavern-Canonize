@@ -12,6 +12,12 @@
  * Replaces the old two-container approach (cnz-db microservice + proxy plugin).
  * No external Docker service, no compose dependency, no Traefik routing needed.
  *
+ * @deployment
+ * This file ships inside the Canonize extension at plugin/index.js.
+ * Users must copy the entire plugin/ folder to [ST]/plugins/cnz/ and run
+ * `npm install` there before restarting SillyTavern. The extension copy and
+ * the deployed copy are NOT linked — edit both when making changes here.
+ *
  * @api-declaration
  * init(router) → Promise<void>   (called by ST on plugin load)
  *

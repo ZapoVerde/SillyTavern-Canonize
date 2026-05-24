@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/bus.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role Stateful Owner
  * @description
  * CNZ event bus — thin wrapper around a plain handler map. No CNZ knowledge.
@@ -12,15 +12,16 @@
  * of the application. This is a requirement, not a nice-to-have.
  *
  * @api-declaration
- * emit(eventName, payload)  — fire all registered handlers for eventName.
- * on(eventName, handler)    — register a handler.
- * off(eventName, handler)   — deregister a handler.
- * enableDevMode()           — activate console logging for all events.
+ * emit(eventName, payload)    — fire all registered handlers for eventName. No-op when bus is disabled.
+ * on(eventName, handler)      — register a handler.
+ * off(eventName, handler)     — deregister a handler.
+ * setBusEnabled(enabled)      — master mute switch. When false, emit() is a no-op; handlers stay registered.
+ * enableDevMode()             — activate console logging for all events.
  *
  * @contract
  *   assertions:
  *     purity: stateful
- *     state_ownership: [_handlers, _devMode]
+ *     state_ownership: [_handlers, _devMode, _enabled]
  *     external_io: []
  */
 // ─── CNZ Event Bus ────────────────────────────────────────────────────────────
@@ -29,8 +30,15 @@
 import { log, error } from './log.js';
 
 const _handlers = {};
+let _enabled = true;
+
+export function setBusEnabled(enabled) {
+    _enabled = enabled;
+    log('Bus', `Bus ${enabled ? 'enabled — emit active' : 'disabled — emit suppressed'}.`);
+}
 
 export function emit(eventName, payload = {}) {
+    if (!_enabled) return;
     if (_devMode) log('Bus', `${eventName}`, payload);
     const handlers = _handlers[eventName] ?? [];
     for (const handler of handlers) {
