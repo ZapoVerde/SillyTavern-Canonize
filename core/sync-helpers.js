@@ -22,6 +22,9 @@
  */
 
 import { log, warn } from '../log.js';
+import { getStringHash } from '../../../../utils.js';
+import { insertLorebookEntries } from '../rag/vec-store.js';
+import { cnzAvatarKey } from '../rag/api.js';
 import { setDnaChain } from '../scheduler.js';
 import { readDnaChain, getLkgAnchor, buildAnchorPayload } from './dna-chain.js';
 import { writeDnaAnchor, writeDnaLinks } from './dna-writer.js';
@@ -83,6 +86,32 @@ export async function processLorebookUpdate(rawText, anchorUuid = null) {
     stitchedLorebook.extensions = { ...(stitchedLorebook.extensions ?? {}), cnz_anchor_uuid: anchorUuid };
     await lbSaveLorebook(state._lorebookName, stitchedLorebook, { silent: true });
     state._lorebookData = structuredClone(state._draftLorebook);
+
+    // Write-through vectoring for AI-applied entries
+    const changed = state._lorebookSuggestions
+        .filter(s => s.linkedUid != null)
+        .map(s => {
+            const e = state._draftLorebook?.entries?.[String(s.linkedUid)];
+            return e ? { uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' } : null;
+        })
+        .filter(Boolean);
+
+    if (changed.length && anchorUuid) {
+        const ctx  = SillyTavern.getContext();
+        const char = ctx.characters[ctx.characterId];
+        if (char) {
+            try {
+                await insertLorebookEntries(cnzAvatarKey(char.avatar), anchorUuid, state._lorebookName, changed);
+                const hashStr = Object.values(state._draftLorebook.entries ?? {})
+                    .sort((a, b) => a.uid - b.uid)
+                    .map(e => `${e.uid}|${e.comment ?? ''}|${(e.key ?? []).join(',')}|${stripProtectedBlock(e.content ?? '')}`)
+                    .join('\n');
+                state._lastIndexedLorebookHash = String(getStringHash(hashStr));
+            } catch (err) {
+                warn('VecStore', 'write-through vectoring failed:', err);
+            }
+        }
+    }
 }
 
 export function processHooksUpdate(hooksText) {

@@ -19,7 +19,8 @@
  *     state_ownership: [
  *       _lorebookData, _draftLorebook, _lastKnownAvatar,
  *       _lorebookName, _lorebookSuggestions,
- *       _ragChunks, _stagedProsePairs, _stagedPairOffset, _splitPairIdx,
+ *       _ragChunks, _lastIndexedLorebookHash,
+ *       _stagedProsePairs, _stagedPairOffset, _splitPairIdx,
  *       _priorSituation, _beforeSituation, _parentNodeLorebook,
  *       _pendingOrphans, _dnaChain,
  *       _currentStep, _lorebookLoading, _hooksLoading,
@@ -119,8 +120,10 @@ export const state = {
     // ── Engine State ────────────────────────────────────────────────────────────
     _lorebookName:        '',
     _lorebookSuggestions: [],
-    _ragChunks:           [],
-    _stagedProsePairs:    [],
+    _ragChunks:                [],
+    /** hash of last successfully indexed lorebook state; '' = known stale */
+    _lastIndexedLorebookHash:  '',
+    _stagedProsePairs:         [],
     /** pairs preceding _stagedProsePairs[0] in the full chat */
     _stagedPairOffset:    0,
     _splitPairIdx:        0,

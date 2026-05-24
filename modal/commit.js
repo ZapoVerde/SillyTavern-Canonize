@@ -1,34 +1,35 @@
 /**
  * @file data/default-user/extensions/canonize/modal/commit.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.17
+ * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role Orchestrator
  * @description
- * Owns Step 4 of the review modal (Finalize / Commit). Handles the receipts
- * panel, draft-change counting, RAG panel population, step-4 summary display,
- * character world patching, and the Confirm button handler that conditionally
- * writes hooks, lorebook, RAG, and updates the DNA anchor in place.
+ * Owns Step 4 of the review modal (Finalize / Commit). Handles character world
+ * patching and the Confirm button handler that conditionally writes hooks,
+ * lorebook, RAG, and updates the DNA anchor in place. DOM rendering and draft
+ * counting live in commit-ui.js.
  *
  * @api-declaration
- * patchCharacterWorld, showReceiptsPanel, showRecoveryGuide, upsertReceiptItem,
- * receiptSuccess, receiptFailure, countDraftChanges, populateRagPanel,
- * populateStep4Summary, abortCommitWithError, onConfirmClick
+ * patchCharacterWorld, onConfirmClick
  *
  * @contract
  *   assertions:
  *     purity: mutates
  *     state_ownership: []
- *     external_io: [/api/characters/edit, /api/chats/saveChat]
+ *     external_io: [/api/characters/edit, /api/chats/saveChat, vec-store.js]
  */
 
 import { getRequestHeaders } from '../../../../../script.js';
-import { state, escapeHtml } from '../state.js';
-import { getSettings } from '../core/settings.js';
-import { readDnaChain } from '../core/dna-chain.js';
+import { getStringHash }     from '../../../../utils.js';
+import { state }             from '../state.js';
+import { readDnaChain }      from '../core/dna-chain.js';
 import { writeCnzSummaryPrompt } from '../core/summary-prompt.js';
 import { isDraftDirty, stripProtectedBlock, stitchProtectedBlock } from '../lorebook/utils.js';
-import { lbSaveLorebook } from '../lorebook/api.js';
-import { warn, error } from '../log.js';
+import { lbSaveLorebook }    from '../lorebook/api.js';
+import { insertLorebookEntries } from '../rag/vec-store.js';
+import { cnzAvatarKey }      from '../rag/api.js';
+import { warn, error }       from '../log.js';
+import { showReceiptsPanel, abortCommitWithError, renderReceipts } from './commit-ui.js';
 
 // ─── Character World Patch ────────────────────────────────────────────────────
 
@@ -67,78 +68,6 @@ export async function patchCharacterWorld(char, lorebookName) {
     if (!res.ok) throw new Error(`World link patch failed (HTTP ${res.status})`);
 }
 
-// ─── Modal: Commit Receipts Panel ─────────────────────────────────────────────
-
-export function showReceiptsPanel() { $('#cnz-receipts').removeClass('cnz-hidden'); }
-
-export function showRecoveryGuide() {
-    $('#cnz-recovery-guide').removeClass('cnz-hidden');
-    $('#cnz-cancel').text('Close');
-}
-
-export function upsertReceiptItem(id, html) {
-    if (!$(`#${id}`).length) {
-        $('#cnz-receipts-content').append(`<div id="${id}" class="cnz-receipt-row"></div>`);
-    }
-    $(`#${id}`).html(html);
-}
-
-export function receiptSuccess(text, hint = null) {
-    return `<span class="cnz-receipt-item success">&#x2713; ${escapeHtml(text)}</span>` +
-           (hint ? `<div class="cnz-receipt-hint">${escapeHtml(hint)}</div>` : '');
-}
-
-export function receiptFailure(text) {
-    return `<span class="cnz-receipt-item failure">&#x2717; ${escapeHtml(text)}</span>`;
-}
-
-// ─── Modal: Review & Commit Step ─────────────────────────────────────────────
-
-export function countDraftChanges() {
-    if (!state._draftLorebook || !state._lorebookData) return 0;
-    const orig  = state._lorebookData.entries  ?? {};
-    const draft = state._draftLorebook.entries ?? {};
-    return Object.values(draft).filter(e => {
-        const o = orig[String(e.uid)];
-        return !o
-            || stripProtectedBlock(o.content) !== stripProtectedBlock(e.content)
-            || JSON.stringify(o.key) !== JSON.stringify(e.key)
-            || (o.comment ?? '') !== (e.comment ?? '');
-    }).length;
-}
-
-export function populateRagPanel() {
-    const context = SillyTavern.getContext();
-    const char    = context.characters[context.characterId];
-    if (!char || !getSettings().enableRag) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
-    const settled = state._ragChunks.filter(c => c.status === 'complete' || c.status === 'manual');
-    if (!settled.length) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
-    const label = `${settled.length} chunk${settled.length !== 1 ? 's' : ''} indexed in vector DB`;
-    $('#cnz-rag-timeline').html(`<div class="cnz-rag-item cnz-rag-item--existing">&#x2713; ${escapeHtml(label)}</div>`);
-    $('#cnz-rag-warning').addClass('cnz-hidden');
-    $('#cnz-step4-rag').removeClass('cnz-hidden');
-}
-
-export function populateStep4Summary() {
-    const loreCount   = countDraftChanges();
-    const loreLabel   = loreCount === 1 ? '1 entry' : `${loreCount} entries`;
-    const pendingLb   = state._lorebookSuggestions.filter(s => s.status === 'pending').length;
-    const pendingText = pendingLb > 0
-        ? ` \u26a0 ${pendingLb} suggestion${pendingLb !== 1 ? 's' : ''} pending review`
-        : '';
-    const hooksText    = $('#cnz-situation-text').val().trim();
-    const hooksPreview = hooksText.length > 100 ? hooksText.slice(0, 100) + '\u2026' : (hooksText || '(empty)');
-    $('#cnz-step4-hooks').text(`Hooks: ${hooksPreview}`);
-    $('#cnz-step4-lore').text(`Lore: ${loreLabel} staged for update/creation${pendingText}`);
-    populateRagPanel();
-}
-
-export function abortCommitWithError(message) {
-    $('#cnz-error-4').text(message).removeClass('cnz-hidden');
-    $('#cnz-confirm, #cnz-cancel, #cnz-move-back').prop('disabled', false);
-    showRecoveryGuide();
-}
-
 // ─── Commit: IO Executor ──────────────────────────────────────────────────────
 
 /**
@@ -172,8 +101,6 @@ async function commitChanges(char, hooksText) {
         try {
             const preLorebook = structuredClone(state._lorebookData ?? { entries: {} });
 
-            // Blindly re-attach any protected block from the prior saved state.
-            // Draft remains narrative-only; only the copy sent to disk carries the block.
             const stitchedLorebook = structuredClone(state._draftLorebook);
             for (const entry of Object.values(stitchedLorebook.entries ?? {})) {
                 const origEntry = preLorebook.entries?.[String(entry.uid)];
@@ -187,10 +114,28 @@ async function commitChanges(char, hooksText) {
             await lbSaveLorebook(state._lorebookName, stitchedLorebook, { silent: true });
             state._lorebookData = structuredClone(state._draftLorebook);
             lorebookChanged = true;
-            const changedNames = Object.values(state._draftLorebook.entries ?? {})
+
+            const changedEntries = Object.values(state._draftLorebook.entries ?? {})
                 .filter(e => { const o = preLorebook.entries[String(e.uid)]; return !o || stripProtectedBlock(o.content) !== stripProtectedBlock(e.content) || JSON.stringify(o.key) !== JSON.stringify(e.key) || (o.comment ?? '') !== (e.comment ?? ''); })
-                .map(e => e.comment || String(e.uid));
+                .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
+
+            const changedNames = changedEntries.map(e => e.comment || String(e.uid));
             results.push({ task: 'lorebook', status: 'success', detail: `Lorebook committed: ${changedNames.length ? changedNames.map(n => `"${n}"`).join(', ') : '(no changes staged)'}` });
+
+            // Write-through vectoring
+            const lkgUuid = state._dnaChain?.lkg?.uuid;
+            if (changedEntries.length && lkgUuid) {
+                try {
+                    await insertLorebookEntries(cnzAvatarKey(char.avatar), lkgUuid, state._lorebookName, changedEntries);
+                    const hashStr = Object.values(state._draftLorebook.entries ?? {})
+                        .sort((a, b) => a.uid - b.uid)
+                        .map(e => `${e.uid}|${e.comment ?? ''}|${(e.key ?? []).join(',')}|${stripProtectedBlock(e.content ?? '')}`)
+                        .join('\n');
+                    state._lastIndexedLorebookHash = String(getStringHash(hashStr));
+                } catch (vecErr) {
+                    warn('Commit', 'write-through vectoring failed:', vecErr);
+                }
+            }
         } catch (err) {
             results.push({ task: 'lorebook', status: 'failed', error: `Lorebook save failed: ${err.message}` });
         }
@@ -198,13 +143,11 @@ async function commitChanges(char, hooksText) {
         results.push({ task: 'lorebook', status: 'skipped' });
     }
 
-    // Reverts are saved immediately but the head anchor still needs updating
     if (!lorebookChanged && state._lorebookSuggestions.some(s => s.status === 'rejected')) {
         lorebookChanged = true;
     }
 
     // ── Step 3: RAG status ───────────────────────────────────────────────────
-    // Chunks are inserted into the vector DB by runRagPipeline at sync time.
     const settledChunks = state._ragChunks.filter(c => c.status === 'complete' || c.status === 'manual');
     if (settledChunks.length > 0) {
         results.push({ task: 'rag', status: 'success', detail: `Narrative Memory: ${settledChunks.length} chunk${settledChunks.length !== 1 ? 's' : ''} indexed in vector DB` });
@@ -256,28 +199,8 @@ async function commitChanges(char, hooksText) {
     return results;
 }
 
-// ─── Commit: UI Renderer ──────────────────────────────────────────────────────
-
-/** Reads a results array from commitChanges and paints the receipts panel. No IO. */
-function renderReceipts(results) {
-    for (const r of results) {
-        if (r.status === 'skipped') continue;
-        const id = `cnz-receipt-${r.task}`;
-        if (r.status === 'success') {
-            upsertReceiptItem(id, receiptSuccess(r.detail));
-        } else {
-            upsertReceiptItem(id, receiptFailure(r.error));
-        }
-    }
-}
-
 // ─── Commit: Orchestrator ─────────────────────────────────────────────────────
 
-/**
- * Handles the modal Confirm button. Runs the freshness check, delegates all IO
- * to commitChanges, delegates all DOM updates to renderReceipts, then closes or
- * surfaces the recovery guide depending on the results.
- */
 export async function onConfirmClick() {
     const hooksText = $('#cnz-situation-text').val().trim();
 
@@ -289,7 +212,6 @@ export async function onConfirmClick() {
     $('#cnz-error-4').addClass('cnz-hidden').text('');
     showReceiptsPanel();
 
-    // Freshness check — abort if a sync committed while this modal was open
     const liveChainNow = readDnaChain(SillyTavern.getContext().chat ?? []);
     if ((liveChainNow.lkg?.uuid ?? null) !== state._modalOpenHeadUuid) {
         abortCommitWithError('A sync committed while this modal was open. Close and re-open to retry.');
@@ -305,8 +227,6 @@ export async function onConfirmClick() {
         return;
     }
 
-    // Reset session guard so the next openReviewModal starts fresh from the
-    // newly-committed anchor state rather than reusing this now-stale draft.
     state._modalOpenHeadUuid = null;
     import('./orchestrator.js').then(({ closeModal }) => closeModal());
 }

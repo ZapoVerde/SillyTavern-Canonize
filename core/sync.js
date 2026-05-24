@@ -29,6 +29,7 @@ import { runLorebookSyncCall, runHookseekerCall } from './llm-calls.js';
 import { readDnaChain } from './dna-chain.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
 import { lbEnsureLorebook } from '../lorebook/api.js';
+import { stripProtectedBlock } from '../lorebook/utils.js';
 import { runRagPipeline } from '../rag/pipeline.js';
 import { patchCharacterWorld } from '../modal/commit.js';
 import { state } from '../state.js';
@@ -101,6 +102,31 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
                 delete state._draftLorebook.entries[String(uid)];
             }
         }
+
+        // Additions: UIDs on disk missing from the in-memory draft
+        for (const [uid, entry] of Object.entries(freshEntries)) {
+            if (!(uid in state._draftLorebook.entries)) {
+                state._draftLorebook.entries[uid] = structuredClone(entry);
+                log('Lorebook', `External addition merged: "${entry.comment || uid}"`);
+            }
+        }
+
+        // Edits: overwrite draft fields when disk content differs
+        for (const [uid, diskEntry] of Object.entries(freshEntries)) {
+            const draftEntry = state._draftLorebook.entries[uid];
+            if (!draftEntry) continue;
+            if (
+                stripProtectedBlock(diskEntry.content ?? '') !== stripProtectedBlock(draftEntry.content ?? '') ||
+                JSON.stringify(diskEntry.key) !== JSON.stringify(draftEntry.key) ||
+                (diskEntry.comment ?? '') !== (draftEntry.comment ?? '')
+            ) {
+                draftEntry.content = diskEntry.content;
+                draftEntry.key     = diskEntry.key;
+                draftEntry.comment = diskEntry.comment;
+                log('Lorebook', `External edit merged: "${diskEntry.comment || uid}"`);
+            }
+        }
+
         state._lorebookData = structuredClone(freshLorebook);
     }
 

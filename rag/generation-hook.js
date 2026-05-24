@@ -29,6 +29,10 @@
 import { state }             from '../state.js';
 import { getSettings }       from '../core/settings.js';
 import { doRagFetch }        from './rag-fetch.js';
+import { insertLorebookEntries } from './vec-store.js';
+import { cnzAvatarKey }      from './api.js';
+import { getStringHash }     from '../../../../utils.js';
+import { stripProtectedBlock } from '../lorebook/utils.js';
 import { log, error }        from '../log.js';
 import { eventSource, event_types } from '../../../../../script.js';
 import { writeCnzRagPrompt, clearCnzRagPrompt } from '../core/summary-prompt.js';
@@ -150,6 +154,31 @@ export async function onGenerationStarted() {
     }
     const messages = ctx.chat ?? [];
     if (!messages.length) return;
+
+    // JIT hash guard: re-vector if lorebook changed since last index
+    if (state._draftLorebook && state._lorebookName) {
+        const hashStr = Object.values(state._draftLorebook.entries ?? {})
+            .sort((a, b) => a.uid - b.uid)
+            .map(e => `${e.uid}|${e.comment ?? ''}|${(e.key ?? []).join(',')}|${stripProtectedBlock(e.content ?? '')}`)
+            .join('\n');
+        const currentHash = String(getStringHash(hashStr));
+        if (currentHash !== state._lastIndexedLorebookHash) {
+            _prefetchPromise = null; // discard stale prefetch
+            const lkgUuid = state._dnaChain?.lkg?.uuid;
+            if (lkgUuid) {
+                const char    = ctx.characters[ctx.characterId];
+                const entries = Object.values(state._draftLorebook.entries ?? {})
+                    .filter(e => !e.disable && e.content?.trim())
+                    .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
+                try {
+                    await insertLorebookEntries(cnzAvatarKey(char?.avatar ?? ''), lkgUuid, state._lorebookName, entries);
+                    state._lastIndexedLorebookHash = currentHash;
+                } catch (err) {
+                    error('RagHook', 'JIT lorebook re-vector failed:', err);
+                }
+            }
+        }
+    }
 
     const tInterceptor = performance.now();
     if (_timing) {
