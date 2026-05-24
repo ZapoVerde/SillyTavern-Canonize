@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
- * @stamp {"utc":"2026-05-21T00:00:00.000Z"}
- * @version 1.2.0
+ * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @version 1.3.0
  * @architectural-role Orchestrator
  * @description
  * SillyTavern Narrative Engine (CNZ) — extension entry point.
@@ -32,6 +32,7 @@ import { initSceneTracker } from './core/scene-tracker.js';
 import { readDnaChain } from './core/dna-chain.js';
 import { runCnzSync } from './core/sync.js';
 import { onChatChanged } from './core/session.js';
+import { lbGetLorebook } from './lorebook/api.js';
 import { writeChunkHeaderToChat, renderChunkChatLabel } from './rag/chat-labels.js';
 import { onGenerationStarted, prefetchRag } from './rag/generation-hook.js';
 import { injectModal } from './modal/modal-setup.js';
@@ -42,6 +43,8 @@ import { injectWandButton, onWandButtonClick } from './wand.js';
 import { injectSettingsPanel } from './settings/panel.js';
 
 log('Module', 'index.js: Module loaded (all imports resolved).');
+
+let _lorebookEditTimer = null;
 
 async function init() {
     log('Init', 'Starting sequence...');
@@ -61,6 +64,29 @@ async function init() {
 
         eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
         eventSource.on(event_types.MESSAGE_SENT, () => prefetchRag());
+        eventSource.on(event_types.WORLDINFO_UPDATED, (name) => {
+            if (name !== state._lorebookName) return;
+            clearTimeout(_lorebookEditTimer);
+            _lorebookEditTimer = setTimeout(async () => {
+                if (state._lorebookName !== name) return;
+                try {
+                    const fresh = await lbGetLorebook(name);
+                    state._draftLorebook           = structuredClone(fresh);
+                    state._lorebookData            = structuredClone(fresh);
+                    state._lastIndexedLorebookHash = '';
+                    if (!state._dnaChain?.lkg) return;
+                    const chatMsgs  = SillyTavern.getContext().chat ?? [];
+                    const anchorMsg = chatMsgs[state._dnaChain.lkgMsgIdx];
+                    if (!anchorMsg?.extra?.cnz) return;
+                    anchorMsg.extra.cnz = Object.assign({}, anchorMsg.extra.cnz, {
+                        lorebook: Object.assign({ name }, structuredClone(state._draftLorebook)),
+                    });
+                    await SillyTavern.getContext().saveChat();
+                } catch (err) {
+                    error('Lorebook', 'WORLDINFO_UPDATED handler failed:', err);
+                }
+            }, 7000);
+        });
 
         $(document).on('click', '.cnz-review-link', (e) => {
             e.preventDefault();

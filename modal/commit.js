@@ -184,7 +184,7 @@ async function commitChanges(char, hooksText) {
             }
 
             stitchedLorebook.extensions = { ...(stitchedLorebook.extensions ?? {}), cnz_anchor_uuid: state._dnaChain?.lkg?.uuid ?? null };
-            await lbSaveLorebook(state._lorebookName, stitchedLorebook);
+            await lbSaveLorebook(state._lorebookName, stitchedLorebook, { silent: true });
             state._lorebookData = structuredClone(state._draftLorebook);
             lorebookChanged = true;
             const changedNames = Object.values(state._draftLorebook.entries ?? {})

@@ -183,7 +183,7 @@ export async function runNewChatCleanup(char) {
 
         if (confirmed) {
             if (state._lorebookName) {
-                await lbSaveLorebook(state._lorebookName, { entries: {} });
+                await lbSaveLorebook(state._lorebookName, { entries: {} }, { silent: true });
                 state._lorebookData  = { name: state._lorebookName, entries: {} };
                 state._draftLorebook = structuredClone(state._lorebookData);
             }

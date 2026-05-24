@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/lorebook/api.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
+ * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role IO Wrapper
  * @description
  * Thin HTTP wrapper around the ST worldinfo server endpoints. Covers lorebook
@@ -43,14 +43,14 @@ export async function lbGetLorebook(name) {
     return res.json();
 }
 
-export async function lbSaveLorebook(name, data) {
+export async function lbSaveLorebook(name, data, { silent = false } = {}) {
     const res = await fetch('/api/worldinfo/edit', {
         method:  'POST',
         headers: getRequestHeaders(),
         body:    JSON.stringify({ name, data }),
     });
     if (!res.ok) throw new Error(`Lorebook save failed (HTTP ${res.status})`);
-    await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
+    if (!silent) await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
 }
 
 /**
@@ -65,7 +65,7 @@ export async function lbEnsureLorebook(name) {
     }
     const exists = list.some(item => item.name === name);
     if (!exists) {
-        await lbSaveLorebook(name, { entries: {} });
+        await lbSaveLorebook(name, { entries: {} }, { silent: true });
         await updateWorldInfoList();
     }
     return lbGetLorebook(name);

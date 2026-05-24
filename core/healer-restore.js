@@ -36,7 +36,7 @@ export async function restoreLorebookToNode(_char, node, nodeFile = null) {
     const lbData = structuredClone(nodeFile.state.lorebook);
     const lbName = lbData.name || state._lorebookName;
     lbData.extensions = { ...(lbData.extensions ?? {}), cnz_anchor_uuid: nodeFile.state?.uuid ?? null };
-    await lbSaveLorebook(lbName, lbData);
+    await lbSaveLorebook(lbName, lbData, { silent: true });
     state._lorebookName  = lbName;
     state._lorebookData  = structuredClone(lbData);
     state._draftLorebook = structuredClone(lbData);
