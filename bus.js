@@ -34,6 +34,7 @@ let _enabled = true;
 
 export function setBusEnabled(enabled) {
     _enabled = enabled;
+    log('Bus', `Bus ${enabled ? 'enabled — emit active' : 'disabled — emit suppressed'}.`);
 }
 
 export function emit(eventName, payload = {}) {

@@ -38,7 +38,7 @@ import { openReviewModal } from './modal/orchestrator.js';
 import { openOrphanModal } from './modal/orphan-modal.js';
 import { runCnzSync } from './core/sync.js';
 import { invalidateAllJobs } from './cycleStore.js';
-import { error } from './log.js';
+import { log, error } from './log.js';
 
 // ── Module state ──────────────────────────────────────────────────────────────
 
@@ -126,12 +126,15 @@ async function _startEmbedMonitor(signal) {
 // ── Mount / Unmount ───────────────────────────────────────────────────────────
 
 export function mountCnz() {
+    log('Lifecycle', 'mountCnz: starting...');
+
     setBusEnabled(true);
     startScheduler();
 
     eventSource.on(event_types.CHAT_CHANGED,     onChatChanged);
     eventSource.on(event_types.MESSAGE_SENT,      _onMessageSent);
     eventSource.on(event_types.WORLDINFO_UPDATED, _onWorldInfoUpdated);
+    log('Lifecycle', 'Bound ST: CHAT_CHANGED, MESSAGE_SENT, WORLDINFO_UPDATED.');
 
     $(document).on('click', '.cnz-review-link',   (e) => { e.preventDefault(); openReviewModal(); });
     $(document).on('click', '.cnz-orphan-review',  (e) => { e.preventDefault(); toastr.clear(); openOrphanModal(state._pendingOrphans); });
@@ -151,8 +154,10 @@ export function mountCnz() {
         const pairCount = messages.filter(m => !m.is_system && m.is_user).length;
         snooze(getSettings().gapSnoozeTurns ?? 5, pairCount);
     });
+    log('Lifecycle', 'Bound DOM: .cnz-review-link, .cnz-orphan-review, .cnz-orphan-dismiss, .cnz-gap-sync-all, .cnz-gap-snooze.');
 
     injectWandButton();
+    log('Lifecycle', 'Wand button injected.');
 
     const pm = getCnzPromptManager();
     if (pm) {
@@ -161,45 +166,69 @@ export function mountCnz() {
         const ctx  = SillyTavern.getContext();
         const char = ctx?.characterId != null ? ctx.characters[ctx.characterId] : null;
         syncCnzSummaryOnCharacterSwitch(char, state._dnaChain);
+        log('Lifecycle', `Prompt stack: ensured ${CNZ_SUMMARY_ID}, ${CNZ_RAG_ID}${char ? ` — synced to "${char.name}"` : ' (no character)'}.`);
+    } else {
+        log('Lifecycle', 'Prompt stack: PromptManager unavailable — skipping provisioning.');
     }
 
     _embedAbortCtrl = new AbortController();
     _startEmbedMonitor(_embedAbortCtrl.signal);
+    log('Lifecycle', 'Embed monitor started.');
+
+    log('Lifecycle', 'mountCnz: complete.');
 }
 
 export function unmountCnz() {
+    log('Lifecycle', 'unmountCnz: starting...');
+
     setBusEnabled(false);
     stopScheduler();
 
     eventSource.off(event_types.CHAT_CHANGED,     onChatChanged);
     eventSource.off(event_types.MESSAGE_SENT,      _onMessageSent);
     eventSource.off(event_types.WORLDINFO_UPDATED, _onWorldInfoUpdated);
+    log('Lifecycle', 'Unbound ST: CHAT_CHANGED, MESSAGE_SENT, WORLDINFO_UPDATED.');
 
     $(document).off('click', '.cnz-review-link');
     $(document).off('click', '.cnz-orphan-review');
     $(document).off('click', '.cnz-orphan-dismiss');
     $(document).off('click', '.cnz-gap-sync-all');
     $(document).off('click', '.cnz-gap-snooze');
+    log('Lifecycle', 'Unbound DOM: .cnz-review-link, .cnz-orphan-review, .cnz-orphan-dismiss, .cnz-gap-sync-all, .cnz-gap-snooze.');
 
     $('#cnz-wand-btn').remove();
+    log('Lifecycle', 'Wand button removed.');
 
     clearTimeout(_lorebookEditTimer);
     _lorebookEditTimer = null;
+    log('Lifecycle', 'Lorebook debounce timer cleared.');
 
-    _embedAbortCtrl?.abort();
-    _embedAbortCtrl = null;
+    if (_embedAbortCtrl) {
+        _embedAbortCtrl.abort();
+        _embedAbortCtrl = null;
+        log('Lifecycle', 'Embed monitor aborted.');
+    } else {
+        log('Lifecycle', 'Embed monitor was not running.');
+    }
 
     const pm = getCnzPromptManager();
     if (pm) {
         removeCnzPromptFromStack(pm, CNZ_SUMMARY_ID);
         removeCnzPromptFromStack(pm, CNZ_RAG_ID);
+        log('Lifecycle', `Prompt stack: removed ${CNZ_SUMMARY_ID}, ${CNZ_RAG_ID}.`);
+    } else {
+        log('Lifecycle', 'Prompt stack: PromptManager unavailable — stack not purged.');
     }
 
+    log('Lifecycle', 'unmountCnz: complete.');
     toastr.success('Canonize disabled and prompt stack cleared.');
 }
 
 export function initLifecycle() {
     if (getMetaSettings().enableCnz !== false) {
+        log('Lifecycle', 'initLifecycle: CNZ enabled — mounting.');
         mountCnz();
+    } else {
+        log('Lifecycle', 'initLifecycle: CNZ disabled — skipping mount.');
     }
 }

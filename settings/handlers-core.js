@@ -24,7 +24,7 @@ import { escapeHtml } from '../state.js';
 import { DEFAULT_LOREBOOK_SYNC_PROMPT, DEFAULT_HOOKSEEKER_PROMPT,
          DEFAULT_TARGETED_UPDATE_PROMPT, DEFAULT_TARGETED_NEW_PROMPT } from '../defaults.js';
 import { getSettings, getMetaSettings } from './data.js';
-import { setVerbose } from '../log.js';
+import { log, setVerbose } from '../log.js';
 import { openDnaChainInspector } from '../modal/dna-inspector.js';
 import { purgeAndRebuild, purgeCnzFiles } from '../core/maintenance.js';
 import { mountCnz, unmountCnz } from '../lifecycle.js';
@@ -34,6 +34,7 @@ export function bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refres
     // ── Master enable toggle ──────────────────────────────────────────────────
     $('#cnz-set-enable-cnz').on('change', function () {
         const enabled = $(this).prop('checked');
+        log('Settings', `Enable Canonize toggled ${enabled ? 'ON' : 'OFF'}.`);
         getMetaSettings().enableCnz = enabled;
         saveSettingsDebounced();
         $('#cnz-main-settings').toggleClass('cnz-disabled', !enabled);

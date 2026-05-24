@@ -69,6 +69,8 @@ export function initScheduler(triggers, getSettings) {
             on(trigger.watchEvent, (eventData) => _evaluate(trigger, eventData));
         }
     }
+    const busCount = _triggers.filter(t => t.source === 'bus').length;
+    log('Scheduler', `initScheduler: ${_stHandlers.length} ST handler ref(s) built (unbound), ${busCount} bus trigger(s) registered.`);
 }
 
 /**
@@ -80,7 +82,9 @@ export function stopScheduler() {
     _syncInProgress   = false;
     for (const { event, handler } of _stHandlers) {
         eventSource.off(event, handler);
+        log('Scheduler', `Unbound ST: ${event}`);
     }
+    log('Scheduler', `stopScheduler: ${_stHandlers.length} ST listener(s) detached, snooze/sync state reset.`);
 }
 
 /**
@@ -89,7 +93,9 @@ export function stopScheduler() {
 export function startScheduler() {
     for (const { event, handler } of _stHandlers) {
         eventSource.on(event, handler);
+        log('Scheduler', `Bound ST: ${event}`);
     }
+    log('Scheduler', `startScheduler: ${_stHandlers.length} ST listener(s) attached.`);
 }
 
 /**
