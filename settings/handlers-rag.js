@@ -32,6 +32,22 @@ const OPENAI_EMBED_MODELS = [
     { id: 'text-embedding-ada-002',  label: 'text-embedding-ada-002' },
 ];
 
+const COHERE_EMBED_MODELS = [
+    { id: 'embed-english-v3.0',            label: 'embed-english-v3.0' },
+    { id: 'embed-multilingual-v3.0',       label: 'embed-multilingual-v3.0' },
+    { id: 'embed-english-light-v3.0',      label: 'embed-english-light-v3.0' },
+    { id: 'embed-multilingual-light-v3.0', label: 'embed-multilingual-light-v3.0' },
+];
+
+const NOMIC_EMBED_MODELS = [
+    { id: 'nomic-embed-text-v1',   label: 'nomic-embed-text-v1' },
+    { id: 'nomic-embed-text-v1.5', label: 'nomic-embed-text-v1.5' },
+];
+
+const MISTRAL_EMBED_MODELS = [
+    { id: 'mistral-embed', label: 'mistral-embed' },
+];
+
 function _renderEmbedModelList(items, showingAll, withToggle = false) {
     const $list   = $('#cnz-embedding-model-list');
     const current = $('#cnz-set-embedding-model').val().trim();
@@ -132,8 +148,10 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
 
     // ── Retrieval settings ────────────────────────────────────────────────────
     $('#cnz-set-embedding-source').on('change', function () {
-        getSettings().ragEmbeddingSource = $(this).val();
+        const src = $(this).val();
+        getSettings().ragEmbeddingSource = src;
         saveSettingsDebounced(); updateDirtyIndicator();
+        $('#cnz-embed-or-note').toggleClass('cnz-hidden', src !== 'openrouter');
     });
 
     $('#cnz-set-embedding-model').on('input', function () {
@@ -165,8 +183,12 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
     // ── Embedding model browser ───────────────────────────────────────────────
     $('#cnz-browse-embedding-model').on('click', async function () {
         const source = getSettings().ragEmbeddingSource ?? 'openrouter';
+        if (source === 'openai') { _renderEmbedModelList(OPENAI_EMBED_MODELS, false); return; }
+        if (source === 'cohere') { _renderEmbedModelList(COHERE_EMBED_MODELS, false); return; }
+        if (source === 'nomicai') { _renderEmbedModelList(NOMIC_EMBED_MODELS, false); return; }
+        if (source === 'mistral') { _renderEmbedModelList(MISTRAL_EMBED_MODELS, false); return; }
         if (source !== 'openrouter') {
-            _renderEmbedModelList(OPENAI_EMBED_MODELS, false, false);
+            toastr.info('No model list available for this provider — enter the model ID manually.');
             return;
         }
         const $btn = $(this);

@@ -1,31 +1,41 @@
 /**
  * @file plugins/cnz/embed.js
- * @stamp {"utc":"2026-05-23T00:00:00.000Z"}
- * @architectural-role IO Wrapper — OpenRouter embedding API
+ * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @architectural-role IO Wrapper — ST-native embedding dispatch
  * @description
- * Generates embeddings via OpenRouter's OpenAI-compatible embeddings endpoint.
- * All calls share a priority semaphore (MAX_CONCURRENT slots). Single-text calls
- * (generation queries, time-critical) run at priority 1 and jump ahead of batch
- * calls (healer indexing, background) at priority 0. This prevents the healer
- * from saturating OpenRouter and blocking generation while mid-index on large
- * chats. Batch calls are staggered by STAGGER_MS between launches to avoid
- * thundering-herd bursts while still running at high concurrency. Failed batches
- * retry up to MAX_RETRIES times with linear backoff; the semaphore slot is
- * released between attempts so other calls can proceed.
+ * Generates embeddings by delegating to SillyTavern's own vector modules,
+ * giving CNZ access to every embedding provider supported by the Vectorize
+ * extension. All calls share a priority semaphore (MAX_CONCURRENT slots).
+ * Single-text calls (generation queries) run at priority 1 and jump ahead of
+ * batch calls (healer indexing) at priority 0. Batch calls are staggered by
+ * STAGGER_MS to avoid thundering-herd bursts. Failed calls retry up to
+ * MAX_RETRIES times with linear backoff; the semaphore slot is released
+ * between attempts so other calls can proceed.
  *
  * @api-declaration
  * embedWithSource(cfg, text)        → Promise<number[]>   priority 1 (generation)
  * embedBatchWithSource(cfg, texts)  → Promise<number[][]> priority 0 (indexing)
+ * getEmbedStats()                   → { total, done, running, waiting }
+ * addSseClient(res) / removeSseClient(res)
  *
  * @contract
  *   assertions:
  *     purity:          mutates
- *     state_ownership: [_running, _waiters]
- *     external_io:     [openrouter.ai/api/v1/embeddings]
+ *     state_ownership: [_running, _waiters, _statsTotal, _statsDone, _sseClients]
+ *     external_io:     [ST vector modules — openai-vectors, ollama-vectors, etc.]
  */
 
-const OR_BASE        = 'https://openrouter.ai/api/v1/embeddings';
-const BATCH_SIZE     = 10;
+import { getOpenAIVector, getOpenAIBatchVector }         from '../../src/vectors/openai-vectors.js';
+import { getOllamaVector, getOllamaBatchVector }         from '../../src/vectors/ollama-vectors.js';
+import { getVllmVector, getVllmBatchVector }             from '../../src/vectors/vllm-vectors.js';
+import { getLlamaCppVector, getLlamaCppBatchVector }     from '../../src/vectors/llamacpp-vectors.js';
+import { getTransformersVector, getTransformersBatchVector } from '../../src/vectors/embedding.js';
+import { getCohereVector, getCohereBatchVector }         from '../../src/vectors/cohere-vectors.js';
+import { getNomicAIVector, getNomicAIBatchVector }       from '../../src/vectors/nomicai-vectors.js';
+import { getMakerSuiteVector, getMakerSuiteBatchVector,
+         getVertexVector, getVertexBatchVector }         from '../../src/vectors/google-vectors.js';
+
+const BATCH_SIZE     = 5;
 const MAX_CONCURRENT = 20;
 const STAGGER_MS     = 50;
 const MAX_RETRIES    = 3;
@@ -75,35 +85,61 @@ function _release() {
     }
 }
 
-// ── HTTP ──────────────────────────────────────────────────────────────────────
+// ── Provider dispatch ─────────────────────────────────────────────────────────
 
-async function _sendOnce(model, apiKey, inputs) {
-    const res = await fetch(OR_BASE, {
-        method:  'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ model, input: inputs }),
-    });
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(`OpenRouter embed error (${res.status}): ${err.error ?? res.statusText}`);
+const OPENAI_COMPAT = new Set([
+    'openrouter', 'openai', 'mistral', 'togetherai', 'electronhub',
+    'chutes', 'nanogpt', 'siliconflow', 'workers_ai',
+]);
+
+async function _one(cfg, text) {
+    const { source, model, directories, request, apiUrl, keep, urlOverride } = cfg;
+    if (OPENAI_COMPAT.has(source))
+        return getOpenAIVector(text, source, directories, model, urlOverride ?? null);
+    switch (source) {
+        case 'ollama':       return getOllamaVector(text, apiUrl, model, keep ?? false, directories);
+        case 'vllm':         return getVllmVector(text, apiUrl, model, directories);
+        case 'llamacpp':     return getLlamaCppVector(text, apiUrl, directories);
+        case 'transformers': return getTransformersVector(text);
+        case 'cohere':       return getCohereVector(text, false, directories, model);
+        case 'nomicai':      return getNomicAIVector(text, source, directories);
+        case 'palm':         return getMakerSuiteVector(text, model, request);
+        case 'vertexai':     return getVertexVector(text, model, request);
+        default: throw new Error(`CNZ embed: unsupported source "${source}"`);
     }
-    const data = await res.json();
-    return data.data.sort((a, b) => a.index - b.index).map(d => d.embedding);
 }
 
-async function _sendBatch(model, apiKey, inputs, priority) {
+async function _batch(cfg, texts) {
+    const { source, model, directories, request, apiUrl, keep, urlOverride } = cfg;
+    if (OPENAI_COMPAT.has(source))
+        return getOpenAIBatchVector(texts, source, directories, model, urlOverride ?? null);
+    switch (source) {
+        case 'ollama':       return getOllamaBatchVector(texts, apiUrl, model, keep ?? false, directories);
+        case 'vllm':         return getVllmBatchVector(texts, apiUrl, model, directories);
+        case 'llamacpp':     return getLlamaCppBatchVector(texts, apiUrl, directories);
+        case 'transformers': return getTransformersBatchVector(texts);
+        case 'cohere':       return getCohereBatchVector(texts, false, directories, model);
+        case 'nomicai':      return getNomicAIBatchVector(texts, source, directories);
+        case 'palm':         return getMakerSuiteBatchVector(texts, model, request);
+        case 'vertexai':     return getVertexBatchVector(texts, model, request);
+        default: throw new Error(`CNZ embed: unsupported source "${source}"`);
+    }
+}
+
+// ── Retry wrapper ─────────────────────────────────────────────────────────────
+
+async function _embed(cfg, texts, priority) {
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         await _acquire(priority);
         try {
-            return await _sendOnce(model, apiKey, inputs);
+            return texts.length === 1 ? [await _one(cfg, texts[0])] : await _batch(cfg, texts);
         } catch (err) {
             if (attempt >= MAX_RETRIES) {
-                console.error(`[cnz embed] batch of ${inputs.length} failed after ${MAX_RETRIES} attempts:`, err.message);
+                console.error(`[cnz embed] failed after ${MAX_RETRIES} attempts:`, err.message);
                 throw err;
             }
-            const wait = RETRY_MS * attempt;
-            console.warn(`[cnz embed] attempt ${attempt}/${MAX_RETRIES} failed — retrying in ${wait}ms:`, err.message);
-            await sleep(wait);
+            console.warn(`[cnz embed] attempt ${attempt}/${MAX_RETRIES} failed — retrying in ${RETRY_MS * attempt}ms:`, err.message);
+            await sleep(RETRY_MS * attempt);
         } finally {
             _release();
         }
@@ -114,37 +150,26 @@ async function _sendBatch(model, apiKey, inputs, priority) {
 
 /**
  * Embed a single string at high priority (generation queries).
- * @param {{ source: string, model: string, apiKey: string }} cfg
- * @param {string} text
- * @returns {Promise<number[]>}
+ * @param {{ source, model, directories, request, apiUrl?, keep?, urlOverride? }} cfg
  */
 export async function embedWithSource(cfg, text) {
-    if (cfg.source === 'openrouter' && cfg.model && cfg.apiKey) {
-        const [embedding] = await _sendBatch(cfg.model, cfg.apiKey, [text], 1);
-        return embedding;
-    }
-    throw new Error('CNZ embed: set embeddingSource to "openrouter" and provide a model and API key in CNZ settings.');
+    const [embedding] = await _embed(cfg, [text], 1);
+    return embedding;
 }
 
 /**
- * Embed an array of strings in parallel batches of BATCH_SIZE at normal priority
- * (background indexing). All batches compete for semaphore slots with generation
- * queries; high-priority queries jump the queue when slots are full.
- * @param {{ source: string, model: string, apiKey: string }} cfg
- * @param {string[]} texts
- * @returns {Promise<number[][]>}
+ * Embed an array of strings in parallel batches at normal priority (indexing).
+ * @param {{ source, model, directories, request, apiUrl?, keep?, urlOverride? }} cfg
  */
 export async function embedBatchWithSource(cfg, texts) {
     if (!texts.length) return [];
-    if (!(cfg.source === 'openrouter' && cfg.model && cfg.apiKey))
-        throw new Error('CNZ embed: set embeddingSource to "openrouter" and provide a model and API key in CNZ settings.');
     const batches = [];
     for (let i = 0; i < texts.length; i += BATCH_SIZE) batches.push(texts.slice(i, i + BATCH_SIZE));
     _statsTotal += texts.length;
     _broadcast();
     const results = await Promise.all(
         batches.map((b, i) => sleep(i * STAGGER_MS).then(async () => {
-            const r = await _sendBatch(cfg.model, cfg.apiKey, b, 0);
+            const r = await _embed(cfg, b, 0);
             _statsDone += b.length;
             _broadcast();
             return r;

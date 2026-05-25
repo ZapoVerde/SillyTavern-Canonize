@@ -35,8 +35,7 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
     const enableRag        = s.enableRag        ?? false;
     const hasSummary       = ragContents !== 'full';
     const isDefinedHere    = ragSummarySource === 'defined';
-    const embedSource      = s.ragEmbeddingSource ?? 'local';
-    const isRemoteEmbed    = embedSource !== 'local';
+    const embedSource      = s.ragEmbeddingSource ?? 'openrouter';
 
     const tip = (text) => `<span class="cnz-info-icon" title="${escapeHtml(text)}">&#9432;</span>`;
 
@@ -86,6 +85,12 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
         <div class="cnz-settings-inline-row">
           <label for="cnz-set-chunk-every-n">Pairs between updates ${tip('How many new turn pairs trigger an auto-sync. Also sets the standard sync window size.')}</label>
           <input id="cnz-set-chunk-every-n" type="number" min="1" step="1" value="${escapeHtml(String(s.chunkEveryN ?? 20))}">
+        </div>
+        <div class="cnz-settings-row">
+          <label class="cnz-checkbox-label">
+            <input id="cnz-set-auto-sync" type="checkbox" ${(s.autoSync ?? true) ? 'checked' : ''}>
+            <span>Auto-sync ${tip('Automatically starts a sync cycle after the configured number of new turn pairs.')}</span>
+          </label>
         </div>
         <div class="cnz-settings-inline-row">
           <label for="cnz-set-gap-snooze">Gap snooze (pairs) ${tip('When a large gap is detected and you dismiss the offer, auto-sync will stay quiet for this many additional pairs.')}</label>
@@ -196,11 +201,29 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
           <div class="cnz-settings-section-header">Retrieval Settings</div>
 
           <div class="cnz-settings-inline-row">
-            <label for="cnz-set-embedding-source">Embedding Source ${tip('Embedding provider. Uses the API key already stored in ST\'s connection settings — no separate key needed.')}</label>
+            <label for="cnz-set-embedding-source">Embedding Source ${tip('Embedding provider. API keys are read from ST\'s connection settings. URL-based providers (Ollama, vLLM, llama.cpp) use the server URLs already configured in ST\'s API settings.')}</label>
             <select id="cnz-set-embedding-source" class="cnz-select cnz-settings-select-sm">
-              <option value="openrouter" selected>OpenRouter</option>
-              <option value="openai">OpenAI</option>
+              <option value="openrouter"   ${embedSource === 'openrouter'   ? 'selected' : ''}>OpenRouter</option>
+              <option value="openai"       ${embedSource === 'openai'       ? 'selected' : ''}>OpenAI</option>
+              <option value="mistral"      ${embedSource === 'mistral'      ? 'selected' : ''}>Mistral</option>
+              <option value="cohere"       ${embedSource === 'cohere'       ? 'selected' : ''}>Cohere</option>
+              <option value="nomicai"      ${embedSource === 'nomicai'      ? 'selected' : ''}>Nomic AI</option>
+              <option value="togetherai"   ${embedSource === 'togetherai'   ? 'selected' : ''}>Together AI</option>
+              <option value="electronhub"  ${embedSource === 'electronhub'  ? 'selected' : ''}>ElectronHub</option>
+              <option value="chutes"       ${embedSource === 'chutes'       ? 'selected' : ''}>Chutes</option>
+              <option value="nanogpt"      ${embedSource === 'nanogpt'      ? 'selected' : ''}>NanoGPT</option>
+              <option value="siliconflow"  ${embedSource === 'siliconflow'  ? 'selected' : ''}>SiliconFlow</option>
+              <option value="workers_ai"   ${embedSource === 'workers_ai'   ? 'selected' : ''}>Cloudflare Workers AI</option>
+              <option value="palm"         ${embedSource === 'palm'         ? 'selected' : ''}>Google AI Studio (PaLM)</option>
+              <option value="vertexai"     ${embedSource === 'vertexai'     ? 'selected' : ''}>Google Vertex AI</option>
+              <option value="ollama"       ${embedSource === 'ollama'       ? 'selected' : ''}>Ollama (local URL)</option>
+              <option value="vllm"         ${embedSource === 'vllm'         ? 'selected' : ''}>vLLM (local URL)</option>
+              <option value="llamacpp"     ${embedSource === 'llamacpp'     ? 'selected' : ''}>llama.cpp (local URL)</option>
+              <option value="transformers" ${embedSource === 'transformers' ? 'selected' : ''}>Transformers (local)</option>
             </select>
+          </div>
+          <div id="cnz-embed-or-note" class="cnz-settings-note${embedSource === 'openrouter' ? '' : ' cnz-hidden'}">
+            OpenRouter pre-filters the model browser to embedding models only.
           </div>
           <div id="cnz-rag-remote-embed-rows">
             <div class="cnz-settings-inline-row">

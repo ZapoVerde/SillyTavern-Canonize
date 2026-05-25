@@ -25,19 +25,41 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: [none]
- *     external_io: [/api/plugins/cnz/*]
+ *     external_io: [/api/plugins/cnz/*, textgenerationwebui_settings, oai_settings]
  */
 
-import { getRequestHeaders } from '../../../../../script.js';
-import { getStringHash }     from '../../../../utils.js';
-import { getSettings }       from '../core/settings.js';
-import { log }               from '../log.js';
+import { getRequestHeaders }                             from '../../../../../script.js';
+import { getStringHash }                                 from '../../../../utils.js';
+import { textgen_types, textgenerationwebui_settings }   from '../../../../textgen-settings.js';
+import { oai_settings }                                  from '../../../../openai.js';
+import { getSettings }                                   from '../core/settings.js';
+import { log }                                           from '../log.js';
+
+const URL_SOURCES = {
+    ollama:   textgen_types.OLLAMA,
+    vllm:     textgen_types.VLLM,
+    llamacpp: textgen_types.LLAMACPP,
+};
 
 const BASE = '/api/plugins/cnz';
 
 function embedCfg() {
-    const s = getSettings();
-    const cfg = { embeddingSource: s.ragEmbeddingSource ?? 'openrouter', embeddingModel: s.ragEmbeddingModel ?? '' };
+    const s      = getSettings();
+    const source = s.ragEmbeddingSource ?? 'openrouter';
+    const cfg    = { embeddingSource: source, embeddingModel: s.ragEmbeddingModel ?? '' };
+
+    // URL-based local providers: read the server URL from ST's textgen settings.
+    if (URL_SOURCES[source]) {
+        cfg.embeddingApiUrl = textgenerationwebui_settings.server_urls[URL_SOURCES[source]] ?? '';
+    }
+
+    // workers_ai: construct URL from the Cloudflare account ID in ST's API settings.
+    if (source === 'workers_ai') {
+        const accountId = (oai_settings.workers_ai_account_id ?? '').trim();
+        if (accountId)
+            cfg.embeddingUrlOverride = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/v1`;
+    }
+
     log('VecStore', `embedCfg source=${cfg.embeddingSource} model=${cfg.embeddingModel || '(unset)'}`);
     return cfg;
 }

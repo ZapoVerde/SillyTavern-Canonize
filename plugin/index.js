@@ -4,10 +4,10 @@
  * @architectural-role Orchestrator — ST server plugin entry point
  * @description
  * SillyTavern server plugin for CNZ. Initialises the embedded PGlite database
- * on startup and registers all CNZ vector store routes directly on the ST plugin
- * router. Injects the OpenRouter API key from ST's secrets store into each
- * request body before the route handlers run, so the extension never needs a
- * separate key. Exposes a /inspect endpoint returning live DB stats.
+ * on startup and registers all CNZ vector store routes on the ST plugin router.
+ * Auth and provider dispatch are handled inside embed.js via ST's own vector
+ * modules, so no key injection is needed here. Exposes a /inspect endpoint
+ * returning live DB stats.
  *
  * Replaces the old two-container approach (cnz-db microservice + proxy plugin).
  * No external Docker service, no compose dependency, no Traefik routing needed.
@@ -28,14 +28,8 @@
  *     external_io:     [db.js, routes.js, ST secrets store]
  */
 
-import { readSecret, SECRET_KEYS } from '../../src/endpoints/secrets.js';
 import { initDb, chunkCountForAvatar, lbEntryCountForAvatar } from './db.js';
 import { registerRoutes } from './routes.js';
-
-const SOURCE_SECRET = {
-    openrouter: SECRET_KEYS.OPENROUTER,
-    openai:     SECRET_KEYS.OPENAI,
-};
 
 export const info = {
     id:          'cnz',
@@ -45,19 +39,6 @@ export const info = {
 
 export async function init(router) {
     await initDb();
-
-    // Inject embedding API key from ST secrets before any route handler sees the body.
-    router.use((req, res, next) => {
-        if (req.method !== 'GET' && req.body?.embeddingSource && !req.body.embeddingApiKey) {
-            const secretKey = SOURCE_SECRET[req.body.embeddingSource];
-            if (secretKey) {
-                const apiKey = readSecret(req.user?.directories, secretKey);
-                if (apiKey) req.body = { ...req.body, embeddingApiKey: apiKey };
-            }
-        }
-        next();
-    });
-
     registerRoutes(router);
 
     // ── GET /inspect — live DB stats ──────────────────────────────────────────

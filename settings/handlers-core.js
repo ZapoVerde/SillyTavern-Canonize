@@ -66,6 +66,10 @@ export function bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refres
         getSettings().autoAdvanceMask = $(this).prop('checked');
         saveSettingsDebounced(); updateDirtyIndicator();
     });
+    $('#cnz-set-auto-sync').on('change', function () {
+        getSettings().autoSync = $(this).prop('checked');
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
     $('#cnz-edit-summary-prompt').on('click', () =>
         openPromptModal('hookseekerPrompt', 'Edit Summary Prompt', DEFAULT_HOOKSEEKER_PROMPT,
             ['transcript', 'prev_summary']));
