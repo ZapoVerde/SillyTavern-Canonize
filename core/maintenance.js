@@ -4,9 +4,8 @@
  * @version 2.0.0
  * @architectural-role Orchestrator
  * @description
- * User-initiated maintenance operations: RAG rebuild, new-chat cleanup, and
- * RAG-only purge. All triggered explicitly from the settings panel; distinct
- * from the automatic healing flow in healer.js. Sequences IO calls only.
+ * User-initiated maintenance: RAG rebuild (concurrent worker pool), new-chat
+ * cleanup, and RAG-only purge. All triggered from the settings panel.
  *
  * @api-declaration
  * rebuildRag()
@@ -38,22 +37,18 @@ import { error } from '../log.js';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-const RETRY_MS   = 1000;
+const CONCURRENCY = 20;
+const RETRY_MS    = 1000;
 const MAX_RETRIES = 3;
 const MAX_ROUNDS  = 3;
 
 // ─── Rebuild RAG ──────────────────────────────────────────────────────────────
 
 /**
- * Re-indexes all classified chunks from the chain history into the vector DB.
- * Does not purge first — already-indexed chunks are skipped via upsert, so the
- * operation is idempotent and safe to re-run after a partial failure.
- *
- * Retry model (mirrors embed.js): MAX_RETRIES fast attempts per round, linear
- * backoff within round, doubling inter-attempt delay each round (1s/2s → 2s/4s →
- * 4s/8s). On exhaustion the anchor joins the back of the queue. After MAX_ROUNDS
- * it is recorded as failed. After each failure /health is pinged to verify the
- * server committed the insert despite the tunnel dropping the response.
+ * Re-indexes all classified chunks into the vector DB using CONCURRENCY parallel
+ * workers. Idempotent (upsert). Per-anchor retry with linear backoff per round,
+ * doubling delay each round; failed anchors re-queued up to MAX_ROUNDS. After
+ * each failure /health is pinged to verify the server committed the insert.
  */
 export async function rebuildRag() {
     const { isSyncInProgress } = await import('../scheduler.js');
@@ -158,10 +153,11 @@ export async function rebuildRag() {
             byAnchor.get(uuid).push(chunk);
         }
 
-        // ── 3. Queue-based retry loop ─────────────────────────────────────────
+        // ── 3. Concurrent worker pool ─────────────────────────────────────────
         const queue    = [...byAnchor.entries()].map(([uuid, chunks]) => ({ uuid, chunks, round: 0 }));
         const gaveUp   = [];
         let inserted   = 0;
+        let active     = 0;
         let warnedOnce = false;
 
         let $toast = toastr.info(`CNZ: Rebuilding — 0 / ${total} chunks`, '', { timeOut: 0, extendedTimeOut: 0, closeButton: true });
@@ -170,46 +166,48 @@ export async function rebuildRag() {
             else $toast = toastr.info(msg, '', { timeOut: 0, extendedTimeOut: 0, closeButton: true });
         };
 
-        while (queue.length > 0) {
-            const { uuid, chunks, round } = queue.shift();
-            const retryMs = RETRY_MS * (1 << round); // 1000 → 2000 → 4000
-            let succeeded = false;
+        const _worker = async () => {
+            while (true) {
+                const item = queue.shift();
+                if (!item) { if (active === 0) break; await sleep(50); continue; }
+                active++;
+                const { uuid, chunks, round } = item;
+                const retryMs = RETRY_MS * (1 << round);
+                let succeeded = false;
 
-            for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-                _upd(`CNZ: Rebuilding — ${inserted} / ${total} chunks${round > 0 ? ` (round ${round + 1}/${MAX_ROUNDS})` : ''}`);
-                try {
-                    await insertSyncChunks(avatarKey, uuid, chatFile, chunks, 0);
-                    inserted += chunks.length;
-                    succeeded = true;
-                    break;
-                } catch {
-                    // Ping /health to verify — the tunnel may have dropped the
-                    // response even though the server committed the insert.
+                for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                    _upd(`CNZ: Rebuilding — ${inserted} / ${total} chunks${round > 0 ? ` (round ${round + 1}/${MAX_ROUNDS})` : ''}`);
                     try {
-                        const { chunksForAnchor } = await anchorChunkCount(avatarKey, uuid);
-                        if ((chunksForAnchor ?? 0) > 0) { inserted += chunks.length; succeeded = true; break; }
-                    } catch { /* plugin unreachable — treat as genuine failure */ }
-
-                    if (!warnedOnce) {
-                        toastr.warning('CNZ: Connection trouble — retrying failed anchors.', '', { timeOut: 5000 });
-                        warnedOnce = true;
-                    }
-                    if (attempt < MAX_RETRIES) {
-                        _upd(`CNZ: Rebuilding — ${inserted} / ${total} chunks (retry ${attempt}/${MAX_RETRIES}...)`);
-                        await sleep(retryMs * attempt);
+                        await insertSyncChunks(avatarKey, uuid, chatFile, chunks, 0);
+                        inserted += chunks.length;
+                        succeeded = true;
+                        break;
+                    } catch {
+                        // Ping /health to verify — the tunnel may have dropped the
+                        // response even though the server committed the insert.
+                        try {
+                            const { chunksForAnchor } = await anchorChunkCount(avatarKey, uuid);
+                            if ((chunksForAnchor ?? 0) > 0) { inserted += chunks.length; succeeded = true; break; }
+                        } catch { /* plugin unreachable — treat as genuine failure */ }
+                        if (!warnedOnce) {
+                            toastr.warning('CNZ: Connection trouble — retrying failed anchors.', '', { timeOut: 5000 });
+                            warnedOnce = true;
+                        }
+                        if (attempt < MAX_RETRIES) {
+                            _upd(`CNZ: Rebuilding — ${inserted} / ${total} chunks (retry ${attempt}/${MAX_RETRIES}...)`);
+                            await sleep(retryMs * attempt);
+                        }
                     }
                 }
-            }
 
-            if (!succeeded) {
-                if (round + 1 < MAX_ROUNDS) {
-                    queue.push({ uuid, chunks, round: round + 1 });
-                } else {
-                    gaveUp.push(uuid);
-                    error('Maintenance', `rebuildRag: gave up on anchor ${uuid} after ${MAX_ROUNDS} rounds`);
+                if (!succeeded) {
+                    if (round + 1 < MAX_ROUNDS) queue.push({ uuid, chunks, round: round + 1 });
+                    else { gaveUp.push(uuid); error('Maintenance', `rebuildRag: gave up on anchor ${uuid} after ${MAX_ROUNDS} rounds`); }
                 }
+                active--;
             }
-        }
+        };
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, _worker));
 
         toastr.clear($toast);
         if (gaveUp.length === 0) {
