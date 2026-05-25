@@ -97,6 +97,14 @@ export function initSettings() {
         root.activeState = Object.assign({}, PROFILE_DEFAULTS, root.activeState);
     }
 
+    // Normalize legacy 'local' embedding source (pre-1.2 default) to 'openrouter'.
+    if ((root.activeState.ragEmbeddingSource ?? '') === 'local')
+        root.activeState.ragEmbeddingSource = 'openrouter';
+    for (const profile of Object.values(root.profiles ?? {})) {
+        if ((profile.ragEmbeddingSource ?? '') === 'local')
+            profile.ragEmbeddingSource = 'openrouter';
+    }
+
     // Root-level meta defaults (not per-profile).
     if (root.enableCnz === undefined) root.enableCnz = true;
 

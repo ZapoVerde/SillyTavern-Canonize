@@ -4,12 +4,11 @@
  * @architectural-role IO Wrapper — Express route handlers
  * @description
  * Registers all CNZ vector store endpoints on the provided Express router.
- * Each route embeds its input text via OpenRouter, calls ensureDimension on the
- * resulting vector length, then delegates to db.js for storage or retrieval.
+ * Each route builds an embed config from the request (source, model, directories,
+ * plus provider-specific extras), delegates embedding to embed.js, calls
+ * ensureDimension on the resulting vector length, then delegates to db.js.
  * /insert-chunks embeds headers in parallel with content. /query-chunks runs
  * content, header, and keyword searches in parallel and fuses them via RRF.
- * The public API surface is identical to the old cnz-db microservice so the
- * extension's vec-store.js requires zero changes.
  *
  * @api-declaration
  * registerRoutes(router) → void
@@ -42,8 +41,18 @@ import {
 } from './db.js';
 import { rrf } from './rrf.js';
 
-function embedCfg(body) {
-    return { source: body.embeddingSource ?? 'openrouter', model: body.embeddingModel, apiKey: body.embeddingApiKey };
+function embedCfg(req) {
+    const b   = req.body;
+    const cfg = {
+        source:      b.embeddingSource ?? 'openrouter',
+        model:       b.embeddingModel  ?? '',
+        directories: req.user.directories,
+        request:     req,
+    };
+    if (b.embeddingApiUrl)       cfg.apiUrl     = b.embeddingApiUrl;
+    if (b.embeddingKeep != null) cfg.keep        = b.embeddingKeep;
+    if (b.embeddingUrlOverride)  cfg.urlOverride = b.embeddingUrlOverride;
+    return cfg;
 }
 
 export function registerRoutes(router) {
@@ -55,7 +64,7 @@ export function registerRoutes(router) {
             if (!avatarKey || !anchorUuid || !Array.isArray(chunks) || !chunks.length)
                 return res.status(400).json({ error: 'avatarKey, anchorUuid, and non-empty chunks required' });
 
-            const cfg          = embedCfg(req.body);
+            const cfg          = embedCfg(req);
             const headerChunks = chunks.filter(c => c.header);
             const [contentEmb, headerEmb] = await Promise.all([
                 embedBatchWithSource(cfg, chunks.map(c => c.text)),
@@ -86,7 +95,7 @@ export function registerRoutes(router) {
             if (!queryText || !Array.isArray(validAnchorUuids) || !validAnchorUuids.length)
                 return res.json([]);
 
-            const cfg      = embedCfg(req.body);
+            const cfg      = embedCfg(req);
             const queryVec = await embedWithSource(cfg, queryText);
             const pool     = topK * 2;
             const [contentRows, headerRows, kwRows] = await Promise.all([
@@ -119,7 +128,7 @@ export function registerRoutes(router) {
             if (!avatarKey || !anchorUuid || !lorebookName || !Array.isArray(entries) || !entries.length)
                 return res.status(400).json({ error: 'avatarKey, anchorUuid, lorebookName, and non-empty entries required' });
 
-            const cfg        = embedCfg(req.body);
+            const cfg        = embedCfg(req);
             const embeddings = await embedBatchWithSource(cfg, entries.map(e => e.content));
             await ensureDimension(embeddings[0].length);
 
@@ -144,7 +153,7 @@ export function registerRoutes(router) {
             if (!queryText || !Array.isArray(validAnchorUuids) || !validAnchorUuids.length)
                 return res.json([]);
 
-            const cfg      = embedCfg(req.body);
+            const cfg      = embedCfg(req);
             const queryVec = await embedWithSource(cfg, queryText);
             const [semRows, kwRows] = await Promise.all([
                 queryLbEntries(validAnchorUuids, queryVec, topK * 2),
