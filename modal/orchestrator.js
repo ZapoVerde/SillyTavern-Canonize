@@ -143,7 +143,7 @@ export function updateWizard(n) {
         $('#cnz-confirm').toggleClass('cnz-hidden',   n !== 4);
         if (n === 3) onEnterRagWorkshop();
         if (n === 4) {
-            import('./commit.js').then(({ populateStep4Summary }) => populateStep4Summary());
+            import('./commit-ui.js').then(({ populateStep4Summary }) => populateStep4Summary());
         }
     });
 }
