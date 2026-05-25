@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/settings/handlers-core.js
- * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-25T01:00:00.000Z"}
  * @version 1.1.0
  * @architectural-role IO Wrapper
  * @description
@@ -26,7 +26,7 @@ import { DEFAULT_LOREBOOK_SYNC_PROMPT, DEFAULT_HOOKSEEKER_PROMPT,
 import { getSettings, getMetaSettings } from './data.js';
 import { log, setVerbose } from '../log.js';
 import { openDnaChainInspector } from '../modal/dna-inspector.js';
-import { purgeAndRebuild, purgeCnzFiles } from '../core/maintenance.js';
+import { rebuildRag, purgeCnzFiles } from '../core/maintenance.js';
 import { mountCnz, unmountCnz } from '../lifecycle.js';
 
 export function bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refreshProfileDropdown, refreshSettingsUI }) {
@@ -138,6 +138,6 @@ export function bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refres
         setVerbose(enabled); saveSettingsDebounced();
     });
     $('#cnz-inspect-chain').on('click', () => openDnaChainInspector());
-    $('#cnz-purge-chain').on('click', () => purgeAndRebuild());
+    $('#cnz-rebuild-rag').on('click', () => rebuildRag());
     $('#cnz-purge-files').on('click', () => purgeCnzFiles());
 }

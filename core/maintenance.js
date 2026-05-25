@@ -1,17 +1,15 @@
 /**
  * @file data/default-user/extensions/canonize/core/maintenance.js
- * @stamp {"utc":"2026-05-23T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2026-05-25T00:00:00.000Z"}
+ * @version 2.0.0
  * @architectural-role Orchestrator
  * @description
- * User-initiated maintenance operations: hard reset (purgeAndRebuild), new-chat
- * cleanup (runNewChatCleanup), and RAG-only purge (purgeCnzFiles). All three are
- * triggered explicitly by the user — either from the settings panel or from the
- * healer's new-chat guard — and are distinct from the automatic healing flow in
- * healer.js. Each operation sequences restore and IO calls; it owns no data.
+ * User-initiated maintenance operations: RAG rebuild, new-chat cleanup, and
+ * RAG-only purge. All triggered explicitly from the settings panel; distinct
+ * from the automatic healing flow in healer.js. Sequences IO calls only.
  *
  * @api-declaration
- * purgeAndRebuild()
+ * rebuildRag()
  * runNewChatCleanup(char)
  * purgeCnzFiles()
  *
@@ -31,27 +29,33 @@ import { buildProsePairs, formatPairsAsTranscript } from './transcript.js';
 import { buildRagChunks } from '../rag/chunks.js';
 import { waitForRagChunks } from '../rag/pipeline.js';
 import { cnzAvatarKey } from '../rag/api.js';
-import { insertSyncChunks, purgeCharacterChunks } from '../rag/vec-store.js';
+import { insertSyncChunks, purgeCharacterChunks, anchorChunkCount } from '../rag/vec-store.js';
 import { getSettings } from './settings.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
 import { lbSaveLorebook } from '../lorebook/api.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
 import { error } from '../log.js';
-import { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
 
-// ─── Purge and Rebuild ────────────────────────────────────────────────────────
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+const RETRY_MS   = 1000;
+const MAX_RETRIES = 3;
+const MAX_ROUNDS  = 3;
+
+// ─── Rebuild RAG ──────────────────────────────────────────────────────────────
 
 /**
- * Hard-resets the external world to match the LKG anchor, then rebuilds a
- * combined RAG file from all chunk data stored in the chain.
+ * Re-indexes all classified chunks from the chain history into the vector DB.
+ * Does not purge first — already-indexed chunks are skipped via upsert, so the
+ * operation is idempotent and safe to re-run after a partial failure.
  *
- * Order of operations:
- *   1. Restore the lorebook from the LKG anchor.
- *   2. Restore the hooks summary from the LKG anchor.
- *   3. Reconstruct chunks from the full chain history (fast: stamp scan; deep: AI reclassify).
- *   4. Purge all existing DB chunks for this character, then re-insert rebuilt chunks.
+ * Retry model (mirrors embed.js): MAX_RETRIES fast attempts per round, linear
+ * backoff within round, doubling inter-attempt delay each round (1s/2s → 2s/4s →
+ * 4s/8s). On exhaustion the anchor joins the back of the queue. After MAX_ROUNDS
+ * it is recorded as failed. After each failure /health is pinged to verify the
+ * server committed the insert despite the tunnel dropping the response.
  */
-export async function purgeAndRebuild() {
+export async function rebuildRag() {
     const { isSyncInProgress } = await import('../scheduler.js');
     if (isSyncInProgress()) {
         toastr.warning('CNZ: Sync in progress — wait for it to complete.');
@@ -64,35 +68,25 @@ export async function purgeAndRebuild() {
     const messages = ctx.chat ?? [];
     const chain    = readDnaChain(messages);
     if (!chain.lkg) {
-        toastr.warning('CNZ: No anchor found in this chat — nothing to restore from.');
+        toastr.warning('CNZ: No anchor found in this chat — nothing to rebuild from.');
         return;
     }
 
     const { escapeHtml } = await import('../state.js');
     const confirmed = await callPopup(`
-<h3>Purge &amp; Rebuild</h3>
-<p>For <strong>${escapeHtml(char.name)}</strong>, this will:</p>
-<ul>
-  <li>Clear and restore the lorebook from the last anchor</li>
-  <li>Restore the hooks summary from the last anchor</li>
-  <li>Purge the vector DB and re-index all chunks from the full chain history</li>
-</ul>
+<h3>Rebuild RAG</h3>
+<p>Re-index all chunks for <strong>${escapeHtml(char.name)}</strong> from the chain history.</p>
+<p>Already-indexed chunks are skipped — safe to re-run after a partial failure.</p>
 <label style="display:flex;align-items:center;gap:0.5em;margin-top:0.75em;">
-  <input type="checkbox" id="cnz-purge-deep">
+  <input type="checkbox" id="cnz-rebuild-deep">
   Reclassify all chunks with AI (slow)
-</label>
-<p style="margin-top:0.5em">This cannot be undone.</p>`, 'confirm');
+</label>`, 'confirm');
     if (!confirmed) return;
 
-    const deepReclassify = document.getElementById('cnz-purge-deep')?.checked ?? false;
+    const deepReclassify = document.getElementById('cnz-rebuild-deep')?.checked ?? false;
 
     try {
-        // ── 1 & 2. Restore lorebook and hooks from LKG ───────────────────────────
-        const fakeNodeFile = { state: { uuid: chain.lkg.uuid ?? null, lorebook: chain.lkg.lorebook, hooks: chain.lkg.hooks } };
-        await restoreLorebookToNode(char, { nodeId: 'rebuild' }, fakeNodeFile);
-        restoreHooksToNode(char, { nodeId: 'rebuild' }, fakeNodeFile);
-
-        // ── 3. Reconstruct chunks ─────────────────────────────────────────────────
+        // ── 1. Collect chunks from chain ──────────────────────────────────────
         const allPairs    = buildProsePairs(messages);
         const ragSettings = getSettings();
 
@@ -102,7 +96,6 @@ export async function purgeAndRebuild() {
             state._stagedPairOffset = 0;
             state._splitPairIdx     = allPairs.length;
             state._ragChunks        = buildRagChunks(allPairs, 0, ragSettings);
-
             setCurrentSettings(ragSettings);
             dispatchContract('rag_classifier', {
                 ragChunks:        state._ragChunks,
@@ -115,7 +108,6 @@ export async function purgeAndRebuild() {
             await waitForRagChunks(300_000);
             combinedChunks = state._ragChunks.filter(c => c.status === 'complete');
         } else {
-            // Fast path: walk messages and collect cnz_chunk_header stamps directly.
             combinedChunks = [];
             let prevPairEnd = 0;
             for (let i = 0; i < allPairs.length; i++) {
@@ -139,22 +131,15 @@ export async function purgeAndRebuild() {
         }
 
         if (combinedChunks.length === 0) {
-            toastr.warning('CNZ: No classified chunks found in chain — RAG DB not rebuilt. Run a sync first.');
+            toastr.warning('CNZ: No classified chunks found in chain — run a sync first.');
             return;
         }
 
-        // ── 4. Purge DB and re-insert, preserving per-anchor identity ────────────
+        // ── 2. Assign chunks to anchor groups ─────────────────────────────────
         const avatarKey = cnzAvatarKey(char.avatar);
-        await purgeCharacterChunks(avatarKey);
+        const chatFile  = ctx.getCurrentChatFile?.() ?? null;
+        const total     = combinedChunks.length;
 
-        const chatFile = ctx.getCurrentChatFile?.() ?? null;
-        const total    = combinedChunks.length;
-
-        // Assign each chunk to the anchor that owns its pairStart.
-        // Each anchor's boundary is the max pairEnd across its ragHeaders.
-        // Works for both fast (exact boundary preservation) and deep (AI may
-        // redraw boundaries — chunks pop up to the next anchor rather than
-        // creating gaps). Chunks beyond all anchor boundaries fall to HEAD.
         const boundaries = chain.anchors
             .map(({ anchor }) => ({
                 uuid:       anchor.uuid,
@@ -172,13 +157,69 @@ export async function purgeAndRebuild() {
             if (!byAnchor.has(uuid)) byAnchor.set(uuid, []);
             byAnchor.get(uuid).push(chunk);
         }
-        for (const [uuid, chunks] of byAnchor) {
-            await insertSyncChunks(avatarKey, uuid, chatFile, chunks, 0);
+
+        // ── 3. Queue-based retry loop ─────────────────────────────────────────
+        const queue    = [...byAnchor.entries()].map(([uuid, chunks]) => ({ uuid, chunks, round: 0 }));
+        const gaveUp   = [];
+        let inserted   = 0;
+        let warnedOnce = false;
+
+        let $toast = toastr.info(`CNZ: Rebuilding — 0 / ${total} chunks`, '', { timeOut: 0, extendedTimeOut: 0, closeButton: true });
+        const _upd = msg => {
+            if ($toast?.is(':visible')) $toast.find('.toast-message').text(msg);
+            else $toast = toastr.info(msg, '', { timeOut: 0, extendedTimeOut: 0, closeButton: true });
+        };
+
+        while (queue.length > 0) {
+            const { uuid, chunks, round } = queue.shift();
+            const retryMs = RETRY_MS * (1 << round); // 1000 → 2000 → 4000
+            let succeeded = false;
+
+            for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                _upd(`CNZ: Rebuilding — ${inserted} / ${total} chunks${round > 0 ? ` (round ${round + 1}/${MAX_ROUNDS})` : ''}`);
+                try {
+                    await insertSyncChunks(avatarKey, uuid, chatFile, chunks, 0);
+                    inserted += chunks.length;
+                    succeeded = true;
+                    break;
+                } catch {
+                    // Ping /health to verify — the tunnel may have dropped the
+                    // response even though the server committed the insert.
+                    try {
+                        const { chunksForAnchor } = await anchorChunkCount(avatarKey, uuid);
+                        if ((chunksForAnchor ?? 0) > 0) { inserted += chunks.length; succeeded = true; break; }
+                    } catch { /* plugin unreachable — treat as genuine failure */ }
+
+                    if (!warnedOnce) {
+                        toastr.warning('CNZ: Connection trouble — retrying failed anchors.', '', { timeOut: 5000 });
+                        warnedOnce = true;
+                    }
+                    if (attempt < MAX_RETRIES) {
+                        _upd(`CNZ: Rebuilding — ${inserted} / ${total} chunks (retry ${attempt}/${MAX_RETRIES}...)`);
+                        await sleep(retryMs * attempt);
+                    }
+                }
+            }
+
+            if (!succeeded) {
+                if (round + 1 < MAX_ROUNDS) {
+                    queue.push({ uuid, chunks, round: round + 1 });
+                } else {
+                    gaveUp.push(uuid);
+                    error('Maintenance', `rebuildRag: gave up on anchor ${uuid} after ${MAX_ROUNDS} rounds`);
+                }
+            }
         }
 
-        toastr.success(`CNZ: Rebuild complete — ${total} chunks re-indexed.`);
+        toastr.clear($toast);
+        if (gaveUp.length === 0) {
+            toastr.success(`CNZ: Rebuild complete — ${inserted} / ${total} chunks indexed.`);
+        } else {
+            toastr.warning(`CNZ: Rebuild done — ${inserted} / ${total} chunks. ${gaveUp.length} anchor(s) failed after ${MAX_ROUNDS} rounds.`);
+        }
+
     } catch (err) {
-        error('Maintenance', 'purgeAndRebuild:', err);
+        error('Maintenance', 'rebuildRag:', err);
         toastr.error(`CNZ: Rebuild failed: ${err.message}`);
     }
 }
@@ -200,7 +241,7 @@ export async function runNewChatCleanup(char) {
                 <li>Lorebook entries wiped</li>
                 <li>Vector DB chunks purged</li>
             </ul>
-            <p><em>Skip to manage manually via Settings → Purge &amp; Rebuild.</em></p>`,
+            <p><em>Skip to manage manually via Settings → Purge RAG / Rebuild RAG.</em></p>`,
             'confirm',
         );
 
@@ -228,7 +269,7 @@ export async function runNewChatCleanup(char) {
 
 /**
  * Purges all CNZ vector DB chunks for the current character. Does not touch
- * the lorebook or hooks. Chunks can be rebuilt via Purge & Rebuild.
+ * the lorebook or hooks. Chunks can be rebuilt via Rebuild RAG.
  */
 export async function purgeCnzFiles() {
     const ctx  = SillyTavern.getContext();
@@ -237,13 +278,13 @@ export async function purgeCnzFiles() {
 
     const { escapeHtml } = await import('../state.js');
     const confirmed = await callPopup(
-        `<h3>Purge CNZ Vector DB</h3>
+        `<h3>Purge RAG</h3>
         <p>For <strong>${escapeHtml(char.name)}</strong>, this will:</p>
         <ul>
             <li>Purge all CNZ chunks from the vector DB</li>
         </ul>
         <p>The lorebook and hooks will not be changed.</p>
-        <p>Chunks can be rebuilt at any time via Purge &amp; Rebuild.</p>`,
+        <p>Chunks can be rebuilt at any time via Rebuild RAG.</p>`,
         'confirm',
     );
     if (!confirmed) return;
