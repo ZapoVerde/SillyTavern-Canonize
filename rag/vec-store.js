@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/vec-store.js
- * @stamp {"utc":"2026-05-22T00:00:00.000Z"}
- * @version 1.1.0
+ * @stamp {"utc":"2026-05-26T00:00:00.000Z"}
+ * @version 1.2.0
  * @architectural-role IO Wrapper
  * @description
  * Client-side interface to the CNZ server plugin's SQLite vector store.
@@ -42,6 +42,19 @@ const URL_SOURCES = {
 };
 
 const BASE = '/api/plugins/cnz';
+
+// Reports estimated embedding token usage to Loggeryze (no-op if not loaded).
+// textLength is the total character count of text sent for embedding.
+// Token estimate: 1 token ≈ 4 characters (rough English average).
+function _reportEmbedUsage(textLength, model) {
+    if (!model) return;
+    window.loggeryze?.reportBgUsage({
+        prompt_tokens:     Math.ceil(textLength / 4),
+        completion_tokens: 0,
+        _lgz_model:        model.toLowerCase().replace(/:[\w-]+$/, ''),
+        _lgz_ext:          'CNZ',
+    });
+}
 
 function embedCfg() {
     const s      = getSettings();
@@ -114,7 +127,10 @@ export async function insertSyncChunks(avatarKey, anchorUuid, chatFile, chunks, 
         text:      c.content,
     }));
 
-    return post('/insert-chunks', { avatarKey, anchorUuid, chatFile, chunks: payload, ...embedCfg() });
+    const cfg    = embedCfg();
+    const result = await post('/insert-chunks', { avatarKey, anchorUuid, chatFile, chunks: payload, ...cfg });
+    _reportEmbedUsage(settled.reduce((s, c) => s + c.content.length, 0), cfg.embeddingModel);
+    return result;
 }
 
 /**
@@ -128,7 +144,10 @@ export async function insertSyncChunks(avatarKey, anchorUuid, chatFile, chunks, 
  *                     pairStart:number, pairEnd:number, score:number }[]>}
  */
 export async function querySyncChunks(validAnchorUuids, queryText, topK = 5, signal) {
-    return post('/query-chunks', { queryText, validAnchorUuids, topK, ...embedCfg() }, signal);
+    const cfg    = embedCfg();
+    const result = await post('/query-chunks', { queryText, validAnchorUuids, topK, ...cfg }, signal);
+    _reportEmbedUsage(queryText.length, cfg.embeddingModel);
+    return result;
 }
 
 /**
@@ -190,7 +209,10 @@ export async function insertLorebookEntries(avatarKey, anchorUuid, lorebookName,
         content: e.content,
         keys:    e.keys ?? [],
     }));
-    return post('/insert-lorebook', { avatarKey, anchorUuid, lorebookName, entries: payload, ...embedCfg() });
+    const cfg    = embedCfg();
+    const result = await post('/insert-lorebook', { avatarKey, anchorUuid, lorebookName, entries: payload, ...cfg });
+    _reportEmbedUsage(entries.reduce((s, e) => s + e.content.length, 0), cfg.embeddingModel);
+    return result;
 }
 
 /**
@@ -204,7 +226,10 @@ export async function insertLorebookEntries(avatarKey, anchorUuid, lorebookName,
  * @returns {Promise<{ lorebookName:string, entryUid:number, score:number }[]>}
  */
 export async function queryLorebookEntries(validAnchorUuids, queryText, topK = 3, signal) {
-    return post('/query-lorebook', { queryText, validAnchorUuids, topK, ...embedCfg() }, signal);
+    const cfg    = embedCfg();
+    const result = await post('/query-lorebook', { queryText, validAnchorUuids, topK, ...cfg }, signal);
+    _reportEmbedUsage(queryText.length, cfg.embeddingModel);
+    return result;
 }
 
 export async function fetchEmbedStats() {

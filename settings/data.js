@@ -106,7 +106,8 @@ export function initSettings() {
     }
 
     // Root-level meta defaults (not per-profile).
-    if (root.enableCnz === undefined) root.enableCnz = true;
+    if (root.enableCnz        === undefined) root.enableCnz        = true;
+    if (root.symlinkOfferMade === undefined) root.symlinkOfferMade = false;
 
     // Clean up legacy keys no longer part of any profile.
     delete root.activeState.enablePersonalyze;

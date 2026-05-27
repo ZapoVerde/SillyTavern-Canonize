@@ -28,6 +28,7 @@
 
 import { state }             from '../state.js';
 import { getSettings }       from '../core/settings.js';
+import { isPluginReachable } from './plugin-health.js';
 import { doRagFetch }        from './rag-fetch.js';
 import { insertLorebookEntries } from './vec-store.js';
 import { cnzAvatarKey }      from './api.js';
@@ -40,6 +41,13 @@ import { writeCnzRagPrompt, clearCnzRagPrompt } from '../core/summary-prompt.js'
 let _prefetchPromise  = null;
 let _prefetchChatLen  = -1;
 let _abortController  = null;
+let _swipeCache       = null; // { key, result } — reused across swipes at same position
+
+// Hash the recent message window — detects both count changes and content edits.
+function _swipeCacheKey(messages, horizonPairs) {
+    const recent = messages.slice(-(horizonPairs * 2 + 2));
+    return `${messages.length}:${getStringHash(recent.map(m => m.mes ?? '').join('\n'))}`;
+}
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 
@@ -113,37 +121,47 @@ export function resetRagState() {
     _abortCurrent('chat_changed');
     _prefetchPromise = null;
     _prefetchChatLen = -1;
+    _swipeCache      = null;
     _timing          = null;
     clearCnzRagPrompt();
 }
 
 export function prefetchRag() {
     const settings = getSettings();
-    if (!settings.enableRag) return;
+    if (!settings.enableRag || !isPluginReachable()) return;
     const chain = state._dnaChain;
     if (!chain || chain.anchors.length === 0) return;
     const ctx      = SillyTavern.getContext();
     const messages = ctx.chat ?? [];
     if (!messages.length) return;
 
+    // New message invalidates any cached swipe result — context has changed.
+    _swipeCache = null;
     log('RagHook', `MESSAGE_SENT → prefetch start (chatLen=${messages.length}) t=${Date.now()}`);
     _timing          = { tSend: performance.now(), tInterceptor: null, tRagDone: null, tFirstToken: null, prefetchHit: false };
     _prefetchChatLen = messages.length;
     const signal     = _newController();
-    _prefetchPromise = doRagFetch(ctx, settings, chain, signal).catch(err => {
-        if (err.name === 'AbortError') {
-            log('RagHook', 'Prefetch aborted');
+    window.loggeryze?.time('CNZ prefetch [non-blocking]');
+    _prefetchPromise = doRagFetch(ctx, settings, chain, signal)
+        .then(result => {
+            window.loggeryze?.timeEnd('CNZ prefetch [non-blocking]');
+            return result;
+        })
+        .catch(err => {
+            window.loggeryze?.timeEnd('CNZ prefetch [non-blocking]');
+            if (err.name === 'AbortError') {
+                log('RagHook', 'Prefetch aborted');
+                return null;
+            }
+            error('RagHook', 'Prefetch failed:', err);
             return null;
-        }
-        error('RagHook', 'Prefetch failed:', err);
-        return null;
-    });
+        });
 }
 
 export async function onGenerationStarted() {
     const ctx      = SillyTavern.getContext();
     const settings = getSettings();
-    if (!settings.enableRag) {
+    if (!settings.enableRag || !isPluginReachable()) {
         clearCnzRagPrompt();
         return;
     }
@@ -163,18 +181,28 @@ export async function onGenerationStarted() {
             .join('\n');
         const currentHash = String(getStringHash(hashStr));
         if (currentHash !== state._lastIndexedLorebookHash) {
-            _prefetchPromise = null; // discard stale prefetch
-            const lkgUuid = state._dnaChain?.lkg?.uuid;
-            if (lkgUuid) {
-                const char    = ctx.characters[ctx.characterId];
-                const entries = Object.values(state._draftLorebook.entries ?? {})
-                    .filter(e => !e.disable && e.content?.trim())
-                    .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
-                try {
-                    await insertLorebookEntries(cnzAvatarKey(char?.avatar ?? ''), lkgUuid, state._lorebookName, entries);
-                    state._lastIndexedLorebookHash = currentHash;
-                } catch (err) {
-                    error('RagHook', 'JIT lorebook re-vector failed:', err);
+            if (state._lastIndexedLorebookHash === null) {
+                // Session start: sync maintains the index between sessions, just seed the hash.
+                log('RagHook', 'JIT: session start — seeding hash, skipping re-index');
+                state._lastIndexedLorebookHash = currentHash;
+            } else {
+                // Lorebook changed mid-session: re-index now.
+                _prefetchPromise = null;
+                const lkgUuid = state._dnaChain?.lkg?.uuid;
+                if (lkgUuid) {
+                    const char    = ctx.characters[ctx.characterId];
+                    const entries = Object.values(state._draftLorebook.entries ?? {})
+                        .filter(e => !e.disable && e.content?.trim())
+                        .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
+                    try {
+                        window.loggeryze?.time('CNZ JIT re-index [blocking]');
+                        await insertLorebookEntries(cnzAvatarKey(char?.avatar ?? ''), lkgUuid, state._lorebookName, entries);
+                        window.loggeryze?.timeEnd('CNZ JIT re-index [blocking]');
+                        state._lastIndexedLorebookHash = currentHash;
+                    } catch (err) {
+                        window.loggeryze?.timeEnd('CNZ JIT re-index [blocking]');
+                        error('RagHook', 'JIT lorebook re-vector failed:', err);
+                    }
                 }
             }
         }
@@ -194,7 +222,19 @@ export async function onGenerationStarted() {
         && messages.length >= _prefetchChatLen
         && messages.length <= _prefetchChatLen + 2;
 
+    // Swipe cache: same position and same content — result is identical, skip embed entirely.
+    const cacheKey = _swipeCacheKey(messages, settings.ragClassifierHistory ?? 3);
+    if (_swipeCache && _swipeCache.key === cacheKey) {
+        log('RagHook', `swipe cache HIT (chatLen=${messages.length}) — skipping embed`);
+        const cached = _swipeCache.result;
+        if (cached.injection) writeCnzRagPrompt(cached.injection);
+        else clearCnzRagPrompt();
+        return;
+    }
+
     let result = null;
+    const wasColdFetch = !prefetchValid;
+    window.loggeryze?.time('CNZ embed+query [blocking]');
     if (prefetchValid) {
         const tAwait = performance.now();
         result = await _prefetchPromise;
@@ -210,6 +250,7 @@ export async function onGenerationStarted() {
             const signal = _newController();
             result = await doRagFetch(ctx, settings, chain, signal);
         } catch (err) {
+            window.loggeryze?.timeEnd('CNZ embed+query [blocking]');
             if (err.name === 'AbortError') {
                 log('RagHook', `fresh-fetch aborted — mask function returning early, send button unblocked`);
             } else {
@@ -217,6 +258,32 @@ export async function onGenerationStarted() {
             }
             _timing = null;
             return;
+        }
+    }
+    window.loggeryze?.timeEnd('CNZ embed+query [blocking]');
+
+    // Cache result keyed by content hash so edits correctly invalidate it.
+    _swipeCache = { key: cacheKey, result };
+
+    // Warm-ahead: after a cold fetch (swipe/regen with no prefetch), immediately
+    // kick off the next embed so it runs during streaming and the following swipe
+    // finds a prefetch already in flight instead of starting cold.
+    if (wasColdFetch && result) {
+        const wCtx      = SillyTavern.getContext();
+        const wMessages = wCtx.chat ?? [];
+        if (wMessages.length) {
+            log('RagHook', `warm-ahead prefetch started (chatLen=${wMessages.length})`);
+            _prefetchChatLen = wMessages.length;
+            const wSignal    = _newController();
+            window.loggeryze?.time('CNZ prefetch [non-blocking]');
+            _prefetchPromise = doRagFetch(wCtx, settings, chain, wSignal)
+                .then(r  => { window.loggeryze?.timeEnd('CNZ prefetch [non-blocking]'); return r; })
+                .catch(err => {
+                    window.loggeryze?.timeEnd('CNZ prefetch [non-blocking]');
+                    if (err.name === 'AbortError') { log('RagHook', 'Warm-ahead aborted'); return null; }
+                    error('RagHook', 'Warm-ahead failed:', err);
+                    return null;
+                });
         }
     }
 
@@ -232,8 +299,11 @@ export async function onGenerationStarted() {
     if (result.toActivate.length) {
         log('RagHook', `Semantic LB activation: ${result.toActivate.length} entries`);
         try {
+            window.loggeryze?.time('CNZ LB activate [blocking]');
             await eventSource.emit(event_types.WORLDINFO_FORCE_ACTIVATE, result.toActivate);
+            window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
         } catch (err) {
+            window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
             error('RagHook', 'Lorebook semantic activation failed:', err);
         }
     }

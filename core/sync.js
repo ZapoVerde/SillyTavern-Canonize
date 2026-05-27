@@ -31,6 +31,7 @@ import { writeCnzSummaryPrompt } from './summary-prompt.js';
 import { lbEnsureLorebook } from '../lorebook/api.js';
 import { stripProtectedBlock } from '../lorebook/utils.js';
 import { runRagPipeline } from '../rag/pipeline.js';
+import { isPluginReachable } from '../rag/plugin-health.js';
 import { patchCharacterWorld } from '../modal/commit.js';
 import { state } from '../state.js';
 import { logSyncStart, processLorebookUpdate,
@@ -175,7 +176,7 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
     })();
 
     const ragPromise = (async () => {
-        if (!settings.enableRag) { log('Rag', 'Lane 3: skipped (disabled)'); return true; }
+        if (!settings.enableRag || !isPluginReachable()) { log('Rag', 'Lane 3: skipped (disabled)'); return true; }
         log('Rag', 'Lane 3: starting');
         try {
             await runRagPipeline(anchorUuid);
