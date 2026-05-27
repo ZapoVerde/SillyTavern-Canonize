@@ -94,6 +94,10 @@ export function buildSyncSectionHTML(s, escapeHtml, profileOptions) {
             <button id="cnz-edit-lorebook-prompt" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
           </div>
           <div class="cnz-setting-row">
+            <label class="cnz-label">People Sync Prompt</label>
+            <button id="cnz-edit-people-prompt" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
+          </div>
+          <div class="cnz-setting-row">
             <label class="cnz-label">Targeted Update Prompt</label>
             <button id="cnz-edit-targeted-update-prompt" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
           </div>

@@ -1,12 +1,20 @@
 /**
  * @file data/default-user/extensions/canonize/core/sync.js
- * @stamp {"utc":"2026-05-21T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2026-05-27T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role Orchestrator
  * @description
  * Public sync pipeline surface. Owns runCnzSync (the full background sync
  * cycle) and the two pure window-computation helpers used by the wand and
  * modal. Implementation helpers live in core/sync-helpers.js.
+ *
+ * Sync runs four lanes in parallel under Promise.all:
+ *   Lane 1a (people)  — LLM call for #person entries; defaultMeceTag '#person'
+ *   Lane 1b (lorebook) — LLM call for all non-#person entries; defaultMeceTag '#thing'
+ *   Lane 2  (hooks)   — hookseeker narrative summary
+ *   Lane 3  (RAG)     — vector embedding pipeline
+ * After Promise.all: single saveLorebookToDisk call, then merged suggestions written
+ * to state._lorebookSuggestions for the review modal.
  *
  * @api-declaration
  * runCnzSync(char, messages, { coverAll }) — full sync cycle
@@ -25,16 +33,17 @@ import { log, warn, error } from '../log.js';
 import { setSyncInProgress } from '../scheduler.js';
 import { getSettings } from './settings.js';
 import { buildProsePairs, buildTranscript, computeSyncWindow } from './transcript.js';
-import { runLorebookSyncCall, runHookseekerCall } from './llm-calls.js';
+import { runLorebookSyncCall, runPeopleSyncCall, runHookseekerCall } from './llm-calls.js';
 import { readDnaChain } from './dna-chain.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
 import { lbEnsureLorebook } from '../lorebook/api.js';
 import { stripProtectedBlock } from '../lorebook/utils.js';
+import { formatFilteredLorebookEntries } from '../lorebook/tags.js';
 import { runRagPipeline } from '../rag/pipeline.js';
 import { isPluginReachable } from '../rag/plugin-health.js';
 import { patchCharacterWorld } from '../modal/commit.js';
 import { state } from '../state.js';
-import { logSyncStart, processLorebookUpdate,
+import { logSyncStart, applyLorebookToDraft, saveLorebookToDisk,
          processHooksUpdate, commitDnaAnchor } from './sync-helpers.js';
 
 // Re-export pure helpers so existing callers importing from sync.js don't break.
@@ -147,15 +156,34 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
             return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
         });
 
-    const lbPromise = (async () => {
-        log('Lorebook', 'Lane 1: starting');
+    // Lane entry text is pre-formatted here so both LLM calls can start immediately.
+    const peopleEntriesText = formatFilteredLorebookEntries(state._lorebookData, '#person', false);
+    const mainEntriesText   = formatFilteredLorebookEntries(state._lorebookData, '#person', true);
+
+    let peopleSuggestions = [];
+    let mainSuggestions   = [];
+
+    const lbPeoplePromise = (async () => {
+        log('Lorebook', 'Lane 1a (people): starting');
         try {
-            const text = await runLorebookSyncCall(lbTranscript, state._lorebookData);
-            await processLorebookUpdate(text, anchorUuid);
-            log('Lorebook', 'Lane 1: ✓ ok');
+            const text = await runPeopleSyncCall(lbTranscript, peopleEntriesText);
+            peopleSuggestions = applyLorebookToDraft(text, '#person');
+            log('Lorebook', 'Lane 1a (people): ✓ ok');
         } catch (e) {
-            error('Lorebook', 'Lane 1 failed:', e.message ?? e);
-            if (state._draftLorebook) await processLorebookUpdate('', anchorUuid);
+            error('Lorebook', 'Lane 1a (people) failed:', e.message ?? e);
+            return false;
+        }
+        return true;
+    })();
+
+    const lbPromise = (async () => {
+        log('Lorebook', 'Lane 1b (lorebook): starting');
+        try {
+            const text = await runLorebookSyncCall(lbTranscript, mainEntriesText);
+            mainSuggestions = applyLorebookToDraft(text, '#thing');
+            log('Lorebook', 'Lane 1b (lorebook): ✓ ok');
+        } catch (e) {
+            error('Lorebook', 'Lane 1b (lorebook) failed:', e.message ?? e);
             return false;
         }
         return true;
@@ -188,7 +216,18 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
         }
     })();
 
-    const [lbOk, hooksOk, ragOk] = await Promise.all([lbPromise, hooksPromise, ragPromise]);
+    const [lbPeopleOk, lbOk, hooksOk, ragOk] = await Promise.all([lbPeoplePromise, lbPromise, hooksPromise, ragPromise]);
+
+    // Single coordinated disk write after both LB lanes complete.
+    const allSuggestions = [...peopleSuggestions, ...mainSuggestions];
+    let lbSaveOk = false;
+    try {
+        await saveLorebookToDisk(anchorUuid, allSuggestions);
+        state._lorebookSuggestions = allSuggestions;
+        lbSaveOk = true;
+    } catch (e) {
+        error('Lorebook', 'saveLorebookToDisk failed:', e.message ?? e);
+    }
 
     if (externalDeletions.length > 0) {
         const tombstones = externalDeletions.map(({ uid, name }) => ({
@@ -200,6 +239,7 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
         }));
         state._lorebookSuggestions = [...tombstones, ...state._lorebookSuggestions];
     }
+
 
     log('DnaChain', 'committing anchor');
     let anchorOk = false;
@@ -219,10 +259,12 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
     }));
 
     const failures = [
-        !lbOk     && 'lorebook',
-        !hooksOk  && 'hooks',
-        !ragOk    && 'RAG',
-        !anchorOk && 'anchor commit',
+        !lbPeopleOk && 'people lane',
+        !lbOk       && 'lorebook lane',
+        !lbSaveOk   && 'lorebook save',
+        !hooksOk    && 'hooks',
+        !ragOk      && 'RAG',
+        !anchorOk   && 'anchor commit',
     ].filter(Boolean);
 
     if (failures.length === 0) {

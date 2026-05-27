@@ -21,7 +21,8 @@
 
 import { saveSettingsDebounced, callPopup } from '../../../../../script.js';
 import { escapeHtml } from '../state.js';
-import { DEFAULT_LOREBOOK_SYNC_PROMPT, DEFAULT_HOOKSEEKER_PROMPT,
+import { DEFAULT_LOREBOOK_SYNC_PROMPT, DEFAULT_PEOPLE_SYNC_PROMPT,
+         DEFAULT_HOOKSEEKER_PROMPT,
          DEFAULT_TARGETED_UPDATE_PROMPT, DEFAULT_TARGETED_NEW_PROMPT } from '../defaults.js';
 import { getSettings, getMetaSettings } from './data.js';
 import { log, setVerbose } from '../log.js';
@@ -75,6 +76,9 @@ export function bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refres
             ['transcript', 'prev_summary']));
     $('#cnz-edit-lorebook-prompt').on('click', () =>
         openPromptModal('lorebookSyncPrompt', 'Edit Lorebook Sync Prompt', DEFAULT_LOREBOOK_SYNC_PROMPT,
+            ['lorebook_entries', 'transcript']));
+    $('#cnz-edit-people-prompt').on('click', () =>
+        openPromptModal('peopleSyncPrompt', 'Edit People Sync Prompt', DEFAULT_PEOPLE_SYNC_PROMPT,
             ['lorebook_entries', 'transcript']));
     $('#cnz-edit-targeted-update-prompt').on('click', () =>
         openPromptModal('targetedUpdatePrompt', 'Edit Targeted Update Prompt',

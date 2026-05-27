@@ -18,7 +18,8 @@
  *
  * @api-declaration
  * Recipes.hookseeker       — narrative summary from transcript.
- * Recipes.lorebook         — lorebook update suggestions from transcript.
+ * Recipes.lorebook         — lorebook update for places, things, concepts.
+ * Recipes.lorebook_people  — lorebook update for persons and relationships.
  * Recipes.rag_classifier   — RAG chunk header from transcript + hooks.
  * Recipes.targeted_update  — targeted update for a single lorebook entry.
  * Recipes.targeted_new     — targeted new entry for a single lorebook concept.
@@ -39,6 +40,7 @@ import { formatPairsAsTranscript } from './core/transcript.js';
 import { interpolate,
          DEFAULT_HOOKSEEKER_PROMPT,
          DEFAULT_LOREBOOK_SYNC_PROMPT,
+         DEFAULT_PEOPLE_SYNC_PROMPT,
          DEFAULT_RAG_CLASSIFIER_PROMPT,
          DEFAULT_TARGETED_UPDATE_PROMPT,
          DEFAULT_TARGETED_NEW_PROMPT } from './defaults.js';
@@ -76,6 +78,22 @@ export const Recipes = {
         maxTokens:    null,
         produces:     'lorebook_raw',
         stalenessKey: 'lorebook',
+    },
+
+    lorebook_people: {
+        id:           'lorebook_people',
+        inputs:       ['transcript', 'lorebook_entries'],
+        buildPrompt:  (inputs, settings) => interpolate(
+                          settings.peopleSyncPrompt || DEFAULT_PEOPLE_SYNC_PROMPT,
+                          {
+                              lorebook_entries: inputs.lorebook_entries,
+                              transcript:       inputs.transcript,
+                          }
+                      ),
+        profileKey:   'profileId',
+        maxTokens:    null,
+        produces:     'lorebook_raw',
+        stalenessKey: 'lorebook_people',
     },
 
     rag_classifier: {

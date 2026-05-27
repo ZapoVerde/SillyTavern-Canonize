@@ -31,6 +31,7 @@
 
 import {
     DEFAULT_LOREBOOK_SYNC_PROMPT,
+    DEFAULT_PEOPLE_SYNC_PROMPT,
     DEFAULT_HOOKSEEKER_PROMPT,
     DEFAULT_RAG_CLASSIFIER_PROMPT,
     DEFAULT_TARGETED_UPDATE_PROMPT,
@@ -60,6 +61,7 @@ export const PROFILE_DEFAULTS = Object.freeze({
     liveContextBuffer:        5,
     lorebookSyncStart:        'syncPoint',   // 'syncPoint' | 'latestTurn'
     lorebookSyncPrompt:       DEFAULT_LOREBOOK_SYNC_PROMPT,
+    peopleSyncPrompt:         DEFAULT_PEOPLE_SYNC_PROMPT,
     hookseekerPrompt:         DEFAULT_HOOKSEEKER_PROMPT,
     // Rolling trim
     autoAdvanceMask:          false,
