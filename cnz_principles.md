@@ -110,26 +110,27 @@ Example form:
 ```javascript
 /**
  * @file {path}
- * @stamp {utc timestamp}
- * @architectural-role {Pure | Stateful | IO} — {one line describing what this module owns or does}
- * @description
- * {Two to four sentences. What problem does this module solve? What is it not responsible for?}
- *
- * @api-declaration
- * functionName(args) — what it does and what it returns
- *
- * @contract
- *   assertions:
- *     purity:        {classification}
- *     state_ownership: [{domains owned, or none}]
- *     external_io:   [{services touched, or none}]
- */
-```
+  * @stamp {utc timestamp}
+   * @architectural-role {Pure | Stateful | IO} — {one line describing what this module owns or does}
+    * @description
+     * {Two to four sentences. What problem does this module solve? What is it not responsible for?}
+      *
+       * @api-declaration
+        * functionName(args) — what it does and what it returns
+         *
+          * @contract
+           *   assertions:
+            *     purity:        {classification}
+             *     state_ownership: [{domains owned, or none}]
+              *     external_io:   [{services touched, or none}]
+               */
+               ```
 
----
+               ---
 
-## 11. Every File Has One Purpose and a Hard Size Limit
+               ## 11. Every File Has One Purpose and a Hard Size Limit
 
-Every source file does exactly one thing. If a file is doing two things, it should be two files.
+               Every source file does exactly one thing. If a file is doing two things, it should be two files.
 
-Any file touched in a session must be under 300 lines of code when the session ends. A file that cannot be brought under 300 lines without losing coherence is a file that has not been decomposed correctly. Split it first, then make the change.
+               Any file touched in a session must be under 300 lines of code when the session ends. A file that cannot be brought under 300 lines without losing coherence is a file that has not been decomposed correctly. Split it first, then make the change.
+               

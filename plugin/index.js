@@ -1,6 +1,6 @@
 /**
  * @file plugins/cnz/index.js
- * @stamp {"utc":"2026-05-22T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-25T00:00:00.000Z"}
  * @architectural-role Orchestrator — ST server plugin entry point
  * @description
  * SillyTavern server plugin for CNZ. Initialises the embedded PGlite database
@@ -21,15 +21,21 @@
  * @api-declaration
  * init(router) → Promise<void>   (called by ST on plugin load)
  *
+ * Routes added beyond the vector store:
+ * GET  /inspect        → live DB stats
+ * GET  /install-status → { needsSymlink, extensionFound }
+ * POST /install-symlink → replace plugin dir with symlink to extension plugin/
+ *
  * @contract
  *   assertions:
  *     purity:          mutates
  *     state_ownership: [none — DB state owned by db.js]
- *     external_io:     [db.js, routes.js, ST secrets store]
+ *     external_io:     [db.js, routes.js, setup.js]
  */
 
 import { initDb, chunkCountForAvatar, lbEntryCountForAvatar } from './db.js';
 import { registerRoutes } from './routes.js';
+import { getInstallStatus, installSymlink } from './setup.js';
 
 export const info = {
     id:          'cnz',
@@ -51,6 +57,25 @@ export async function init(router) {
                 stats.lbEntries = await lbEntryCountForAvatar(String(avatarKey));
             }
             return res.json(stats);
+        } catch (err) {
+            return res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ── GET /install-status — symlink check ───────────────────────────────────
+    router.get('/install-status', (req, res) => {
+        try {
+            return res.json(getInstallStatus());
+        } catch (err) {
+            return res.status(500).json({ error: err.message });
+        }
+    });
+
+    // ── POST /install-symlink — replace plugin dir with symlink ───────────────
+    router.post('/install-symlink', async (req, res) => {
+        try {
+            await installSymlink();
+            return res.json({ ok: true });
         } catch (err) {
             return res.status(500).json({ error: err.message });
         }

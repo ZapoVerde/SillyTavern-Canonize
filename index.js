@@ -32,6 +32,7 @@ import { runCnzSync } from './core/sync.js';
 import { writeChunkHeaderToChat, renderChunkChatLabel } from './rag/chat-labels.js';
 import { onGenerationStarted } from './rag/generation-hook.js';
 import { injectModal } from './modal/modal-setup.js';
+import { runPluginSetup } from './core/plugin-setup-orchestrator.js';
 import { renderRagCard } from './modal/rag-workshop.js';
 import { injectSettingsPanel } from './settings/panel.js';
 import { initLifecycle } from './lifecycle.js';
@@ -43,6 +44,8 @@ async function init() {
     try {
         initSettings();
         log('Init', 'Settings initialized.');
+        await runPluginSetup();
+        log('Init', 'Plugin setup checked.');
         initSceneTracker();
         log('Init', 'Scene tracker initialized.');
         initScheduler(Triggers, getSettings);
