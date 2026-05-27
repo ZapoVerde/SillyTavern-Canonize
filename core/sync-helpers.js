@@ -1,16 +1,23 @@
 /**
  * @file data/default-user/extensions/canonize/core/sync-helpers.js
- * @stamp {"utc":"2026-05-21T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2026-05-27T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role Orchestrator
  * @description
  * Private helpers for the sync pipeline. Handles lorebook update processing,
  * hookseeker output application, DNA anchor commit, and sync start logging.
  * All exports are consumed exclusively by core/sync.js.
  *
+ * Lorebook update is split into two phases to support parallel lane execution:
+ *   applyLorebookToDraft  — parses AI text, stitches MECE tags, writes to draft in memory.
+ *                           Returns the local suggestions array. No disk write.
+ *   saveLorebookToDisk    — single coordinated disk write after all lanes complete.
+ *                           Stitches protected blocks, saves, vectors changed entries.
+ *
  * @api-declaration
  * logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN)
- * processLorebookUpdate(rawText, anchorUuid) — parses AI output, saves lorebook
+ * applyLorebookToDraft(rawText, defaultMeceTag) — returns suggestions[], mutates draft
+ * saveLorebookToDisk(anchorUuid, allSuggestions) — disk write + vectoring
  * processHooksUpdate(hooksText) — writes hookseeker output to ST summary prompt
  * commitDnaAnchor(messages, anchorUuid) — writes DNA anchor and link chain
  *
@@ -33,6 +40,7 @@ import { lbSaveLorebook } from '../lorebook/api.js';
 import { parseLbSuggestions, enrichLbSuggestions,
          nextLorebookUid, makeLbDraftEntry,
          stripProtectedBlock, stitchProtectedBlock } from '../lorebook/utils.js';
+import { stitchMeceTag } from '../lorebook/tags.js';
 import { state } from '../state.js';
 
 export function logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN) {
@@ -48,33 +56,59 @@ export function logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN
     );
 }
 
-export async function processLorebookUpdate(rawText, anchorUuid = null) {
-    if (rawText.trim() && rawText.trim() !== 'NO CHANGES NEEDED') {
-        const suggestions = parseLbSuggestions(rawText);
-        state._lorebookSuggestions = enrichLbSuggestions(suggestions);
+/**
+ * Phase 1: parse AI output, stitch MECE tags, apply to draft in memory.
+ * Safe to call from parallel lanes — reads state._lorebookSuggestions (prior cycle,
+ * read-only) and writes to state._draftLorebook (disjoint entry sets per lane).
+ * Does NOT write to state._lorebookSuggestions or touch disk.
+ *
+ * @param {string} rawText        Raw AI output for this lane.
+ * @param {string} defaultMeceTag Fallback MECE tag for new entries that arrive untagged.
+ * @returns {object[]}            Local suggestions array for this lane.
+ */
+export function applyLorebookToDraft(rawText, defaultMeceTag) {
+    const localSuggestions = [];
+    if (!rawText.trim() || rawText.trim() === 'NO CHANGES NEEDED') return localSuggestions;
 
-        for (const s of state._lorebookSuggestions) {
-            const narrative = s._aiSnapshot.content.trim();
+    const suggestions = parseLbSuggestions(rawText);
+    const enriched    = enrichLbSuggestions(suggestions);
 
-            if (s.linkedUid !== null) {
-                const entry = state._draftLorebook?.entries?.[String(s.linkedUid)];
-                if (entry) {
-                    entry.comment = s.name;
-                    entry.key     = s._aiSnapshot.keys;
-                    entry.content = narrative;
-                }
-            } else {
-                const uid = nextLorebookUid();
-                state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(
-                    uid, s.name, s._aiSnapshot.keys, narrative,
-                );
-                s.linkedUid = uid;
+    for (const s of enriched) {
+        const origEntry    = state._draftLorebook?.entries?.[String(s.linkedUid)] ?? null;
+        const origNarrative = origEntry ? stripProtectedBlock(origEntry.content ?? '') : '';
+        const narrative     = stitchMeceTag(s._aiSnapshot.content.trim(), origNarrative, defaultMeceTag);
+
+        if (s.linkedUid !== null) {
+            const entry = state._draftLorebook?.entries?.[String(s.linkedUid)];
+            if (entry) {
+                entry.comment = s.name;
+                entry.key     = s._aiSnapshot.keys;
+                entry.content = narrative;
             }
-            s.status = 'pending';
+        } else {
+            const uid = nextLorebookUid();
+            state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(
+                uid, s.name, s._aiSnapshot.keys, narrative,
+            );
+            s.linkedUid = uid;
         }
+        s.status = 'pending';
+        localSuggestions.push(s);
     }
 
-    const preLorebook = state._lorebookData ?? { entries: {} };
+    return localSuggestions;
+}
+
+/**
+ * Phase 2: single coordinated disk write after all parallel lanes complete.
+ * Stitches protected blocks on all entries, saves to disk, updates lorebookData,
+ * and runs write-through vectoring for all changed entries across both lanes.
+ *
+ * @param {string|null} anchorUuid
+ * @param {object[]}    allSuggestions  Merged suggestions from all LB lanes.
+ */
+export async function saveLorebookToDisk(anchorUuid, allSuggestions) {
+    const preLorebook      = state._lorebookData ?? { entries: {} };
     const stitchedLorebook = structuredClone(state._draftLorebook);
     for (const entry of Object.values(stitchedLorebook.entries ?? {})) {
         const origEntry = preLorebook.entries?.[String(entry.uid)];
@@ -87,8 +121,7 @@ export async function processLorebookUpdate(rawText, anchorUuid = null) {
     await lbSaveLorebook(state._lorebookName, stitchedLorebook, { silent: true });
     state._lorebookData = structuredClone(state._draftLorebook);
 
-    // Write-through vectoring for AI-applied entries
-    const changed = state._lorebookSuggestions
+    const changed = allSuggestions
         .filter(s => s.linkedUid != null)
         .map(s => {
             const e = state._draftLorebook?.entries?.[String(s.linkedUid)];

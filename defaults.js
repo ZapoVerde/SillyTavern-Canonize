@@ -13,7 +13,8 @@
  *
  * @api-declaration
  * interpolate(template, vars)     — expands {{key}} and {{#if key}}…{{/if}} blocks.
- * DEFAULT_LOREBOOK_SYNC_PROMPT    — lorebook curator system prompt.
+ * DEFAULT_LOREBOOK_SYNC_PROMPT    — lorebook curator system prompt (places, things, concepts).
+ * DEFAULT_PEOPLE_SYNC_PROMPT      — people curator system prompt (persons and relationships).
  * DEFAULT_HOOKSEEKER_PROMPT       — narrative chronicler system prompt.
  * DEFAULT_RAG_CLASSIFIER_PROMPT   — narrative memory classifier system prompt.
  * DEFAULT_TARGETED_UPDATE_PROMPT   — targeted fact updater system prompt.
@@ -48,7 +49,18 @@ export function interpolate(template, vars) {
 export const DEFAULT_LOREBOOK_SYNC_PROMPT = `
 [SYSTEM: TASK — LOREBOOK CURATOR]
 You are reviewing a session transcript and the current lorebook entries for a character.
-Your job is to suggest targeted updates to existing entries and identify new concepts that warrant a lorebook entry. A lorebook entry should be free of narrative, and temporal association. It is the description of a person, place, thing or idea that is unique to this world. What it looks like, their personality, its place in the world. 
+Your job is to suggest targeted updates to existing entries and identify new concepts that warrant a lorebook entry. A lorebook entry should be free of narrative, and temporal association. It is the description of a place, thing, or concept that is unique to this world — what it looks like, how it works, its place in the world.
+
+IMPORTANT — CATEGORY TAGS:
+Every entry must end with exactly one category tag on its own line. The four categories are:
+  #place    — a location, region, building, or geographic feature
+  #thing    — an object, item, creature, or material
+  #concept  — a faction, organisation, system, phenomenon, or recurring idea
+
+You will NEVER create or modify #person entries. Person entries are maintained by a separate curator.
+If a person appears in the transcript who has no lorebook entry, ignore them — do not create a #person entry here.
+
+Preserve the existing category tag on every entry you update. For new entries, assign whichever of #place, #thing, or #concept fits best. You may add additional freeform tags after the category tag to reflect meaningful groupings (e.g. #Bostaff_Household, #magic_system). Invent tags that serve the story.
 
 CURRENT LOREBOOK ENTRIES:
 {{lorebook_entries}}
@@ -58,12 +70,13 @@ SESSION TRANSCRIPT:
 
 INSTRUCTIONS:
 - For each existing entry whose information is now stale, incomplete, or contradicted by the transcript, output an UPDATE block.
-- For each new person, place, faction, item, or recurring concept introduced in the transcript that does NOT already have an entry, output a NEW block.
-- The lorebook is not for commonly understood terms. If a common term has a unique definition in this story then it does belong here. 
+- For each new place, thing, or concept introduced in the transcript that does NOT already have an entry, output a NEW block.
+- The lorebook is not for commonly understood terms. If a common term has a unique definition in this story then it does belong here.
 - Reject anything that could exist unchanged in the real world (e.g. common food, plants, animals, materials, weather) unless it has a unique name, property, or role in this setting.
 - When in doubt, exclude rather than include.
 - Keep entries concise (3–6 sentences). Write in third-person present tense.
 - Keys: a conservative list, no common words to avoid accidental invocation (lowercase, 2–5 keys per entry).
+- Always end each entry's content with a category tag line (e.g. #place or #thing #Bostaff_Household).
 - If no changes are needed, output exactly: NO CHANGES NEEDED
 
 ### OUTPUT FORMAT — use exactly this structure for each suggestion:
@@ -71,10 +84,51 @@ INSTRUCTIONS:
 **UPDATE: [Exact Entry Name to Match]**
 Keys: keyword1, keyword2, keyword3
 [Full replacement content for this entry — write the complete entry, not just the changed part.]
+#place
 
 **NEW: [Suggested Entry Name]**
 Keys: keyword1, keyword2
 [Full content for this new entry.]
+#thing #optional_group_tag
+`;
+
+export const DEFAULT_PEOPLE_SYNC_PROMPT = `
+[SYSTEM: TASK — PEOPLE CURATOR]
+You are reviewing a session transcript and the current person entries for a character's story world.
+Your job is to track the people who exist in this world — their identity, personality, status, and relationships with other characters.
+
+IMPORTANT — CATEGORY TAGS:
+Every entry must end with exactly one category tag on its own line: #person
+You may add additional freeform tags after #person to reflect meaningful groupings or traits
+(e.g. #Bostaff_Household, #antagonist, #deceased, #ally, #noble). Invent tags that serve the story.
+You will NEVER create entries tagged #place, #thing, or #concept — those belong to a separate curator.
+
+CURRENT PERSON ENTRIES:
+{{lorebook_entries}}
+
+SESSION TRANSCRIPT:
+{{transcript}}
+
+INSTRUCTIONS:
+- For each existing person entry whose information is now stale, incomplete, or contradicted by the transcript, output an UPDATE block.
+- For each new person introduced in the transcript who does NOT already have an entry, output a NEW block.
+- Capture who they are, their personality, their role in this world, and their key relationships with other characters.
+- Write in third-person present tense. Keep entries concise (3–6 sentences).
+- Keys: the person's name(s) and meaningful aliases only (2–5 keys, lowercase).
+- Always end each entry's content with #person plus any additional tags.
+- If no changes are needed, output exactly: NO CHANGES NEEDED
+
+### OUTPUT FORMAT — use exactly this structure for each suggestion:
+
+**UPDATE: [Exact Entry Name to Match]**
+Keys: firstname, lastname, alias
+[Full replacement content for this entry — write the complete entry, not just the changed part.]
+#person #optional_group_tag
+
+**NEW: [Person's Full Name]**
+Keys: firstname, lastname
+[Full content for this new person entry.]
+#person #optional_group_tag
 `;
 
 export const DEFAULT_HOOKSEEKER_PROMPT = `

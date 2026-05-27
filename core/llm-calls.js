@@ -12,7 +12,7 @@
  * Strips the protected block (below -\*-\*-) before sending entries to the LLM.
  *
  * @api-declaration
- * runLorebookSyncCall, runHookseekerCall, runTargetedLbCall
+ * runLorebookSyncCall, runPeopleSyncCall, runHookseekerCall, runTargetedLbCall
  *
  * @contract
  *   assertions:
@@ -71,16 +71,35 @@ function _waitForRecipe(recipeId, extraInputs = {}) {
 // ─── AI Call Wrappers ─────────────────────────────────────────────────────────
 
 /**
- * Fires the Lorebook Sync AI call via the bus.
- * formatLorebookEntries internally strips protected blocks.
- * @param {string}      transcript  Prose transcript to analyse.
- * @param {object|null} lorebook    Lorebook state to use as context. Defaults to `state._lorebookData` if null.
+ * Fires the Lorebook Sync AI call via the bus (places, things, concepts).
+ * Accepts either a pre-formatted string (sync pipeline, where caller filters by lane)
+ * or a lorebook object (modal regen path, where no filtering is needed).
+ * @param {string}        transcript         Prose transcript to analyse.
+ * @param {string|object|null} lorebookOrText Pre-formatted entries string, a lorebook object,
+ *                                            or null to fall back to state._lorebookData.
  * @returns {Promise<string>}
  */
-export function runLorebookSyncCall(transcript, lorebook = null) {
+export function runLorebookSyncCall(transcript, lorebookOrText = null) {
+    const entries = typeof lorebookOrText === 'string'
+        ? lorebookOrText
+        : formatLorebookEntries(lorebookOrText ?? state._lorebookData);
     return _waitForRecipe('lorebook', {
         transcript,
-        lorebook_entries: formatLorebookEntries(lorebook ?? state._lorebookData),
+        lorebook_entries: entries,
+    });
+}
+
+/**
+ * Fires the People Sync AI call via the bus.
+ * Receives a pre-filtered lorebook string (person entries only) from the caller.
+ * @param {string} transcript
+ * @param {string} lorebookEntriesText  Pre-formatted person entries string.
+ * @returns {Promise<string>}
+ */
+export function runPeopleSyncCall(transcript, lorebookEntriesText) {
+    return _waitForRecipe('lorebook_people', {
+        transcript,
+        lorebook_entries: lorebookEntriesText,
     });
 }
 
