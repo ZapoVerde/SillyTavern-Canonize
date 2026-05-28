@@ -109,27 +109,35 @@ Your job is to maintain accurate, living records of the people who populate it �
 ENTRY TIERS:
 Person entries use one of two formats based on narrative weight.
 
-Surface NPC: a named character who has appeared but remains peripheral — limited dialogue, no expressed goals, no developed relationship with {{user}}.
+Surface NPC: a named character who has appeared but remains peripheral — no meaningful dialogue, no expressed goals, no developed relationship with {{user}}.
   One paragraph covering identity, role, and initial connection to {{user}}, followed by a brief appearance description.
 
-Full Treatment: a recurring character with meaningful dialogue, expressed goals, or a relationship with {{user}} that has developed texture and history.
+Full Treatment: any character who has been updated, recurs with meaningful dialogue, expresses goals, or has a relationship with {{user}} that has developed texture.
   Structured sections: Appearance, Personality, Relationship with {{user}}, Goals.
 
 UPGRADE PATH:
-A surface NPC earns full treatment when they recur with meaningful engagement — repeat dialogue, an expressed desire or goal, or a relationship with {{user}} developing beyond first contact.
-To upgrade: output a standard UPDATE block using the full treatment format. Synthesise the Personality axes and Goals from the existing entry plus the transcript. Reproduce the ## Appearance content exactly.
+Any UPDATE to a surface NPC entry must be output in full treatment format. If a character merits an update, they merit full treatment. Synthesise Personality axes and Goals from the existing entry plus the transcript. Reproduce ## Appearance exactly.
 
 SECTION RULES:
-## Appearance — set once at creation. Intrinsic features only: body type, height, build, facial features, hair colour and texture. Exclude current clothing, hairstyle, and injuries.
+
+## Appearance — set once at creation. Physically inherent traits only: body type, height, build, bone structure, facial features, natural hair colour and texture, permanent features such as scars or birthmarks. Exclude clothing, accessories, current hairstyle, and injuries.
+  If the transcript does not describe a trait, invent something consistent with the character's implied tone and setting — commit to it, do not leave gaps.
   Reproduce exactly in every UPDATE — do not alter, rephrase, or reorder.
 
 ## Personality — set once at creation (full treatment only). Choose 3–5 axes that are genuinely revealing of this specific character. Format each as:
   [Quality A] ↔ [Quality B]: brief note on where they sit and why it matters.
   Reproduce exactly in every UPDATE — do not alter, rephrase, or reorder.
 
-## Relationship with {{user}} — the primary live section. Continuous prose. Capture the current dynamic, shared history, trust level, and emotional texture. Update freely each cycle.
+## Relationship with {{user}} — the primary live section. Continuous prose. Write pure current state: the dynamic right now, trust level, emotional texture, what remains unresolved between them. Do not narrate events or backstory — hookseeker and RAG carry the historical record.
 
-## Goals — updateable. One major goal (the character's core drive, slow-moving) and exactly three minor goals (shift as the story develops).
+## Goals — updateable. One major goal (the character's core drive, slow-moving) and exactly three minor goals (immediate or emerging intentions, not generic traits).
+  If goals are not yet established in the transcript, invent plausible ones — a character with direction is more useful than one without.
+  Examples:
+    Major: Reclaim her family's lands from the lord who seized them after her father's death.
+    Major: Survive long enough to see his daughter reach adulthood safely.
+    Minor: Find out whether the merchant at the eastern gate can be trusted.
+    Minor: Avoid another confrontation with Aldric until she has more leverage.
+    Minor: Keep the debt hidden from anyone connected to the guild.
 
 CATEGORY TAGS:
 Every entry must end with #person on its own line. Add freeform tags after #person to reflect meaningful groupings or traits (e.g. #Bostaff_Household, #antagonist, #ally, #deceased). Invent tags that serve the story.
@@ -142,9 +150,10 @@ SESSION TRANSCRIPT:
 {{transcript}}
 
 INSTRUCTIONS:
+- Before creating a NEW entry, check existing entries for name, alias, or description matches — do not duplicate a character who already exists under a different name.
 - For each new person introduced in the transcript who does NOT already have an entry, output a NEW block at the appropriate tier.
-- For each existing entry whose relationship with {{user}} or goals have meaningfully shifted, output an UPDATE block.
-- When upgrading a surface NPC to full treatment, output an UPDATE block in full treatment format.
+- For each existing entry where the relationship with {{user}} or goals have meaningfully shifted, output an UPDATE block. Only update on clear, meaningful change — do not issue micro-adjustments or speculative updates.
+- Any UPDATE to a surface NPC must use the full treatment format.
 - Reproduce ## Appearance and ## Personality exactly as they appear in the current entry — do not alter them under any circumstances.
 - Keys: name(s) and meaningful aliases only (2–5, lowercase).
 - Write in third-person present tense.
@@ -158,7 +167,7 @@ Keys: firstname, lastname
 [One paragraph — identity, role, relationship to {{user}}.]
 
 ## Appearance
-[Intrinsic physical description.]
+[Physically inherent description — invent details consistent with tone if not established.]
 
 #person #optional_tags
 
@@ -166,30 +175,40 @@ Keys: firstname, lastname
 **NEW: [Full Name]**
 Keys: firstname, lastname
 ## Appearance
-[Intrinsic physical description.]
+[Physically inherent description — invent details consistent with tone if not established.]
 
 ## Personality
 Warm ↔ Guarded: leans guarded — slow to trust, but fiercely loyal once earned.
 [2–4 more character-specific axes]
 
 ## Relationship with {{user}}
-[Prose — current dynamic, shared history, trust level, emotional texture.]
+[Current state only — dynamic, trust, what is unresolved. No event narration.]
 
 ## Goals
 Major: [one driving ambition]
-Minor: [first]
-Minor: [second]
-Minor: [third]
+Minor: [first immediate intention]
+Minor: [second immediate intention]
+Minor: [third immediate intention]
 
 #person #optional_tags
 
-**UPDATE — surface NPC:**
+**UPDATE — surface NPC (always expands to full treatment):**
 **UPDATE: [Exact Entry Name]**
 Keys: firstname, lastname
-[Updated paragraph.]
-
 ## Appearance
 [Copied exactly from existing entry.]
+
+## Personality
+[Newly drafted — 3–5 character-specific axes synthesised from existing entry and transcript.]
+
+## Relationship with {{user}}
+[Current state only.]
+
+## Goals
+Major: [synthesised from existing entry or invented if absent]
+Minor: [first]
+Minor: [second]
+Minor: [third]
 
 #person #optional_tags
 
@@ -203,7 +222,7 @@ Keys: firstname, lastname
 [Copied exactly from existing entry.]
 
 ## Relationship with {{user}}
-[Updated prose.]
+[Updated current state only.]
 
 ## Goals
 Major: [updated if changed, otherwise unchanged]
