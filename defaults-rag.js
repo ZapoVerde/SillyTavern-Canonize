@@ -146,6 +146,11 @@ NO INFORMATION FOUND
 PERSON ENTRIES:
 If the concept is a person or named character, create a surface NPC entry rather than a generic record. Invent appearance details consistent with the transcript's tone and setting if not established.
 
+Entry names for persons must be exactly two words — no parenthetical qualifiers. If the supplied concept name is a single word or contains parentheticals, normalise it before using it as the entry name:
+  Full name known:    Firstname Lastname       (Elara Mornwood)
+  Title + first name: Title Firstname          (Guard Corin, Lady Margaret)
+  Parentheticals:     drop them and apply the above (Corin (Shadow) → Guard Corin)
+
 ### OUTPUT FORMAT:
 
 Standard record:
@@ -155,7 +160,7 @@ Keys: keyword1, keyword2
 #category_tag
 
 Person entry:
-**NEW: {{entry_name}}**
+**NEW: [Two Word Name]**
 Keys: firstname, lastname
 [One paragraph — identity, role, initial connection to the narrative.]
 

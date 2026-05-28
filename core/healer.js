@@ -12,7 +12,8 @@
  * RAG DB rebuild from chat stamp data when the vector DB is empty.
  *
  * Restore IO lives in healer-restore.js. User-initiated maintenance operations
- * (purgeAndRebuild, runNewChatCleanup, purgeCnzFiles) live in maintenance.js.
+ * live in maintenance.js (rebuildRag) and maintenance-cleanup.js
+ * (runNewChatCleanup, purgeCnzFiles).
  *
  * @api-declaration
  * runHealer(char, chatFileName)
@@ -167,7 +168,7 @@ async function maybePromptLorebookCleanup(char) {
     catch (_) { return; }
     if (!lbData?.extensions?.cnz_anchor_uuid) return;
     state._lorebookName = lorebookName;
-    const { runNewChatCleanup } = await import('./maintenance.js');
+    const { runNewChatCleanup } = await import('./maintenance-cleanup.js');
     await runNewChatCleanup(char);
 }
 
@@ -201,6 +202,7 @@ export async function runHealer(char, _chatFileName) {
 
     const headRef = state._dnaChain.anchors[state._dnaChain.anchors.length - 1];
     if (messages[headRef.msgIdx]?.extra?.cnz?.uuid === headRef.anchor.uuid) {
+        state._lorebookName = headRef.anchor.lorebook?.name || char?.data?.extensions?.world || char?.name || '';
         await reconcileWorldState(char, headRef.anchor);
         return;
     }
