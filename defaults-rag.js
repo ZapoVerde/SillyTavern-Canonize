@@ -82,11 +82,41 @@ INSTRUCTIONS:
 - If the transcript contains no new information relevant to this concept, output exactly:
   NO CHANGES NEEDED
 
+PERSON ENTRIES:
+If the CURRENT RECORD contains structured person sections (## Appearance, ## Personality, ## Relationship with {{user}}, ## Goals), treat it as a person entry:
+- Reproduce ## Appearance exactly — do not alter it.
+- Reproduce ## Personality exactly — do not alter it.
+- Update ## Relationship with {{user}} to reflect current state from the transcript.
+- Update ## Goals if the transcript reveals meaningful change.
+- Output the full structured format, not as prose.
+
 ### OUTPUT FORMAT:
 
+Standard record:
 **UPDATE: {{entry_name}}**
 Keys: keyword1, keyword2, keyword3
 [Full replacement content for this record.]
+#category_tag
+
+Person entry:
+**UPDATE: {{entry_name}}**
+Keys: firstname, lastname
+## Appearance
+[Copied exactly from current record.]
+
+## Personality
+[Copied exactly from current record.]
+
+## Relationship with {{user}}
+[Updated current state — emotional stance, power dynamic, active tension.]
+
+## Goals
+Major: [updated if changed, otherwise unchanged]
+Minor: [first]
+Minor: [second]
+Minor: [third]
+
+#person #optional_tags
 `;
 
 export const DEFAULT_TARGETED_NEW_PROMPT = `
@@ -113,11 +143,26 @@ many entries (e.g. "character", "place", "important").
 If the transcript contains no meaningful information about this concept, output exactly:
 NO INFORMATION FOUND
 
+PERSON ENTRIES:
+If the concept is a person or named character, create a surface NPC entry rather than a generic record. Invent appearance details consistent with the transcript's tone and setting if not established.
+
 ### OUTPUT FORMAT:
 
+Standard record:
 **NEW: {{entry_name}}**
 Keys: keyword1, keyword2
 [Full content for this record.]
+#category_tag
+
+Person entry:
+**NEW: {{entry_name}}**
+Keys: firstname, lastname
+[One paragraph — identity, role, initial connection to the narrative.]
+
+## Appearance
+[Physically inherent traits — body type, build, facial features, hair. Invent if not described.]
+
+#person #optional_tags
 `;
 
 export const DEFAULT_RAG_INJECTION_TEMPLATE =
