@@ -65,6 +65,8 @@ Assign the most accurate category tag to every entry you touch. If an existing e
 
 For #person entries: if you encounter an entry that belongs to a person but is mistagged or untagged, output an UPDATE that corrects the tag only — preserve the existing content exactly. Do not otherwise create or rewrite person entry content; a dedicated people curator handles that. You may add additional freeform tags after the category tag to reflect meaningful groupings (e.g. #Bostaff_Household, #magic_system). Invent tags that serve the story.
 
+Never output a NEW block for a person. Person creation is handled exclusively by the people curator. If someone appears in the transcript who has no lorebook entry, skip them entirely — do not create a #person entry here.
+
 CURRENT LOREBOOK ENTRIES:
 {{lorebook_entries}}
 
