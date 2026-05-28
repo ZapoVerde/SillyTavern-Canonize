@@ -1,23 +1,21 @@
 /**
  * @file data/default-user/extensions/canonize/core/maintenance.js
- * @stamp {"utc":"2026-05-25T00:00:00.000Z"}
- * @version 2.0.0
+ * @stamp {"utc":"2026-05-28T00:00:00.000Z"}
+ * @version 2.1.0
  * @architectural-role Orchestrator
  * @description
- * User-initiated maintenance: RAG rebuild (concurrent worker pool), new-chat
- * cleanup, and RAG-only purge. All triggered from the settings panel.
+ * User-initiated RAG rebuild (concurrent worker pool) triggered from the
+ * settings panel. Cleanup operations (runNewChatCleanup, purgeCnzFiles) live
+ * in maintenance-cleanup.js.
  *
  * @api-declaration
  * rebuildRag()
- * runNewChatCleanup(char)
- * purgeCnzFiles()
  *
  * @contract
  *   assertions:
  *     purity: mutates
  *     state_ownership: [state._stagedProsePairs, state._stagedPairOffset,
- *                       state._splitPairIdx, state._ragChunks,
- *                       state._lorebookData, state._draftLorebook]
+ *                       state._splitPairIdx, state._ragChunks]
  *     external_io: [callPopup, toastr, /api/plugins/cnz/*]
  */
 
@@ -28,12 +26,10 @@ import { buildProsePairs, formatPairsAsTranscript } from './transcript.js';
 import { buildRagChunks } from '../rag/chunks.js';
 import { waitForRagChunks } from '../rag/pipeline.js';
 import { cnzAvatarKey } from '../rag/api.js';
-import { insertSyncChunks, purgeCharacterChunks, anchorChunkCount } from '../rag/vec-store.js';
+import { insertSyncChunks, insertLorebookEntries, anchorChunkCount } from '../rag/vec-store.js';
 import { getSettings } from './settings.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
-import { lbSaveLorebook } from '../lorebook/api.js';
-import { writeCnzSummaryPrompt } from './summary-prompt.js';
-import { error } from '../log.js';
+import { error, log } from '../log.js';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -216,82 +212,17 @@ export async function rebuildRag() {
             toastr.warning(`CNZ: Rebuild done — ${inserted} / ${total} chunks. ${gaveUp.length} anchor(s) failed after ${MAX_ROUNDS} rounds.`);
         }
 
+        // ── 4. Rebuild lorebook vectors ───────────────────────────────────────
+        if (!state._draftLorebook) {
+            log('Maintenance', 'rebuildRag: no lorebook loaded — skipping lb rebuild');
+        } else {
+            const lbEntries = Object.values(state._draftLorebook.entries);
+            await insertLorebookEntries(avatarKey, chain.lkg.uuid, state._lorebookName, lbEntries);
+        }
+
     } catch (err) {
         error('Maintenance', 'rebuildRag:', err);
         toastr.error(`CNZ: Rebuild failed: ${err.message}`);
     }
 }
 
-// ─── New Chat Cleanup ─────────────────────────────────────────────────────────
-
-/**
- * Shown when a new chat is detected for a character that has prior CNZ session
- * data. Offers to clear lorebook entries, RAG files, and the vector index.
- * @param {object} char  Character object from ST context.
- */
-export async function runNewChatCleanup(char) {
-    try {
-        const confirmed = await callPopup(
-            `<h3>CNZ: New Chat — Clear Previous Session?</h3>
-            <p>The lorebook and vector DB still contain entries from the previous session.</p>
-            <p>The following will be cleared:</p>
-            <ul>
-                <li>Lorebook entries wiped</li>
-                <li>Vector DB chunks purged</li>
-            </ul>
-            <p><em>Skip to manage manually via Settings → Purge RAG / Rebuild RAG.</em></p>`,
-            'confirm',
-        );
-
-        if (confirmed) {
-            if (state._lorebookName) {
-                await lbSaveLorebook(state._lorebookName, { entries: {} }, { silent: true });
-                state._lorebookData  = { name: state._lorebookName, entries: {} };
-                state._draftLorebook = structuredClone(state._lorebookData);
-            }
-
-            await purgeCharacterChunks(cnzAvatarKey(char.avatar));
-            writeCnzSummaryPrompt(char.avatar, '', null);
-
-            toastr.success('CNZ: Lorebook, hooks, and vector DB cleared for new chat.');
-        } else {
-            toastr.info('CNZ: Previous session data retained — adjust manually via Settings if needed.');
-        }
-    } catch (err) {
-        error('Maintenance', 'runNewChatCleanup:', err);
-        toastr.error(`CNZ: New-chat cleanup failed: ${err.message}`);
-    }
-}
-
-// ─── Purge Only ───────────────────────────────────────────────────────────────
-
-/**
- * Purges all CNZ vector DB chunks for the current character. Does not touch
- * the lorebook or hooks. Chunks can be rebuilt via Rebuild RAG.
- */
-export async function purgeCnzFiles() {
-    const ctx  = SillyTavern.getContext();
-    const char = ctx?.characters?.[ctx?.characterId];
-    if (!char) { toastr.error('CNZ: No character selected.'); return; }
-
-    const { escapeHtml } = await import('../state.js');
-    const confirmed = await callPopup(
-        `<h3>Purge RAG</h3>
-        <p>For <strong>${escapeHtml(char.name)}</strong>, this will:</p>
-        <ul>
-            <li>Purge all CNZ chunks from the vector DB</li>
-        </ul>
-        <p>The lorebook and hooks will not be changed.</p>
-        <p>Chunks can be rebuilt at any time via Rebuild RAG.</p>`,
-        'confirm',
-    );
-    if (!confirmed) return;
-
-    try {
-        await purgeCharacterChunks(cnzAvatarKey(char.avatar));
-        toastr.success('CNZ: Vector DB chunks purged.');
-    } catch (err) {
-        error('Maintenance', 'purgeCnzFiles:', err);
-        toastr.error(`CNZ: Purge failed: ${err.message}`);
-    }
-}

@@ -27,7 +27,8 @@ import { DEFAULT_LOREBOOK_SYNC_PROMPT, DEFAULT_PEOPLE_SYNC_PROMPT,
 import { getSettings, getMetaSettings } from './data.js';
 import { log, setVerbose } from '../log.js';
 import { openDnaChainInspector } from '../modal/dna-inspector.js';
-import { rebuildRag, purgeCnzFiles } from '../core/maintenance.js';
+import { rebuildRag } from '../core/maintenance.js';
+import { purgeCnzFiles } from '../core/maintenance-cleanup.js';
 import { mountCnz, unmountCnz } from '../lifecycle.js';
 
 export function bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refreshProfileDropdown, refreshSettingsUI }) {

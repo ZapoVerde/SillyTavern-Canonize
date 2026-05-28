@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/rag/vec-store.js
- * @stamp {"utc":"2026-05-26T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-28T00:00:00.000Z"}
  * @version 1.2.0
  * @architectural-role IO Wrapper
  * @description
@@ -18,6 +18,7 @@
  * queryLorebookEntries(validAnchorUuids, queryText, topK)
  * purgeAnchorChunks(anchorUuid)
  * purgeCharacterChunks(avatarKey)
+ * purgeCharacterLbEntries(avatarKey)
  * anchorChunkCount(avatarKey, anchorUuid)
  * anchorStats(anchorUuid)
  *
@@ -165,6 +166,15 @@ export async function purgeAnchorChunks(anchorUuid) {
  * @param {string} avatarKey
  */
 export async function purgeCharacterChunks(avatarKey) {
+    return post('/purge-character', { avatarKey });
+}
+
+/**
+ * Deletes all lorebook vector entries belonging to a character. Used by
+ * runNewChatCleanup and purgeCnzFiles to make the lb purge intent explicit.
+ * @param {string} avatarKey
+ */
+export async function purgeCharacterLbEntries(avatarKey) {
     return post('/purge-character', { avatarKey });
 }
 

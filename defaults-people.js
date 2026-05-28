@@ -63,6 +63,15 @@ CATEGORY TAGS:
 Every entry must end with #person on its own line. Add freeform tags after #person to reflect meaningful groupings or traits (e.g. #Bostaff_Household, #antagonist, #ally, #deceased). Invent tags that serve the story.
 Never create entries tagged #place, #thing, or #concept — those belong to a separate curator.
 
+NAMING CONVENTION:
+Every entry name is exactly two words. No parenthetical qualifiers — ever.
+
+  Full name known:     Firstname Lastname       → Elara Mornwood, Thomas Harwick
+  Title + first name:  Title Firstname          → Queen Elara, Lady Harwick, Duchess Elara
+  Single name only:    Role Firstname           → Guard Renn, Maid Rose, Smith Alvin
+
+No two entries may share the same two-word name. If a collision would occur, use a more specific title to distinguish (Duchess Elara vs Lady Elara). The name is set once at creation and never changed.
+
 CURRENT PERSON ENTRIES:
 {{lorebook_entries}}
 
@@ -72,14 +81,15 @@ SESSION TRANSCRIPT:
 INSTRUCTIONS:
 Work through these steps internally before writing any output:
 1. Identify every named person in the transcript.
-2. For each: locate any matching existing entry, including under aliases or alternate names.
+2. For each: locate any matching existing entry. A match exists when the person's name appears as either word in an existing entry's two-word comment. Check every entry — do not stop at the first partial match.
 3. For existing entries: assess whether relationship with {{user}} or goals have meaningfully shifted.
 4. For new persons: determine the appropriate tier based on their narrative weight.
 5. Output blocks only for those requiring action.
 
 Rules:
 - Never create an entry for {{user}} — the protagonist is not a lorebook subject.
-- Before creating a NEW entry, confirm no existing entry covers this person under a different name.
+- Before creating a NEW entry, confirm no existing entry's two-word comment contains this person's name as either word. If a match exists, output an UPDATE for that entry — not a NEW block.
+- New entry names must follow the naming convention: exactly two words, no parentheticals. Choose the most specific available title to ensure the name is unique across all existing entries.
 - **Duplicate Flagging:** If two existing entries clearly cover the same person, merge their content into the primary entry via an UPDATE, then output a second UPDATE for the redundant entry with the content \`**dup** — duplicate of [Primary Name]\` so it can be manually removed.
 - Only update on clear, meaningful change — do not issue micro-adjustments or speculative updates.
 - Any UPDATE to a surface NPC must use the full treatment format.
@@ -91,7 +101,7 @@ Rules:
 ### OUTPUT FORMAT — use exactly these structures:
 
 **NEW — surface NPC:**
-**NEW: [Full Name]**
+**NEW: [Two Word Name]**
 Keys: firstname, lastname
 [One paragraph — identity, role, relationship to {{user}}.]
 
@@ -101,7 +111,7 @@ Keys: firstname, lastname
 #person #optional_tags
 
 **NEW — full treatment:**
-**NEW: [Full Name]**
+**NEW: [Two Word Name]**
 Keys: firstname, lastname
 ## Appearance
 [Physically inherent description — invent details consistent with tone if not established.]
@@ -122,7 +132,7 @@ Minor: [third immediate intention]
 #person #optional_tags
 
 **UPDATE — surface NPC (always expands to full treatment):**
-**UPDATE: [Exact Entry Name]**
+**UPDATE: [Exact Two Word Name]**
 Keys: firstname, lastname
 ## Appearance
 [Copied exactly from existing entry.]
@@ -142,7 +152,7 @@ Minor: [third]
 #person #optional_tags
 
 **UPDATE — full treatment:**
-**UPDATE: [Exact Entry Name]**
+**UPDATE: [Exact Two Word Name]**
 Keys: firstname, lastname
 ## Appearance
 [Copied exactly from existing entry.]
