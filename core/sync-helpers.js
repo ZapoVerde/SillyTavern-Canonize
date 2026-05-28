@@ -18,6 +18,8 @@
  * logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN)
  * applyLorebookToDraft(rawText, defaultMeceTag) — returns suggestions[], mutates draft
  * saveLorebookToDisk(anchorUuid, allSuggestions) — disk write + vectoring
+ * reconcileLorebookLanes(mainSuggestions, peopleSuggestions, lbTranscript)
+ *   — detects general-lane #person promotions, scraps and reruns the people lane if needed
  * processHooksUpdate(hooksText) — writes hookseeker output to ST summary prompt
  * commitDnaAnchor(messages, anchorUuid) — writes DNA anchor and link chain
  *
@@ -40,7 +42,7 @@ import { lbSaveLorebook } from '../lorebook/api.js';
 import { parseLbSuggestions, enrichLbSuggestions,
          nextLorebookUid, makeLbDraftEntry,
          stripProtectedBlock, stitchProtectedBlock } from '../lorebook/utils.js';
-import { stitchMeceTag } from '../lorebook/tags.js';
+import { stitchMeceTag, extractMeceTag, formatFilteredLorebookEntries } from '../lorebook/tags.js';
 import { state } from '../state.js';
 
 export function logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN) {
@@ -144,6 +146,57 @@ export async function saveLorebookToDisk(anchorUuid, allSuggestions) {
                 warn('VecStore', 'write-through vectoring failed:', err);
             }
         }
+    }
+}
+
+/**
+ * Post-parallel reconciliation for the two lorebook lanes.
+ * If the general lane newly tagged any entries as #person this cycle, the people
+ * lane (which ran from the pre-sync snapshot) may have created duplicate NEW entries
+ * for those same people. This function detects that case, undoes the people lane's
+ * draft changes, and reruns the people call against the now-correctly-tagged draft.
+ *
+ * Returns the final peopleSuggestions array (unchanged if no reconciliation needed).
+ *
+ * @param {object[]} mainSuggestions    Suggestions from the general lorebook lane.
+ * @param {object[]} peopleSuggestions  Suggestions from the people lane.
+ * @param {string}   lbTranscript       Transcript used for this sync cycle.
+ * @returns {Promise<object[]>}         Final people suggestions.
+ */
+export async function reconcileLorebookLanes(mainSuggestions, peopleSuggestions, lbTranscript) {
+    const newlyPersonTagged = mainSuggestions.filter(s => {
+        if (s.linkedUid === null) return false;
+        const draftEntry = state._draftLorebook?.entries?.[String(s.linkedUid)];
+        const origEntry  = state._lorebookData?.entries?.[String(s.linkedUid)];
+        return extractMeceTag(draftEntry?.content ?? '') === '#person'
+            && extractMeceTag(origEntry?.content  ?? '') !== '#person';
+    });
+
+    if (newlyPersonTagged.length === 0) return peopleSuggestions;
+
+    log('Lorebook', `Reconciliation: ${newlyPersonTagged.length} entry/entries newly tagged #person — scrapping people lane, rerunning`);
+
+    for (const s of peopleSuggestions) {
+        if (s.linkedUid === null) continue;
+        const uidStr    = String(s.linkedUid);
+        const origEntry = state._lorebookData?.entries?.[uidStr];
+        if (origEntry) {
+            state._draftLorebook.entries[uidStr] = structuredClone(origEntry);
+        } else {
+            delete state._draftLorebook.entries[uidStr];
+        }
+    }
+
+    const freshPeopleText = formatFilteredLorebookEntries(state._draftLorebook, '#person', false);
+    try {
+        const { runPeopleSyncCall } = await import('./llm-calls.js');
+        const text = await runPeopleSyncCall(lbTranscript, freshPeopleText);
+        const result = applyLorebookToDraft(text, '#person');
+        log('Lorebook', 'Reconciliation people rerun: ✓ ok');
+        return result;
+    } catch (e) {
+        error('Lorebook', 'Reconciliation people rerun failed:', e.message ?? e);
+        return [];
     }
 }
 

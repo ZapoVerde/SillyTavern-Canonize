@@ -47,20 +47,23 @@ export function interpolate(template, vars) {
 }
 
 export const DEFAULT_LOREBOOK_SYNC_PROMPT = `
-[SYSTEM: TASK — LOREBOOK CURATOR]
+**[SYSTEM: TASK — LOREBOOK CURATOR]**
 You are reviewing a session transcript and the current lorebook entries for a character.
-Your job is to suggest targeted updates to existing entries and identify new concepts that warrant a lorebook entry. A lorebook entry should be free of narrative, and temporal association. It is the description of a place, thing, or concept that is unique to this world — what it looks like, how it works, its place in the world.
+Your job is to suggest targeted updates to existing entries and identify new concepts that warrant a lorebook entry. A lorebook entry should be free of narrative and temporal association. It is the description of a place, thing, or concept that is unique to this world — what it looks like, how it works, its place in the world.
+
+**[LOGISTICAL PERSISTENCE]**
+While entries should describe the nature of an entity, they must also track its current operational state. If the transcript reveals a significant change in where something is located, who possesses a key item, or the current condition of a place, update the entry to reflect that truth. Treat the lorebook as a live save-file for the world's logistics, not just a static encyclopedia.
 
 IMPORTANT — CATEGORY TAGS:
 Every entry must end with exactly one category tag on its own line. The four categories are:
   #place    — a location, region, building, or geographic feature
   #thing    — an object, item, creature, or material
   #concept  — a faction, organisation, system, phenomenon, or recurring idea
+  #person   — a named character or person
 
-You will NEVER create or modify #person entries. Person entries are maintained by a separate curator.
-If a person appears in the transcript who has no lorebook entry, ignore them — do not create a #person entry here.
+Assign the most accurate category tag to every entry you touch. If an existing entry carries the wrong tag or no tag at all, correct it — accurate tagging is essential, as the system routes entries to specialised curators based on these tags.
 
-Preserve the existing category tag on every entry you update. For new entries, assign whichever of #place, #thing, or #concept fits best. You may add additional freeform tags after the category tag to reflect meaningful groupings (e.g. #Bostaff_Household, #magic_system). Invent tags that serve the story.
+For #person entries: if you encounter an entry that belongs to a person but is mistagged or untagged, output an UPDATE that corrects the tag only — preserve the existing content exactly. Do not otherwise create or rewrite person entry content; a dedicated people curator handles that. You may add additional freeform tags after the category tag to reflect meaningful groupings (e.g. #Bostaff_Household, #magic_system). Invent tags that serve the story.
 
 CURRENT LOREBOOK ENTRIES:
 {{lorebook_entries}}
@@ -71,8 +74,12 @@ SESSION TRANSCRIPT:
 INSTRUCTIONS:
 - For each existing entry whose information is now stale, incomplete, or contradicted by the transcript, output an UPDATE block.
 - For each new place, thing, or concept introduced in the transcript that does NOT already have an entry, output a NEW block.
-- The lorebook is not for commonly understood terms. If a common term has a unique definition in this story then it does belong here.
-- Reject anything that could exist unchanged in the real world (e.g. common food, plants, animals, materials, weather) unless it has a unique name, property, or role in this setting.
+- **Entity Resolution:** Do not create new entries for synonyms or sub-components of existing entries. If "The Pavilion" is mentioned and "The Wandering Pavilion" already exists, update the original.
+- **State Tracking:** Explicitly include and update specific "Hard Data" within entries: named locations, exact quantities of significant resources, and the current holder or whereabouts of key items or artifacts.
+- **[REJECTION CRITERIA]:**
+    - The lorebook is for terms unique to this world. Reject anything that could exist unchanged in the real world (e.g. common food, plants, animals, materials, weather) unless it has a unique name, property, or role in this setting.
+    - **Reject "Conversational Noise":** Ignore one-off jokes, slang, idioms, or metaphors with no durable story significance.
+    - **Reject "Narrative Flourish":** If a concept is used only once to convey a mood or temporary feeling, do not index it.
 - When in doubt, exclude rather than include.
 - Keep entries concise (3–6 sentences). Write in third-person present tense.
 - Keys: a conservative list, no common words to avoid accidental invocation (lowercase, 2–5 keys per entry).
