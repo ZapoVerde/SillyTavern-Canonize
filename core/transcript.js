@@ -107,7 +107,7 @@ export function cleanForEmbedding(text) {
         .replace(/&[a-z]+;|&#\d+;/gi, ' ')     // HTML entities (&amp; &#39; etc.)
         .replace(/\*[^*\n]*\*/g, ' ')          // *stage directions / italic actions*
         .replace(/^\[[A-Z0-9 _'-]+\]\n?/gm, '') // [CHAR NAME] turn labels at line start
-        .replace(/[_~`#]/g, ' ')               // remaining markdown symbols
+        .replace(/[_~`]/g, ' ')                // remaining markdown symbols (# preserved for tags)
         .replace(/\s+/g, ' ')
         .trim();
 }
