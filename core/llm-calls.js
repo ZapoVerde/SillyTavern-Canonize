@@ -97,9 +97,11 @@ export function runLorebookSyncCall(transcript, lorebookOrText = null) {
  * @returns {Promise<string>}
  */
 export function runPeopleSyncCall(transcript, lorebookEntriesText) {
+    const ctx = SillyTavern.getContext();
     return _waitForRecipe('lorebook_people', {
         transcript,
         lorebook_entries: lorebookEntriesText,
+        user: ctx.name1 ?? 'the user',
     });
 }
 
