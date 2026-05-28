@@ -128,7 +128,7 @@ SECTION RULES:
   [Quality A] ↔ [Quality B]: brief note on where they sit and why it matters.
   Reproduce exactly in every UPDATE — do not alter, rephrase, or reorder.
 
-## Relationship with {{user}} — the primary live section. Continuous prose. Write pure current state: the dynamic right now, trust level, emotional texture, what remains unresolved between them. Do not narrate events or backstory — hookseeker and RAG carry the historical record.
+## Relationship with {{user}} — the primary live section. Continuous prose. Write pure current state: emotional stance toward {{user}}, the power dynamic between them, and any active tension or unresolved element. Keep it dense — a single vague sentence is not enough. Do not narrate events or backstory — hookseeker and RAG carry the historical record.
 
 ## Goals — updateable. One major goal (the character's core drive, slow-moving) and exactly three minor goals (immediate or emerging intentions, not generic traits).
   If goals are not yet established in the transcript, invent plausible ones — a character with direction is more useful than one without.
@@ -182,7 +182,7 @@ Warm ↔ Guarded: leans guarded — slow to trust, but fiercely loyal once earne
 [2–4 more character-specific axes]
 
 ## Relationship with {{user}}
-[Current state only — dynamic, trust, what is unresolved. No event narration.]
+[Emotional stance, power dynamic, active tension — current state only, no event narration.]
 
 ## Goals
 Major: [one driving ambition]
