@@ -77,6 +77,7 @@ INSTRUCTIONS:
 - For each existing entry whose information is now stale, incomplete, or contradicted by the transcript, output an UPDATE block.
 - For each new place, thing, or concept introduced in the transcript that does NOT already have an entry, output a NEW block.
 - **Entity Resolution:** Do not create new entries for synonyms or sub-components of existing entries. If "The Pavilion" is mentioned and "The Wandering Pavilion" already exists, update the original.
+- **Duplicate Flagging:** If two existing entries clearly cover the same concept under different names, merge their content into the better-named entry via a normal UPDATE, then output a second UPDATE for the redundant entry with the content \`**dup** — duplicate of [Primary Name]\` so it can be manually removed.
 - **State Tracking:** Explicitly include and update specific "Hard Data" within entries: named locations, exact quantities of significant resources, and the current holder or whereabouts of key items or artifacts.
 - **[REJECTION CRITERIA]:**
     - The lorebook is for terms unique to this world. Reject anything that could exist unchanged in the real world (e.g. common food, plants, animals, materials, weather) unless it has a unique name, property, or role in this setting.
@@ -99,6 +100,10 @@ Keys: keyword1, keyword2, keyword3
 Keys: keyword1, keyword2
 [Full content for this new entry.]
 #thing #optional_group_tag
+**UPDATE: [Redundant Entry Name]**
+Keys: keyword1
+\`**dup**\` — duplicate of [Primary Entry Name]
+#thing
 `;
 
 export const DEFAULT_PEOPLE_SYNC_PROMPT = `
@@ -154,6 +159,7 @@ SESSION TRANSCRIPT:
 INSTRUCTIONS:
 - Never create an entry for {{user}} — the protagonist is not a lorebook subject.
 - Before creating a NEW entry, check existing entries for name, alias, or description matches — do not duplicate a character who already exists under a different name.
+- **Duplicate Flagging:** If two existing entries clearly cover the same person, merge their content into the primary entry via an UPDATE, then output a second UPDATE for the redundant entry with the content \`**dup** — duplicate of [Primary Name]\` so it can be manually removed.
 - For each new person introduced in the transcript who does NOT already have an entry, output a NEW block at the appropriate tier.
 - For each existing entry where the relationship with {{user}} or goals have meaningfully shifted, output an UPDATE block. Only update on clear, meaningful change — do not issue micro-adjustments or speculative updates.
 - Any UPDATE to a surface NPC must use the full treatment format.
@@ -234,6 +240,12 @@ Minor: [second]
 Minor: [third]
 
 #person #optional_tags
+
+**UPDATE — duplicate flag:**
+**UPDATE: [Redundant Entry Name]**
+Keys: firstname
+\`**dup**\` — duplicate of [Primary Entry Name]
+#person
 `;
 
 export const DEFAULT_HOOKSEEKER_PROMPT = `
