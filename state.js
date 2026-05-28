@@ -80,6 +80,7 @@ export const PROFILE_DEFAULTS = Object.freeze({
     ragMaxRetries:            1,
     ragRetrievalTopK:         5,
     ragLbRetrievalTopK:       3,
+    ragPlotRetrievalTopK:     3,
     ragScoreThreshold:        0.25,
     ragInjectionTemplate:     DEFAULT_RAG_INJECTION_TEMPLATE,
     ragEmbeddingSource:       'openrouter',
@@ -138,6 +139,8 @@ export const state = {
     _beforeSituation:     '',
     /** lorebook snapshot from parent node — diff baseline */
     _parentNodeLorebook:  null,
+    /** name of the plot lorebook file (append-only, hookseeker lane only) */
+    _plotLorebookName:    null,
 
     // ── Orphan check state — set by checkOrphans(), read by openOrphanModal() ──
     _pendingOrphans:      [],

@@ -41,10 +41,49 @@ import { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
 import { getSettings } from './settings.js';
 import { buildProsePairs, formatPairsAsTranscript } from './transcript.js';
 import { anchorChunkCount, insertSyncChunks, insertLorebookEntries } from '../rag/vec-store.js';
-import { cnzAvatarKey } from '../rag/api.js';
+import { cnzAvatarKey, cnzPlotLbName } from '../rag/api.js';
+import { rebuildPlotLorebook } from '../lorebook/plot-lorebook.js';
 
 // Re-export restore ops — callers that import from healer.js keep working.
 export { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
+
+// ─── Plot Lorebook Reconciliation ─────────────────────────────────────────────
+
+/**
+ * Walks the full DNA chain to rebuild the plot lorebook file and ensure all
+ * plot entries are vectorized. Safe to call when the file already exists —
+ * the lorebook write is idempotent and insertLorebookEntries uses upsert.
+ * Gated on RAG being enabled; no-op if the chain carries no plot entries.
+ */
+async function _reconcilePlotLorebook(char, chain) {
+    if (!getSettings().enableRag) return;
+    const anchors = chain?.anchors ?? [];
+    const anchorChunks = anchors
+        .map(ref => ({ uuid: ref.anchor.uuid, entries: ref.anchor.plotEntries ?? [] }))
+        .filter(c => c.entries.length > 0);
+    if (!anchorChunks.length) return;
+
+    const plotLbName = chain.lkg?.plotLorebookName ?? cnzPlotLbName(char.avatar);
+    state._plotLorebookName = plotLbName;
+
+    try {
+        await rebuildPlotLorebook(plotLbName, anchorChunks);
+        log('Healer', `Plot lorebook rebuilt: "${plotLbName}" (${anchorChunks.reduce((n, c) => n + c.entries.length, 0)} entries)`);
+    } catch (err) {
+        error('Healer', 'Plot lorebook rebuild failed:', err);
+        return;
+    }
+
+    const avatarKey = cnzAvatarKey(char.avatar);
+    for (const { uuid, entries } of anchorChunks) {
+        try {
+            await insertLorebookEntries(avatarKey, uuid, plotLbName, entries);
+        } catch (err) {
+            error('Healer', `Plot entry vectorization failed (anchor ${uuid}):`, err);
+        }
+    }
+    log('Healer', 'Plot entry vectorization complete');
+}
 
 // ─── RAG Auto-Reconciliation ──────────────────────────────────────────────────
 
@@ -151,6 +190,7 @@ async function reconcileWorldState(char, headAnchor) {
     }
 
     await _reconcileRagChunks(char, headAnchor);
+    await _reconcilePlotLorebook(char, state._dnaChain);
 }
 
 // ─── New Chat Guard ───────────────────────────────────────────────────────────
@@ -202,7 +242,8 @@ export async function runHealer(char, _chatFileName) {
 
     const headRef = state._dnaChain.anchors[state._dnaChain.anchors.length - 1];
     if (messages[headRef.msgIdx]?.extra?.cnz?.uuid === headRef.anchor.uuid) {
-        state._lorebookName = headRef.anchor.lorebook?.name || char?.data?.extensions?.world || char?.name || '';
+        state._lorebookName     = headRef.anchor.lorebook?.name || char?.data?.extensions?.world || char?.name || '';
+        state._plotLorebookName = headRef.anchor.plotLorebookName ?? cnzPlotLbName(char.avatar);
         await reconcileWorldState(char, headRef.anchor);
         return;
     }

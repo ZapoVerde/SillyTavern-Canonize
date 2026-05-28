@@ -109,7 +109,7 @@ export function syncCnzSummaryOnCharacterSwitch(char, chain) {
         return;
     }
 
-    prompt.content         = head?.hooks ?? '';
+    prompt.content         = head?.scene ?? head?.hooks ?? '';
     prompt.cnz_avatar      = char.avatar;
     prompt.cnz_anchor_uuid = head?.uuid ?? null;
 }

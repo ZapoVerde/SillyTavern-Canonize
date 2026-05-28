@@ -51,13 +51,11 @@ export const Recipes = {
 
     hookseeker: {
         id:           'hookseeker',
-        inputs:       ['transcript'],
-        buildPrompt:  (inputs, settings) => {
-            return interpolate(
-                settings.hookseekerPrompt || DEFAULT_HOOKSEEKER_PROMPT,
-                { transcript: inputs.transcript, prev_summary: inputs.prev_summary ?? '' }
-            );
-        },
+        inputs:       ['transcript', 'prev_scene'],
+        buildPrompt:  (inputs, settings) => interpolate(
+            settings.hookseekerPrompt || DEFAULT_HOOKSEEKER_PROMPT,
+            { transcript: inputs.transcript, prev_scene: inputs.prev_scene ?? '' }
+        ),
         profileKey:   'profileId',
         maxTokens:    null,
         produces:     'scenario_hooks',

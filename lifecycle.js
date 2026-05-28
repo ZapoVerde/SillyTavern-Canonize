@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/lifecycle.js
- * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2026-05-28T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role Orchestrator
  * @description
  * Mount/unmount lifecycle for the CNZ extension. Binds and unbinds all dynamic
@@ -17,7 +17,7 @@
  * @contract
  *   assertions:
  *     purity: mutates
- *     state_ownership: [_lorebookEditTimer, _embedAbortCtrl]
+ *     state_ownership: [_lorebookEditTimer, _plotEditTimer, _embedAbortCtrl]
  *     external_io: [ST eventSource, DOM, bus, scheduler, promptManager, embed SSE stream]
  */
 
@@ -39,10 +39,14 @@ import { openOrphanModal } from './modal/orphan-modal.js';
 import { runCnzSync } from './core/sync.js';
 import { invalidateAllJobs } from './cycleStore.js';
 import { log, error } from './log.js';
+import { getStringHash } from '../../../utils.js';
+import { cnzAvatarKey } from './rag/api.js';
+import { insertLorebookEntries } from './rag/vec-store.js';
 
 // ── Module state ──────────────────────────────────────────────────────────────
 
 let _lorebookEditTimer = null;
+let _plotEditTimer     = null;
 let _embedAbortCtrl    = null;
 
 // ── Named ST event handlers (required for eventSource.off) ───────────────────
@@ -52,27 +56,87 @@ function _onMessageSent() {
 }
 
 function _onWorldInfoUpdated(name) {
-    if (name !== state._lorebookName) return;
-    clearTimeout(_lorebookEditTimer);
-    _lorebookEditTimer = setTimeout(async () => {
-        if (state._lorebookName !== name) return;
-        try {
-            const fresh = await lbGetLorebook(name);
-            state._draftLorebook           = structuredClone(fresh);
-            state._lorebookData            = structuredClone(fresh);
-            state._lastIndexedLorebookHash = '';
-            if (!state._dnaChain?.lkg) return;
-            const chatMsgs  = SillyTavern.getContext().chat ?? [];
-            const anchorMsg = chatMsgs[state._dnaChain.lkgMsgIdx];
-            if (!anchorMsg?.extra?.cnz) return;
-            anchorMsg.extra.cnz = Object.assign({}, anchorMsg.extra.cnz, {
-                lorebook: Object.assign({ name }, structuredClone(state._draftLorebook)),
-            });
-            await SillyTavern.getContext().saveChat();
-        } catch (err) {
-            error('Lorebook', 'WORLDINFO_UPDATED handler failed:', err);
+    if (name === state._lorebookName) {
+        clearTimeout(_lorebookEditTimer);
+        _lorebookEditTimer = setTimeout(async () => {
+            if (state._lorebookName !== name) return;
+            try {
+                const fresh = await lbGetLorebook(name);
+                state._draftLorebook           = structuredClone(fresh);
+                state._lorebookData            = structuredClone(fresh);
+                state._lastIndexedLorebookHash = '';
+                if (!state._dnaChain?.lkg) return;
+                const chatMsgs  = SillyTavern.getContext().chat ?? [];
+                const anchorMsg = chatMsgs[state._dnaChain.lkgMsgIdx];
+                if (!anchorMsg?.extra?.cnz) return;
+                anchorMsg.extra.cnz = Object.assign({}, anchorMsg.extra.cnz, {
+                    lorebook: Object.assign({ name }, structuredClone(state._draftLorebook)),
+                });
+                await SillyTavern.getContext().saveChat();
+            } catch (err) {
+                error('Lorebook', 'WORLDINFO_UPDATED handler failed:', err);
+            }
+        }, 7000);
+    }
+
+    if (name === state._plotLorebookName) {
+        clearTimeout(_plotEditTimer);
+        _plotEditTimer = setTimeout(() => _applyPlotLorebookEdits(name), 7000);
+    }
+}
+
+async function _applyPlotLorebookEdits(name) {
+    if (state._plotLorebookName !== name) return;
+    try {
+        const fresh   = await lbGetLorebook(name);
+        const anchors = state._dnaChain?.anchors ?? [];
+        if (!anchors.length) return;
+
+        const idx = new Map();
+        for (const ref of anchors) {
+            (ref.anchor.plotEntries ?? []).forEach((e, i) =>
+                idx.set(e.uid, { ref, i, hash: getStringHash(`${e.comment ?? ''}|${(e.keys ?? []).join(',')}|${e.content ?? ''}`) })
+            );
         }
-    }, 7000);
+
+        const changed = [];
+        for (const [k, de] of Object.entries(fresh.entries ?? {})) {
+            const uid  = parseInt(k, 10);
+            const slot = idx.get(uid);
+            if (!slot) continue;
+            if (getStringHash(`${de.comment ?? ''}|${(de.key ?? []).join(',')}|${de.content ?? ''}`) === slot.hash) continue;
+            changed.push({ uid, de, ref: slot.ref, i: slot.i });
+        }
+        if (!changed.length) return;
+
+        const msgs = SillyTavern.getContext().chat ?? [];
+        for (const { uid, de, ref, i } of changed) {
+            const m = msgs[ref.msgIdx];
+            if (m?.extra?.cnz?.plotEntries)
+                m.extra.cnz.plotEntries[i] = { uid, content: de.content ?? '', keys: de.key ?? [], comment: de.comment ?? '' };
+        }
+        await SillyTavern.getContext().saveChat();
+        log('PlotLb', `Patched ${changed.length} plot entry/entries in chain`);
+
+        if (getSettings().enableRag) {
+            const ctx  = SillyTavern.getContext();
+            const char = ctx.characters[ctx.characterId];
+            if (char) {
+                const ak       = cnzAvatarKey(char.avatar);
+                const byAnchor = new Map();
+                for (const { uid, de, ref } of changed) {
+                    if (!byAnchor.has(ref.anchor.uuid)) byAnchor.set(ref.anchor.uuid, []);
+                    byAnchor.get(ref.anchor.uuid).push({ uid, content: de.content ?? '', keys: de.key ?? [], comment: de.comment ?? '' });
+                }
+                for (const [uuid, entries] of byAnchor) {
+                    try { await insertLorebookEntries(ak, uuid, name, entries); }
+                    catch (err) { error('PlotLb', `Re-vector failed (${uuid}):`, err); }
+                }
+            }
+        }
+    } catch (err) {
+        error('PlotLb', 'Plot lorebook edit handler failed:', err);
+    }
 }
 
 // ── Embed monitor ─────────────────────────────────────────────────────────────
@@ -201,7 +265,9 @@ export function unmountCnz() {
 
     clearTimeout(_lorebookEditTimer);
     _lorebookEditTimer = null;
-    log('Lifecycle', 'Lorebook debounce timer cleared.');
+    clearTimeout(_plotEditTimer);
+    _plotEditTimer     = null;
+    log('Lifecycle', 'Lorebook and plot edit timers cleared.');
 
     if (_embedAbortCtrl) {
         _embedAbortCtrl.abort();

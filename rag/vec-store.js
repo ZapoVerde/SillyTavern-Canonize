@@ -235,9 +235,9 @@ export async function insertLorebookEntries(avatarKey, anchorUuid, lorebookName,
  * @param {number}   [topK=3]
  * @returns {Promise<{ lorebookName:string, entryUid:number, score:number }[]>}
  */
-export async function queryLorebookEntries(validAnchorUuids, queryText, topK = 3, signal) {
+export async function queryLorebookEntries(validAnchorUuids, queryText, topK = 3, signal, lorebookName = null) {
     const cfg    = embedCfg();
-    const result = await post('/query-lorebook', { queryText, validAnchorUuids, topK, ...cfg }, signal);
+    const result = await post('/query-lorebook', { queryText, validAnchorUuids, topK, lorebookName, ...cfg }, signal);
     _reportEmbedUsage(queryText.length, cfg.embeddingModel);
     return result;
 }

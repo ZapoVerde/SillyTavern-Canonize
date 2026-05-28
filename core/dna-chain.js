@@ -118,23 +118,27 @@ export function getLkgAnchor(messages) {
  * Builds the CnzAnchor payload for embedding in message.extra.cnz.
  * Pure function — all inputs passed explicitly.
  * @param {object} params
- * @param {string}            params.uuid         - crypto.randomUUID() from the caller
- * @param {string}            params.committedAt  - ISO timestamp from the caller
- * @param {string}            params.hooks        - hookseeker text committed this cycle
- * @param {object}            params.lorebook     - full lorebook snapshot { name, entries }
- * @param {RagHeaderEntry[]}  params.ragHeaders   - chunk headers committed this cycle
- * @param {string|null}       params.parentUuid   - uuid of previous anchor, or null
+ * @param {string}            params.uuid              - crypto.randomUUID() from the caller
+ * @param {string}            params.committedAt       - ISO timestamp from the caller
+ * @param {string}            params.scene             - SCENE prose from the hookseeker this cycle
+ * @param {string}            params.hooks             - legacy alias for scene; kept for backward compat
+ * @param {string|null}       params.plotLorebookName  - plot lorebook filename, or null
+ * @param {object}            params.lorebook          - full lorebook snapshot { name, entries }
+ * @param {RagHeaderEntry[]}  params.ragHeaders        - chunk headers committed this cycle
+ * @param {string|null}       params.parentUuid        - uuid of previous anchor, or null
  * @returns {CnzAnchor}
  */
-export function buildAnchorPayload({ uuid, committedAt, hooks, lorebook, ragHeaders, parentUuid }) {
+export function buildAnchorPayload({ uuid, committedAt, scene, hooks, plotLorebookName, plotEntries, lorebook, ragHeaders, parentUuid }) {
     return {
         type: 'anchor',
         uuid,
         committedAt,
-        hooks,
-        lorebook:    structuredClone(lorebook),
-        ragHeaders:  ragHeaders ?? [],
-        parentUuid:  parentUuid ?? null,
+        scene:            scene ?? hooks ?? '',
+        plotLorebookName: plotLorebookName ?? null,
+        plotEntries:      plotEntries ?? [],
+        lorebook:         structuredClone(lorebook),
+        ragHeaders:       ragHeaders ?? [],
+        parentUuid:       parentUuid ?? null,
     };
 }
 
@@ -144,14 +148,16 @@ export function buildAnchorPayload({ uuid, committedAt, hooks, lorebook, ragHead
  * anchors without modification.
  * Pure function — no state reads, no IO.
  * @param {CnzAnchor} anchor
- * @returns {{ state: { uuid: string|null, hooks: string, lorebook: object } }}
+ * @returns {{ state: { uuid: string|null, scene: string, lorebook: object, plotLorebookName: string|null } }}
  */
 export function buildNodeFileFromAnchor(anchor) {
     return {
         state: {
-            uuid:     anchor.uuid ?? null,
-            hooks:    anchor.hooks ?? '',
-            lorebook: anchor.lorebook ?? { entries: {} },
+            uuid:             anchor.uuid             ?? null,
+            scene:            anchor.scene            ?? anchor.hooks ?? '',
+            plotLorebookName: anchor.plotLorebookName ?? null,
+            plotEntries:      anchor.plotEntries      ?? [],
+            lorebook:         anchor.lorebook         ?? { entries: {} },
         },
     };
 }

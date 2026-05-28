@@ -110,47 +110,65 @@ Keys: keyword1
 export { DEFAULT_PEOPLE_SYNC_PROMPT } from './defaults-people.js';
 
 export const DEFAULT_HOOKSEEKER_PROMPT = `
-**[SYSTEM: TASK — NARRATIVE STATE ANALYST]**
+**[SYSTEM: TASK — NARRATIVE CHRONICLER]**
 
-You are a precise Narrative State Analyst. Your job is to update the existing narrative state by carefully integrating the new transcript into the previous summary.
+You are a Narrative Chronicler maintaining a living record of an ongoing story. Your output has exactly two parts: a SCENE block and NEW: plot entries.
 
-The PREVIOUS SUMMARY serves as the initial state and your foundation. Update it thoroughly with the new TRANSCRIPT: incorporate any new threads and developments, evolve or tie off threads that have been resolved or advanced, and keep every unresolved element active and full of tension. Never prematurely close anything that remains open in the story.
+---
 
-Output only the structured document with no additional text. Write entirely in present tense. Keep the total length between 400 and 600 words. Follow the exact heading hierarchy below without changing, adding, or removing any headings. Preserve recent moments of rest, trust, or interpersonal shifts even when they do not drive the immediate plot. Focus on what remains alive: active pressures, character intentions that have not yet played out, unresolved threads, key facts, and relationships the narrative must continue to honor.
+**PART 1 — SCENE**
 
-Follow this exact hierarchy every single time:
+Write approximately 150–200 words beginning with SCENE: on its own line. Describe the current moment in flowing present tense — the physical situation, emotional atmosphere, sensory details, and active pressures. Use the full transcript for context: recent events should feel most vivid, but earlier events in the window should still colour the tone and stakes. Do not lose threads that remain alive; carry forward anything unresolved. Maintain strict continuity with the PREVIOUS SCENE — do not reset it; evolve it naturally. Do not invent events, motivations, or outcomes not supported by the transcript.
 
-## Narrative State
+---
 
-### Current Scene
+**PART 2 — PLOT ENTRIES**
 
-Describe where the characters are physically and emotionally right now, incorporating the latest developments from the transcript.
+Create a NEW: entry only when at least one of the following occurs:
+- A character's goal, motivation, or allegiance changes
+- A major decision is made or a consequential action taken
+- Important information is revealed — a secret exposed, a mystery deepened or resolved
+- A threat escalates or resolves
+- An alliance or relationship dynamic shifts
+- A lasting consequence takes hold
+- A new narrative thread begins
 
-### Active Characters and Their Intentions
+Do not restate previously recorded developments unless the situation has materially changed. "The siege continues" is not an entry. "The siege wall breached" is. Extend existing threads through tags rather than creating duplicate entries with slightly different names.
 
-Detail the key characters who are currently relevant, their updated emotional states, and what they want or intend next. Show any internal conflict or decisions still hanging.
+One entry per arc per sync window. If multiple developments occurred within the same arc, capture them together in a single entry rather than splitting across cards.
 
-### Unresolved Threads and Tensions
+Rules:
+- **Entry name:** A vivid label for this arc's progression in this window (e.g. "The Ashford Siege Breaks Open", "Elena's Allegiance Fractures").
+- **Keys:** 3–5 concise lowercase terms — the characters, places, or concepts directly involved.
+- **Content:** 2–4 sentences in past tense covering the arc's developments this window. What happened, why it matters, what tension or possibility it creates.
+- **Tags:** End every entry with #plot followed by the arc's stable thread tag. Tags must be stable across turns — once established (e.g. #ashford_siege), that exact form must be reused. Do not invent near-duplicates (#ashford, #ashford_arc, #siege_of_ashford are all wrong for the same arc). Only coin a new tag for a genuinely new arc.
 
-Describe every significant open thread and source of tension that remains alive after integrating the transcript. Note any new threads that have emerged. Clearly indicate which previous threads have been resolved or significantly advanced.
+If none of the above occurred, output only the SCENE.
 
-### Key Facts and Relationships
-
-Clearly state the important established facts and character relationships that the story must continue to respect. Update with any new facts or shifts in dynamics from the transcript, including recent changes in trust, power, or connection.
-
-### Narrative Momentum
-
-Describe the current forward momentum of the story — what feels imminent or inevitable now, and what forces are pushing the characters forward after the latest events.
-
-Write in flowing, descriptive continuous prose under each subheading. The document must read as a living, updated continuation of the previous summary so that someone reading only this latest version can step straight back into the story with full continuity and no loss of important details.
+---
 
 TRANSCRIPT:
 {{transcript}}
 
-PREVIOUS SUMMARY:
-{{prev_summary}}
+PREVIOUS SCENE:
+{{prev_scene}}
 
-REMINDER: You are maintaining narrative continuity by thoughtfully updating the previous state with the new transcript. Add new elements, evolve or tie off resolved ones, and keep unresolved tension intact.
+---
+
+OUTPUT FORMAT (follow exactly):
+
+SCENE:
+[approximately 150–200 words of present-tense prose]
+
+**NEW: [Entry Name]**
+Keys: key1, key2, key3
+[2–4 sentences in past tense.]
+#plot #thread_tag
+
+**NEW: [Entry Name]**
+Keys: key1, key2
+[2–4 sentences in past tense.]
+#plot #thread_tag #second_tag
 `;
 
 // RAG classifier, targeted update/new prompts, and injection templates

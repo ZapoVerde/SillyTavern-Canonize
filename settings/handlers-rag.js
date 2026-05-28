@@ -174,6 +174,11 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
+    $('#cnz-set-rag-plot-retrieval-topk').on('input', function () {
+        getSettings().ragPlotRetrievalTopK = Math.max(0, parseInt($(this).val()) || 3);
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
     $('#cnz-edit-injection-template').on('click', () =>
         openPromptModal('ragInjectionTemplate', 'Edit Injection Template', DEFAULT_RAG_INJECTION_TEMPLATE, ['text']));
 

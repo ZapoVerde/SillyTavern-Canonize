@@ -41,11 +41,13 @@ import { stripProtectedBlock, formatLorebookEntries } from '../lorebook/utils.js
 import { formatFilteredLorebookEntries } from '../lorebook/tags.js';
 import { runRagPipeline } from '../rag/pipeline.js';
 import { isPluginReachable } from '../rag/plugin-health.js';
-import { cnzDefaultLbName } from '../rag/api.js';
+import { cnzDefaultLbName, cnzPlotLbName } from '../rag/api.js';
 import { patchCharacterWorld } from '../modal/commit.js';
 import { state } from '../state.js';
+import { parseHookseekerOutput } from './hookseeker-output.js';
 import { logSyncStart, applyLorebookToDraft, saveLorebookToDisk,
-         reconcileLorebookLanes, processHooksUpdate, commitDnaAnchor } from './sync-helpers.js';
+         reconcileLorebookLanes, processSceneUpdate,
+         appendAndIndexPlotEntries, commitDnaAnchor } from './sync-helpers.js';
 
 // Re-export pure helpers so existing callers importing from sync.js don't break.
 export { computeSyncWindow, deriveLastCommittedPairs } from './transcript.js';
@@ -93,6 +95,8 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
     const lbName = state._lorebookName || cnzDefaultLbName(char.avatar);
     state._lorebookName = lbName;
+    const plotLbName = state._plotLorebookName || cnzPlotLbName(char.avatar);
+    state._plotLorebookName = plotLbName;
     const freshLorebook = await lbEnsureLorebook(lbName);
 
     let externalDeletions = [];
@@ -197,12 +201,18 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
         return true;
     })();
 
+    let stagedPlotEntries = [];
     const hooksPromise = (async () => {
         log('Hooks', 'Lane 2: starting');
         try {
-            const text = await runHookseekerCall(hookTranscript, state._priorSituation);
-            await processHooksUpdate(text);
-            state._priorSituation = text;
+            const raw = await runHookseekerCall(hookTranscript, state._priorSituation);
+            const { scene, entries } = parseHookseekerOutput(raw);
+            processSceneUpdate(scene);
+            state._priorSituation = scene;
+            if (entries.length) {
+                stagedPlotEntries = await appendAndIndexPlotEntries(entries, anchorUuid, char.avatar, plotLbName);
+                log('Hooks', `Lane 2: ${stagedPlotEntries.length} plot entry/entries written`);
+            }
             log('Hooks', 'Lane 2: ✓ ok');
             return true;
         } catch (e) {
@@ -256,7 +266,7 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
     log('DnaChain', 'committing anchor');
     let anchorOk = false;
     try {
-        await commitDnaAnchor(messages, anchorUuid);
+        await commitDnaAnchor(messages, anchorUuid, stagedPlotEntries);
         anchorOk = true;
         log('DnaChain', '✓ ok');
         const newUuid = state._dnaChain.lkg?.uuid ?? null;

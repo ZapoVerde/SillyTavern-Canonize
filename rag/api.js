@@ -116,6 +116,16 @@ export function cnzDefaultLbName(avatarFilename) {
 }
 
 /**
+ * Returns the CNZ-owned plot lorebook name for a character.
+ * Append-only event log; hookseeker lane is the sole writer.
+ * @param {string} avatarFilename  Raw avatar filename from char.avatar.
+ * @returns {string}
+ */
+export function cnzPlotLbName(avatarFilename) {
+    return `cnz_${cnzAvatarKey(avatarFilename)}_plot`;
+}
+
+/**
  * Generates a consistent flat-prefix filename for a CNZ-managed file.
  * @param {string} avatarKey  Already-sanitized avatar key (from cnzAvatarKey).
  * @param {'manifest'|'node'|'rag'} type  File type.

@@ -161,6 +161,10 @@ export function buildRagSectionHTML(s, escapeHtml) {
                 <label for="cnz-set-rag-lb-retrieval-topk">Chunks — lorebook context ${tip('How many chunks to retrieve using the currently active lorebook entries as the query.')}</label>
                 <input id="cnz-set-rag-lb-retrieval-topk" type="number" min="0" max="20" step="1" value="${escapeHtml(String(s.ragLbRetrievalTopK ?? 3))}">
               </div>
+              <div class="cnz-settings-inline-row">
+                <label for="cnz-set-rag-plot-retrieval-topk">Chunks — plot context ${tip('How many plot lorebook entries to surface via RAG each turn.')}</label>
+                <input id="cnz-set-rag-plot-retrieval-topk" type="number" min="0" max="20" step="1" value="${escapeHtml(String(s.ragPlotRetrievalTopK ?? 3))}">
+              </div>
               <div class="cnz-setting-row">
                 <label class="cnz-label">Injection Template ${tip('Wraps the retrieved chunks before injection. Use {{text}} where the chunks should appear.')}</label>
                 <button id="cnz-edit-injection-template" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>

@@ -149,15 +149,15 @@ export function registerRoutes(router) {
     // ── POST /query-lorebook ──────────────────────────────────────────────────
     router.post('/query-lorebook', async (req, res) => {
         try {
-            const { queryText, validAnchorUuids, topK = 3 } = req.body;
+            const { queryText, validAnchorUuids, topK = 3, lorebookName = null } = req.body;
             if (!queryText || !Array.isArray(validAnchorUuids) || !validAnchorUuids.length)
                 return res.json([]);
 
             const cfg      = embedCfg(req);
             const queryVec = await embedWithSource(cfg, queryText);
             const [semRows, kwRows] = await Promise.all([
-                queryLbEntries(validAnchorUuids, queryVec, topK * 2),
-                queryLbEntriesByKeyword(validAnchorUuids, queryText, topK * 2),
+                queryLbEntries(validAnchorUuids, queryVec, topK * 2, 0, lorebookName),
+                queryLbEntriesByKeyword(validAnchorUuids, queryText, topK * 2, lorebookName),
             ]);
             // Union by entry_uid — prefer semantic score; keyword hits use fixed 0.85
             const byUid = new Map();

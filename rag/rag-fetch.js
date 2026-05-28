@@ -22,6 +22,7 @@
 
 import { buildProsePairs, formatPairsAsTranscript, cleanForEmbedding } from '../core/transcript.js';
 import { querySyncChunks, queryLorebookEntries } from './vec-store.js';
+import { state } from '../state.js';
 import { log, error } from '../log.js';
 import { DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 
@@ -42,9 +43,10 @@ import { DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../d
 export async function doRagFetch(ctx, settings, chain, signal) {
     const messages   = ctx.chat ?? [];
     const validUuids = chain.anchors.map(r => r.anchor.uuid);
-    const topK       = settings.ragRetrievalTopK   ?? 5;
-    const topKLb     = settings.ragLbRetrievalTopK ?? 3;
-    const noiseFloor = settings.ragScoreThreshold  ?? 0.1;
+    const topK       = settings.ragRetrievalTopK    ?? 5;
+    const topKLb     = settings.ragLbRetrievalTopK  ?? 3;
+    const topKPlot   = settings.ragPlotRetrievalTopK ?? 3;
+    const noiseFloor = settings.ragScoreThreshold   ?? 0.1;
 
     const horizonPairs = Math.max(1, settings.ragClassifierHistory ?? 3);
     const allPairs     = buildProsePairs(messages);
@@ -58,17 +60,19 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
     const currentChatFile = ctx.getCurrentChatFile?.() ?? '(unknown)';
     const lastAnchorUuid  = validUuids.at(-1) ?? '(none)';
-    log('RagHook', `fetch anchors=${validUuids.length} topK=${topK} topKLb=${topKLb} threshold=${noiseFloor}`);
+    const plotLbName = state._plotLorebookName ?? null;
+    log('RagHook', `fetch anchors=${validUuids.length} topK=${topK} topKLb=${topKLb} topKPlot=${topKPlot} threshold=${noiseFloor}`);
     log('RagHook', `scope chatFile=${currentChatFile} lastAnchor=${lastAnchorUuid}`);
 
     const t0 = performance.now();
 
-    const [chunkBatches, lbHitsRaw] = await Promise.all([
+    const [chunkBatches, lbHitsRaw, plotHitsRaw] = await Promise.all([
         Promise.all([
             chatQuery.trim() && topK   > 0 ? querySyncChunks(validUuids, chatQuery, topK,   signal) : [],
             lbQuery.trim()   && topKLb > 0 ? querySyncChunks(validUuids, lbQuery,   topKLb, signal) : [],
         ]),
-        topKLb > 0 && chatQuery.trim() ? queryLorebookEntries(validUuids, chatQuery, topKLb, signal) : [],
+        topKLb  > 0 && chatQuery.trim() ? queryLorebookEntries(validUuids, chatQuery, topKLb,   signal)           : [],
+        topKPlot > 0 && chatQuery.trim() && plotLbName ? queryLorebookEntries(validUuids, chatQuery, topKPlot, signal, plotLbName) : [],
     ]);
 
     log('RagHook', `all paths resolved in ${(performance.now() - t0).toFixed(0)}ms`);
@@ -103,7 +107,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     chunks = chunks.slice(0, topK);
 
     const activeUids = new Set((ctx.worldInfoActivated ?? []).map(e => e.uid));
-    const toActivate = lbHitsRaw
+    const toActivate = [...lbHitsRaw, ...plotHitsRaw]
         .filter(h => h.score >= noiseFloor && !activeUids.has(h.entryUid))
         .map(h => ({ world: h.lorebookName, uid: h.entryUid }));
 

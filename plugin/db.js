@@ -231,32 +231,34 @@ export async function upsertLbEntries(rows) {
     }
 }
 
-export async function queryLbEntries(validUuids, queryVec, topK, threshold = 0) {
+export async function queryLbEntries(validUuids, queryVec, topK, threshold = 0, lorebookName = null) {
     if (!_schemaReady || !validUuids.length) return [];
     const r = await _db.query(
         `SELECT lorebook_name, entry_uid, entry_keys, anchor_uuid,
                 1 - (embedding <=> $1::vector) AS score
          FROM lb_entries
          WHERE anchor_uuid = ANY($2)
+           AND ($4::text IS NULL OR lorebook_name = $4)
          ORDER BY embedding <=> $1::vector
          LIMIT $3`,
-        [toVec(queryVec), validUuids, topK]
+        [toVec(queryVec), validUuids, topK, lorebookName ?? null]
     );
     return r.rows.filter(row => row.score >= threshold);
 }
 
-export async function queryLbEntriesByKeyword(validUuids, queryText, topK) {
+export async function queryLbEntriesByKeyword(validUuids, queryText, topK, lorebookName = null) {
     if (!_schemaReady || !validUuids.length || !queryText?.trim()) return [];
     const r = await _db.query(
         `SELECT lorebook_name, entry_uid, entry_keys, anchor_uuid,
                 ts_rank_cd(fts_vector, plainto_tsquery('english', $1)) AS score
          FROM lb_entries
          WHERE anchor_uuid = ANY($2)
+           AND ($4::text IS NULL OR lorebook_name = $4)
            AND fts_vector IS NOT NULL
            AND fts_vector @@ plainto_tsquery('english', $1)
          ORDER BY score DESC
          LIMIT $3`,
-        [queryText, validUuids, topK]
+        [queryText, validUuids, topK, lorebookName ?? null]
     );
     return r.rows;
 }
