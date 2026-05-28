@@ -39,6 +39,7 @@ import { readDnaChain } from '../core/dna-chain.js';
 import { getCnzPromptManager } from '../core/summary-prompt.js';
 import { buildProsePairs, deriveLastCommittedPairs } from '../core/transcript.js';
 import { buildRagChunks } from '../rag/pipeline.js';
+import { cnzDefaultLbName } from '../rag/api.js';
 import { lbEnsureLorebook } from '../lorebook/api.js';
 import { deriveSuggestionsFromAnchorDiff, serialiseSuggestionsToFreeform } from '../lorebook/utils.js';
 import { patchCharacterWorld } from './commit.js';
@@ -159,7 +160,7 @@ export async function openReviewModal() {
     const char = ctx?.characters?.[ctx?.characterId];
     if (!char) { toastr.error('CNZ: No character selected.'); return; }
 
-    const lbName = getSettings().lorebookName || char.name;
+    const lbName = state._lorebookName || cnzDefaultLbName(char.avatar);
     if (state._lorebookName !== lbName || !state._lorebookData) {
         try {
             state._lorebookName  = lbName;
