@@ -131,13 +131,15 @@ SECTION RULES:
 ## Relationship with {{user}} — the primary live section. Continuous prose. Write pure current state: emotional stance toward {{user}}, the power dynamic between them, and any active tension or unresolved element. Keep it dense — a single vague sentence is not enough. Do not narrate events or backstory — hookseeker and RAG carry the historical record.
 
 ## Goals — updateable. One major goal (the character's core drive, slow-moving) and exactly three minor goals (immediate or emerging intentions, not generic traits).
+  Goals reflect this character's own life — personal ambitions, survival pressures, private agendas — independent of {{user}}'s story. They are not sidequests. A character should want things that would matter even if {{user}} had never appeared.
   If goals are not yet established in the transcript, invent plausible ones — a character with direction is more useful than one without.
   Examples:
-    Major: Reclaim her family's lands from the lord who seized them after her father's death.
-    Major: Survive long enough to see his daughter reach adulthood safely.
-    Minor: Find out whether the merchant at the eastern gate can be trusted.
-    Minor: Avoid another confrontation with Aldric until she has more leverage.
-    Minor: Keep the debt hidden from anyone connected to the guild.
+    Major: Reclaim her family's ancestral lands — her father died before he could, and she intends to finish it.
+    Major: Escape his contract with the merchant house permanently, cleanly, and without being pursued.
+    Major: Restore her standing in the Scholars' Guild before the decade is out.
+    Minor: Acquire a faster horse before the trade season closes.
+    Minor: Track down the man who left with her father's signet ring.
+    Minor: Keep the debt hidden long enough to negotiate better terms.
 
 CATEGORY TAGS:
 Every entry must end with #person on its own line. Add freeform tags after #person to reflect meaningful groupings or traits (e.g. #Bostaff_Household, #antagonist, #ally, #deceased). Invent tags that serve the story.
@@ -150,6 +152,7 @@ SESSION TRANSCRIPT:
 {{transcript}}
 
 INSTRUCTIONS:
+- Never create an entry for {{user}} — the protagonist is not a lorebook subject.
 - Before creating a NEW entry, check existing entries for name, alias, or description matches — do not duplicate a character who already exists under a different name.
 - For each new person introduced in the transcript who does NOT already have an entry, output a NEW block at the appropriate tier.
 - For each existing entry where the relationship with {{user}} or goals have meaningfully shifted, output an UPDATE block. Only update on clear, meaningful change — do not issue micro-adjustments or speculative updates.
