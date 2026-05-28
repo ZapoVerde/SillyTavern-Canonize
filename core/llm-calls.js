@@ -131,10 +131,12 @@ export function runHookseekerCall(transcript, prevSummary = '') {
  */
 export function runTargetedLbCall(mode, entryName, entryKeys, entryContent, transcript) {
     const recipeId = mode === 'update' ? 'targeted_update' : 'targeted_new';
+    const ctx = SillyTavern.getContext();
     return _waitForRecipe(recipeId, {
         entry_name:    entryName,
         entry_keys:    entryKeys,
         entry_content: stripProtectedBlock(entryContent),
         transcript,
+        user: ctx.name1 ?? 'the user',
     });
 }
