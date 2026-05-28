@@ -1,4 +1,12 @@
-This documentation is designed to introduce you to the narrative engine, explaining its core purposes, features, installation, and underlying mechanics in clear, plain language.
+Here is the completely updated and restructured `README.md`. 
+
+The beginning has been rewritten to establish the three core pillars of the extension—**Operational Economy**, **High Prompt Adherence**, and **Clutter-Free Semantic Context**—as the primary selling points, while integrating the new **People Curator** features and detailed configuration guide in the appendices.
+
+***
+
+# Canonize
+
+This documentation introduces you to the Canonize narrative engine, explaining its core purposes, features, installation, and underlying mechanics in clear, plain language.
 
 ---
 
@@ -6,21 +14,27 @@ This documentation is designed to introduce you to the narrative engine, explain
 
 As text conversations with artificial intelligence grow longer, they inevitably face a critical bottleneck: memory capacity. Standard AI models have a limited "context window" (the maximum amount of text they can remember at one time). 
 
-To prevent the AI from forgetting earlier events, chat applications must send the entire conversation history with every new message. This approach introduces two severe challenges:
-*   **Exponential Costs:** The financial cost of using AI is directly tied to the number of words (tokens) sent. As a chat grows to hundreds or thousands of messages, each reply becomes progressively and significantly more expensive.
-*   **Degraded Quality:** When an AI's memory is saturated with massive amounts of raw chat history, it begins to lose focus. It may forget key plot points, lose track of character intentions, hallucinate details, or become repetitive.
+To prevent the AI from forgetting earlier events, chat applications traditionally send the entire conversation history with every new message. This brute-force approach introduces three severe challenges: exponential financial costs, attention dilution (causing the AI to ignore its system prompt), and narrative repetition.
 
-This extension resolves these challenges. It acts as an automated assistant that dynamically archives older parts of your story into a highly organized, multi-tiered memory system. By keeping the active chat history sent to the AI very short (for example, only the last few messages), **your token usage and costs are kept to a small fraction of their original size, even in chats spanning thousands of messages.** 
+Canonize resolves these challenges by actively archiving older parts of your story into a highly organized, multi-tiered memory system. By keeping the active chat history sent to the AI relatively short, the extension optimizes your chat sessions across three core pillars:
 
-At the same time, the extension ensures the AI maintains a deep, high-fidelity awareness of your story's emotional history, established facts, and overall plot trajectory.
+#### 1. Operational Economy
+In standard long-context chats, your costs scale linearly. A chat of hundreds or thousands of messages means paying for a massive block of raw tokens on *every single turn*. Canonize maintains a short, sliding active window (for example, the last 8 to 10 turn pairs) [3]. Because the active context size remains small and predictable, **your token usage and costs are kept to a tiny fraction of their original size, even in chats spanning thousands of messages.** 
+
+#### 2. High Prompt Adherence
+Large Language Models suffer from an attention limitation known as the "Lost in the Middle" phenomenon [1]. When forced to read massive, unpruned chat logs, the model's attention is diluted [1]. It frequently ignores system prompts, overrides character card instructions, and lapses into repetitive prose or formatting errors. By keeping the active context window uncluttered, **your system cards, formatting presets, and instruction sets remain in high-attention zones, ensuring the AI maintains sharp adherence to its instructions [1].**
+
+#### 3. Clutter-Free, Relevant Context
+Instead of forcing the model to read exhaustive, chronological history, Canonize utilizes a hybrid retrieval model. It maintains situational awareness through a rolling narrative summary, tracks active character motivations through relationship goals, and queries an embedded vector database to inject past events **only when they are semantically relevant to what you are currently writing.** This eliminates narrative noise while ensuring the AI retains high-fidelity memory of established facts and plot threads.
 
 ---
 
 ### Key Features
 
 *   **Continuous Story Summarization:** The system reads new stretches of your chat and condenses them into a highly structured, rolling summary. This summary is placed directly into the AI's mind, keeping it constantly aware of where the characters are physically and emotionally, what they intend to do next, and what plot threads remain unresolved.
-*   **Dynamic World Knowledge Syncing:** The extension automatically extracts new facts, character descriptions, and locations as they are introduced in the story. It saves these details directly into standard SillyTavern lorebooks, ensuring they are only retrieved when relevant keywords are used in the active chat.
-*   **Archived Conversation Memory:** Older conversation blocks are sliced, summarized, and indexed in a searchable background database. When you send a message, the system searches this database for semantically relevant past events (such as an emotional conversation that happened 200 messages ago) and feeds those specific memories back to the AI just in time.
+*   **Dual-Lane Lorebook Synchronization:** Fact-extraction is split into two specialized AI processes: a **General Curator** for places, things, and concepts, and a dedicated **People Curator** for tracking character relationships, physical appearances, and individual character motivations. 
+*   **Dynamic World Knowledge Retrieval:** The extension automatically extracts new facts, character descriptions, and locations as they are introduced in the story. It saves these details directly into standard SillyTavern lorebooks, ensuring they are only retrieved when relevant keywords are used in the active chat.
+*   **Archived Conversation Memory (RAG):** Older conversation blocks are sliced, summarized, and indexed in a searchable background database. When you send a message, the system searches this database for semantically relevant past events (such as an emotional conversation that happened 200 messages ago) and feeds those specific memories back to the AI just in time.
 *   **Timeline Recovery and Branch Guard:** If you decide to swipe to a different response, delete messages, or switch between different chats, the extension automatically detects the change. It rolls back your summary, lorebook state, and background memory to match that exact moment in time, preventing your database from being corrupted by abandoned plot paths.
 *   **Clean, Complete Deactivation:** If you decide to turn the extension off, a single master switch halts all background schedulers, disconnects active database streams, removes the control buttons from your user interface, and purges all custom prompts from the AI's execution list, leaving your chat environment entirely pristine.
 
@@ -92,3 +106,132 @@ The chronology tracker solves this problem:
 *   It immediately alerts you and rolls back your active lorebook and narrative summary to match that specific historical marker. 
 
 This ensures your character's active world, relationship states, and memories always remain aligned with your current story timeline, providing a smooth and worry-free writing experience.
+
+---
+
+### Appendix A: The People Curator Feature
+
+Unlike static world info entries (like a town name or magic sword), characters are dynamic. They change their clothes, update their motivations, and form complex relationships with you over time. 
+
+To handle this, Canonize implements a **Dual-Lane Lorebook Synchronization** model. When a synchronization runs, two separate prompts are processed:
+1.  **The General Curator Lane:** Extracts updates and creates records for `#place`, `#thing`, and `#concept` categories. It ignores people entirely to avoid formatting noise.
+2.  **The People Curator Lane:** Deals exclusively with `#person` categories. It evaluates the dialogue, actions, and subtext of the recent conversation to update character profiles.
+
+#### 1. Category Tagging (MECE System)
+To prevent organizational chaos, Canonize assigns a single category tag to every single lorebook entry:
+*   `#place` — A location, building, geographic feature, or region.
+*   `#thing` — An object, item, creature, or physical material.
+*   `#concept` — A faction, magic system, organization, or historical event.
+*   `#person` — A character or individual.
+
+Additional tags (like `#deceased`, `#King's_Household`, or `#ally`) can be added freely by the AI, but the core category tag is strictly enforced to ensure entries are routed to the correct lane.
+
+#### 2. Surface NPCs vs. Full Treatment Tiers
+The People Curator automatically tiers characters based on how prominent they are in the story:
+*   **Surface NPC:** For peripheral characters who are mentioned or appear briefly but have no major dialogue or dynamic relationship. The Curator writes a single paragraph describing their identity, role, and immediate physical appearance.
+*   **Full Treatment:** Triggered automatically when a character recurs, engages in meaningful dialogue, or develops a closer relationship with you. The Curator upgrades the entry into four distinct, structural subheadings:
+    *   `## Appearance` — Physically inherent traits (height, natural hair color, scars, facial features) that do not change. Clothes, current injuries, and temporary hairstyles are excluded.
+    *   `## Personality` — Evaluated on 3 to 5 polar spectrum axes (e.g., *Warm ↔ Guarded: Leans guarded—slow to trust, but fiercely loyal once earned*).
+    *   `## Relationship with {{user}}` — A paragraph of continuous prose focusing purely on their *current* emotional stance, the power dynamic, active tensions, or trust level. It avoids narrating past events.
+    *   `## Goals` — Tracks character agency. It defines **one major goal** (core long-term drive) and **exactly three minor goals** (immediate, short-term plans or concerns). 
+
+#### 3. Automatic Upgrades & Duplicate Merging
+*   **Dynamic Upgrades:** If a Surface NPC undergoes a meaningful interaction in the chat, the People Curator automatically rewrites them into the structured "Full Treatment" format on the next sync.
+*   **Conflict Resolution:** If the General Curator detects a new name and tentatively creates a basic record for them, the sync pipeline's *Reconciliation Step* catches this, scraps the redundant general entry, and hands the character over to the People Curator to draft a proper `#person` profile.
+*   **Duplicate Merging:** If the AI inadvertently creates two separate cards for the same character under different names (like an alias), it will automatically merge their content into the primary entry and tag the redundant entry with `**dup** — duplicate of [Name]` so you can easily clean it up.
+
+---
+
+### Appendix B: Settings and Configuration Guide
+
+You can access the settings panel by opening the Extensions Drawer in SillyTavern and locating the **Canonize** section.
+
+#### 1. General Panel
+*   **Enable Canonize:** Master switch. Turning this off cleans your prompt stack, detaches all background listeners, and removes the toolbar button.
+
+#### 2. Profile Management
+Canonize supports multiple setting profiles (e.g., a "Low Cost" profile for cheap models, or a "High Fidelity" profile for complex roleplays):
+*   **Profile Dropdown:** Select which profile is currently active.
+*   **Save Profile (Floppy Disk icon):** Saves your current settings changes to the active profile. An asterisk (`*`) next to the profile name indicates unsaved changes.
+*   **Add Profile (+ icon):** Create a new profile cloned from your current settings.
+*   **Rename Profile (Pencil icon):** Renames the active profile.
+*   **Delete Profile (Trash icon):** Deletes the active profile.
+
+#### 3. CNZ Timing Settings
+*   **Live Context Buffer:** The number of recent turn pairs (1 user + all AI replies = 1 pair) that are left uncompressed [3]. These are never summarized, allowing the AI to read your immediate back-and-forth in full detail. Default is `5`.
+*   **Pairs Between Updates:** The interval of new conversation pairs that must pass before a sync cycle is triggered. Also defines your synchronization window size. Default is `20`.
+*   **Auto-Sync:** If checked, the sync runs automatically in the background when the required number of pairs are reached.
+*   **Gap Snooze:** If you dismiss an automatic sync warning, the system will silence further notifications for this number of turns. Default is `5`.
+*   **Summary Horizon:** The amount of conversation history fed to the AI when updating your rolling Narrative summary. Default is `40`.
+*   **Lorebook Sync Start:** 
+    *   *From sync point:* The AI only scans the newly added conversation block since the last save point.
+    *   *From latest turn:* The AI scans the entire horizon. This is slower and more expensive but helps catch missed details.
+
+#### 4. Connections & Prompts
+*   **Summary Connection Profile:** Select a specific Connection Manager profile to run background summarization and lorebook syncs. This allows you to offload background tasks to a cheaper model, leaving your main chat model unburdened. Leaving this blank defaults to your currently selected chat model.
+*   **Edit Prompts:** Opens a prompt editor for your *Summary*, *Lorebook*, *People*, and *Targeted* prompts.
+
+#### 5. Narrative Memory (RAG) Settings
+*   **Enable Narrative Memory (RAG):** Turns on semantic vector storage. Older parts of your chat will be archived in the server database.
+*   **RAG Contents:**
+    *   *Summary + Full Content:* Retrieves the AI's summarized header of an event plus the actual dialogue. Recommended.
+    *   *Summary Only:* Retrieves only the brief past tense summary of the event.
+    *   *Full Content Only:* Retrieves the raw dialogue text only.
+*   **Summary Source:**
+    *   *Defined Here:* Uses the custom classifier prompt below to generate semantic headers for each chunk.
+    *   *Qvink:* Reads summary headers from messages containing `qvink_memory` metadata if you migrate from that extension.
+*   **RAG Connection Profile:** The model profile used specifically for chunk classification.
+*   **Chunk Size (pairs):** How many turn-pairs are compressed into each RAG archive block. Default is `2`.
+*   **Chunk Overlap:** Adds overlapping turn-pairs between adjacent chunks to ensure transition scenes aren't cut in half.
+*   **Simultaneous Calls:** The maximum number of background AI classification calls allowed to run at once. 
+*   **Embedding Source / Model:** Select the provider (OpenRouter, OpenAI, local Ollama, etc.) and model name used to calculate semantic search vectors.
+
+#### 6. Admin and Utilities
+*   **Setup Symlink / Plugin Linked:** Links the SillyTavern plugin folder to the extension's folder so updates happen automatically. 
+*   **Verbose Logging:** Outputs detailed background execution logs to your browser console.
+*   **Inspect Chain:** Opens the **DNA Chain Inspector** to view your save-state timeline.
+*   **Rebuild RAG:** Scans your chat history and re-indexes all historical chunks into the vector database. Useful if your local database was cleared or corrupted.
+*   **Purge RAG:** Clears the vector database for the active character.
+
+---
+
+### Appendix C: How to Use the Review Wizard
+
+While Canonize works quietly in the background, it never writes permanently to your character's world-state without your consent. When a synchronization is triggered (either automatically or by clicking the **Run Canonize** book icon in your extensions toolbar), the **Review Wizard** appears.
+
+The wizard guides you through a 4-step check:
+
+#### Step 1: Narrative Hooks Workshop
+This step lets you review the updated rolling summary of your story.
+*   **Workshop Tab:** Shows a comparison. Words added by the new sync are highlighted in green; deleted/edited words are highlighted in red. You can edit this text box directly.
+*   **New Tab:** Shows the raw summary output generated by the AI this cycle.
+*   **Old Tab:** Shows the summary as it was *before* this sync started.
+*   **Regenerate Button:** If the AI missed an important plot point, you can rewrite the summary or hit Regenerate to let the AI take another pass.
+
+#### Step 2: Lorebook Workshop
+This is where you review and approve updates to your world knowledge database.
+*   **Ingester Tab:** Displays suggestions one-by-one. The dropdown at the top lists all suggested modifications, marked with icons:
+    *   `✓` (Applied/Approved)
+    *   `✗` (Rejected)
+    *   `✖` (Deleted)
+*   **The Editor Fields:** You can manually edit the entry's Name, Search Keys, and Content box.
+*   **Verdict Buttons:**
+    *   `Apply` (Approve): Confirms the suggestion is ready to save.
+    *   `Reject`: Reverts the entry to its pre-sync state (or prevents creation if it was new).
+    *   `Delete`: Marks the selected entry for deletion from your lorebook entirely.
+    *   `Latest` and `Prev`: Instantly load either the raw AI suggestion or the previous disk copy into your editor.
+    *   `Regenerate`: Runs a targeted AI query specifically for this individual card.
+*   **Targeted Concept Generator (Lane 2):** If you want to force the AI to write a brand new entry for a term immediately, type the name of the concept in the text box at the bottom and click *Generate*.
+*   **Freeform Tab:** Displays all approved suggestions merged into a single scrollable text block for rapid proofreading.
+
+#### Step 3: Narrative Memory (RAG) Workshop
+This step shows you how your older messages are being sliced and summarized for long-term database storage.
+*   **Sectioned Tab:** Displays your text split into individual chunks. Each chunk has an editable title box containing the AI-generated classification (e.g., *"The group discussed plans to breach the old tower"*). You can edit these titles manually or click the refresh icon next to a card to re-classify it.
+*   **Raw Tab:** Shows the final combined document exactly as it will be formatted inside the background search database.
+
+#### Step 4: Finalize & Commit
+The final summary step. It lists:
+*   A preview of your updated Narrative Hooks.
+*   The total number of lorebook entries that will be updated or created.
+*   The number of memory chunks about to be written to your database.
+*   **Confirm:** Click this to execute the saves. A list of receipts will output showing you exactly when your prompts, files, and chat logs are successfully written and locked into the chronology chain.

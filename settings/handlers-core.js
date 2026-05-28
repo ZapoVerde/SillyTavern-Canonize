@@ -67,6 +67,10 @@ export function bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refres
         getSettings().autoAdvanceMask = $(this).prop('checked');
         saveSettingsDebounced(); updateDirtyIndicator();
     });
+    $('#cnz-set-enable-people-sync').on('change', function () {
+        getSettings().enablePeopleSync = $(this).prop('checked');
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
     $('#cnz-set-auto-sync').on('change', function () {
         getSettings().autoSync = $(this).prop('checked');
         saveSettingsDebounced(); updateDirtyIndicator();
