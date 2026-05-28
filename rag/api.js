@@ -10,7 +10,7 @@
  *
  * @api-declaration
  * uploadRagFile, cnzDeleteFile, registerCharacterAttachment,
- * getCharacterAttachments, cnzFileName, cnzAvatarKey
+ * getCharacterAttachments, cnzFileName, cnzAvatarKey, cnzDefaultLbName
  *
  * @contract
  *   assertions:
@@ -101,6 +101,18 @@ export function getCharacterAttachments(avatarKey) {
  */
 export function cnzAvatarKey(avatarFilename) {
     return avatarFilename.replace(/[^a-zA-Z0-9_\-]/g, '_');
+}
+
+/**
+ * Returns the CNZ-owned default lorebook name for a character.
+ * Only used as a fallback when no lorebook name has been established for the
+ * session (i.e. state._lorebookName is empty). Existing sessions read their
+ * lorebook name from the anchor snapshot, so this never fires for them.
+ * @param {string} avatarFilename  Raw avatar filename from char.avatar.
+ * @returns {string}
+ */
+export function cnzDefaultLbName(avatarFilename) {
+    return `cnz_${cnzAvatarKey(avatarFilename)}`;
 }
 
 /**

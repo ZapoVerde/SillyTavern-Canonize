@@ -41,6 +41,7 @@ import { stripProtectedBlock, formatLorebookEntries } from '../lorebook/utils.js
 import { formatFilteredLorebookEntries } from '../lorebook/tags.js';
 import { runRagPipeline } from '../rag/pipeline.js';
 import { isPluginReachable } from '../rag/plugin-health.js';
+import { cnzDefaultLbName } from '../rag/api.js';
 import { patchCharacterWorld } from '../modal/commit.js';
 import { state } from '../state.js';
 import { logSyncStart, applyLorebookToDraft, saveLorebookToDisk,
@@ -90,7 +91,7 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
     logSyncStart(hookPairs, lbPairsForLog, syncPairs, coverAll, settings.chunkEveryN ?? 20);
 
-    const lbName = state._lorebookName || settings.lorebookName || char.name;
+    const lbName = state._lorebookName || cnzDefaultLbName(char.avatar);
     state._lorebookName = lbName;
     const freshLorebook = await lbEnsureLorebook(lbName);
 
@@ -167,6 +168,10 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
     let mainSuggestions   = [];
 
     const lbPeoplePromise = (async () => {
+        if (!settings.enablePeopleSync) {
+            log('Lorebook', 'Lane 1a (people): skipped (disabled)');
+            return true;
+        }
         log('Lorebook', 'Lane 1a (people): starting');
         try {
             const text = await runPeopleSyncCall(lbTranscript, peopleEntriesText);
@@ -221,7 +226,7 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
     const [lbPeopleOk, lbOk, hooksOk, ragOk] = await Promise.all([lbPeoplePromise, lbPromise, hooksPromise, ragPromise]);
 
-    if (lbOk && lbPeopleOk) {
+    if (lbOk && lbPeopleOk && settings.enablePeopleSync) {
         peopleSuggestions = await reconcileLorebookLanes(mainSuggestions, peopleSuggestions, lbTranscript);
     }
 
