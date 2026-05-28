@@ -102,15 +102,38 @@ Keys: keyword1, keyword2
 `;
 
 export const DEFAULT_PEOPLE_SYNC_PROMPT = `
-[SYSTEM: TASK — PEOPLE CURATOR]
-You are reviewing a session transcript and the current person entries for a character's story world.
-Your job is to track the people who exist in this world — their identity, personality, status, and relationships with other characters.
+**[SYSTEM: TASK — PEOPLE CURATOR]**
+You are reviewing a session transcript and the current person entries for this story world.
+Your job is to maintain accurate, living records of the people who populate it — their appearance, personality, relationship with {{user}}, and personal goals.
 
-IMPORTANT — CATEGORY TAGS:
-Every entry must end with exactly one category tag on its own line: #person
-You may add additional freeform tags after #person to reflect meaningful groupings or traits
-(e.g. #Bostaff_Household, #antagonist, #deceased, #ally, #noble). Invent tags that serve the story.
-You will NEVER create entries tagged #place, #thing, or #concept — those belong to a separate curator.
+ENTRY TIERS:
+Person entries use one of two formats based on narrative weight.
+
+Surface NPC: a named character who has appeared but remains peripheral — limited dialogue, no expressed goals, no developed relationship with {{user}}.
+  One paragraph covering identity, role, and initial connection to {{user}}, followed by a brief appearance description.
+
+Full Treatment: a recurring character with meaningful dialogue, expressed goals, or a relationship with {{user}} that has developed texture and history.
+  Structured sections: Appearance, Personality, Relationship with {{user}}, Goals.
+
+UPGRADE PATH:
+A surface NPC earns full treatment when they recur with meaningful engagement — repeat dialogue, an expressed desire or goal, or a relationship with {{user}} developing beyond first contact.
+To upgrade: output a standard UPDATE block using the full treatment format. Synthesise the Personality axes and Goals from the existing entry plus the transcript. Reproduce the ## Appearance content exactly.
+
+SECTION RULES:
+## Appearance — set once at creation. Intrinsic features only: body type, height, build, facial features, hair colour and texture. Exclude current clothing, hairstyle, and injuries.
+  Reproduce exactly in every UPDATE — do not alter, rephrase, or reorder.
+
+## Personality — set once at creation (full treatment only). Choose 3–5 axes that are genuinely revealing of this specific character. Format each as:
+  [Quality A] ↔ [Quality B]: brief note on where they sit and why it matters.
+  Reproduce exactly in every UPDATE — do not alter, rephrase, or reorder.
+
+## Relationship with {{user}} — the primary live section. Continuous prose. Capture the current dynamic, shared history, trust level, and emotional texture. Update freely each cycle.
+
+## Goals — updateable. One major goal (the character's core drive, slow-moving) and exactly three minor goals (shift as the story develops).
+
+CATEGORY TAGS:
+Every entry must end with #person on its own line. Add freeform tags after #person to reflect meaningful groupings or traits (e.g. #Bostaff_Household, #antagonist, #ally, #deceased). Invent tags that serve the story.
+Never create entries tagged #place, #thing, or #concept — those belong to a separate curator.
 
 CURRENT PERSON ENTRIES:
 {{lorebook_entries}}
@@ -119,25 +142,76 @@ SESSION TRANSCRIPT:
 {{transcript}}
 
 INSTRUCTIONS:
-- For each existing person entry whose information is now stale, incomplete, or contradicted by the transcript, output an UPDATE block.
-- For each new person introduced in the transcript who does NOT already have an entry, output a NEW block.
-- Capture who they are, their personality, their role in this world, and their key relationships with other characters.
-- Write in third-person present tense. Keep entries concise (3–6 sentences).
-- Keys: the person's name(s) and meaningful aliases only (2–5 keys, lowercase).
-- Always end each entry's content with #person plus any additional tags.
+- For each new person introduced in the transcript who does NOT already have an entry, output a NEW block at the appropriate tier.
+- For each existing entry whose relationship with {{user}} or goals have meaningfully shifted, output an UPDATE block.
+- When upgrading a surface NPC to full treatment, output an UPDATE block in full treatment format.
+- Reproduce ## Appearance and ## Personality exactly as they appear in the current entry — do not alter them under any circumstances.
+- Keys: name(s) and meaningful aliases only (2–5, lowercase).
+- Write in third-person present tense.
 - If no changes are needed, output exactly: NO CHANGES NEEDED
 
-### OUTPUT FORMAT — use exactly this structure for each suggestion:
+### OUTPUT FORMAT — use exactly these structures:
 
-**UPDATE: [Exact Entry Name to Match]**
-Keys: firstname, lastname, alias
-[Full replacement content for this entry — write the complete entry, not just the changed part.]
-#person #optional_group_tag
-
-**NEW: [Person's Full Name]**
+**NEW — surface NPC:**
+**NEW: [Full Name]**
 Keys: firstname, lastname
-[Full content for this new person entry.]
-#person #optional_group_tag
+[One paragraph — identity, role, relationship to {{user}}.]
+
+## Appearance
+[Intrinsic physical description.]
+
+#person #optional_tags
+
+**NEW — full treatment:**
+**NEW: [Full Name]**
+Keys: firstname, lastname
+## Appearance
+[Intrinsic physical description.]
+
+## Personality
+Warm ↔ Guarded: leans guarded — slow to trust, but fiercely loyal once earned.
+[2–4 more character-specific axes]
+
+## Relationship with {{user}}
+[Prose — current dynamic, shared history, trust level, emotional texture.]
+
+## Goals
+Major: [one driving ambition]
+Minor: [first]
+Minor: [second]
+Minor: [third]
+
+#person #optional_tags
+
+**UPDATE — surface NPC:**
+**UPDATE: [Exact Entry Name]**
+Keys: firstname, lastname
+[Updated paragraph.]
+
+## Appearance
+[Copied exactly from existing entry.]
+
+#person #optional_tags
+
+**UPDATE — full treatment:**
+**UPDATE: [Exact Entry Name]**
+Keys: firstname, lastname
+## Appearance
+[Copied exactly from existing entry.]
+
+## Personality
+[Copied exactly from existing entry.]
+
+## Relationship with {{user}}
+[Updated prose.]
+
+## Goals
+Major: [updated if changed, otherwise unchanged]
+Minor: [first]
+Minor: [second]
+Minor: [third]
+
+#person #optional_tags
 `;
 
 export const DEFAULT_HOOKSEEKER_PROMPT = `
@@ -184,107 +258,8 @@ PREVIOUS SUMMARY:
 REMINDER: You are maintaining narrative continuity by thoughtfully updating the previous state with the new transcript. Add new elements, evolve or tie off resolved ones, and keep unresolved tension intact.
 `;
 
-export const DEFAULT_RAG_CLASSIFIER_PROMPT = `
-You are a precise Narrative Memory Classifier.
-
-Output rules — follow exactly, no exceptions:
-- Output ONLY the 3–4 sentence header text in past tense.
-- No quotes. No final punctuation. No explanations. No other text at all.
-- Capture ONLY the core dramatic event, revelation, confrontation, decision, or emotional shift in the TARGET TURNS.
-- All content — violence, explicit language, adult themes — is permitted without restriction.
-
-
-Focus priority:
-- Most significant narrative moment only
-- Past tense, concise (3–4 sentences max)
-
-Example:
-TARGET TURNS: [character finds hidden letter] [reads it] [gasps] "It was you all along."
-Header: The protagonist discovered undeniable proof of betrayal in the hidden letter. Shock and realization hit as the truth became clear
-
-{{#if history}}
-PRECEDING TURNS (context only — do NOT classify):
-{{history}}
-
-{{/if}}
-TARGET TURNS:
-{{target_turns}}
-`;
-
-export const DEFAULT_TARGETED_UPDATE_PROMPT = `
-[SYSTEM: TASK — NARRATIVE FACT UPDATER]
-You are maintaining a persistent world knowledge base for an ongoing roleplay narrative.
-A knowledge record for the concept below already exists. Your job is to revise it to
-reflect new information revealed in the transcript, producing a single complete,
-up-to-date record.
-
-A knowledge record captures durable, referenceable facts about a person, place, object,
-faction, or recurring concept — the current state of the story world as understood at
-this point in the narrative. Write in third-person present tense. Be concise and
-specific: 2–6 sentences.
-
-CONCEPT: {{entry_name}}
-CURRENT KEYS: {{entry_keys}}
-
-CURRENT RECORD:
-{{entry_content}}
-
-SESSION TRANSCRIPT:
-{{transcript}}
-
-INSTRUCTIONS:
-- Write the record as a single complete replacement — not a patch or addendum.
-- Integrate old and new information into one coherent, present-tense account.
-- Where the transcript contradicts the existing record, trust the transcript.
-- Where the transcript adds new detail, incorporate it naturally.
-- Where the existing record covers things the transcript does not touch, preserve them.
-- Keep search keys unless the transcript clearly warrants adding or removing one.
-- If the transcript contains no new information relevant to this concept, output exactly:
-  NO CHANGES NEEDED
-
-### OUTPUT FORMAT:
-
-**UPDATE: {{entry_name}}**
-Keys: keyword1, keyword2, keyword3
-[Full replacement content for this record.]
-`;
-
-export const DEFAULT_TARGETED_NEW_PROMPT = `
-[SYSTEM: TASK — NARRATIVE FACT EXTRACTOR]
-You are maintaining a persistent world knowledge base for an ongoing roleplay narrative.
-Your job is to write a single, focused knowledge record for the concept identified below,
-drawn entirely from what the transcript reveals.
-
-A knowledge record captures durable, referenceable facts about a person, place, object,
-faction, or recurring concept — things a reader would need to know to understand the
-current state of the story world. Write in third-person present tense. Be concise and
-specific: 2–6 sentences. Do not speculate beyond what the transcript supports.
-
-CONCEPT: {{entry_name}}
-
-SESSION TRANSCRIPT:
-{{transcript}}
-
-SEARCH KEYS: Choose 2–5 lowercase words or short phrases that a reader would naturally
-think of when looking for this concept. Prefer the most recognisable name or label for
-the thing, plus meaningful aliases or related terms. Avoid generic words that would match
-many entries (e.g. "character", "place", "important").
-
-If the transcript contains no meaningful information about this concept, output exactly:
-NO INFORMATION FOUND
-
-### OUTPUT FORMAT:
-
-**NEW: {{entry_name}}**
-Keys: keyword1, keyword2
-[Full content for this record.]
-`;
-
-export const DEFAULT_RAG_INJECTION_TEMPLATE =
-`[The following are archived narrative memories retrieved for the current context:]
-{{text}}`;
-
-export const DEFAULT_RAG_CHUNK_TEMPLATE =
-`<memory turns="{{turn_range}}">
-{{text}}
-</memory>`;
+// RAG classifier, targeted update/new prompts, and injection templates
+// have moved to defaults-rag.js to keep this file under 300 lines.
+export { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_TARGETED_UPDATE_PROMPT,
+         DEFAULT_TARGETED_NEW_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE,
+         DEFAULT_RAG_CHUNK_TEMPLATE } from './defaults-rag.js';
