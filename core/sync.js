@@ -37,14 +37,14 @@ import { runLorebookSyncCall, runPeopleSyncCall, runHookseekerCall } from './llm
 import { readDnaChain } from './dna-chain.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
 import { lbEnsureLorebook } from '../lorebook/api.js';
-import { stripProtectedBlock } from '../lorebook/utils.js';
+import { stripProtectedBlock, formatLorebookEntries } from '../lorebook/utils.js';
 import { formatFilteredLorebookEntries } from '../lorebook/tags.js';
 import { runRagPipeline } from '../rag/pipeline.js';
 import { isPluginReachable } from '../rag/plugin-health.js';
 import { patchCharacterWorld } from '../modal/commit.js';
 import { state } from '../state.js';
 import { logSyncStart, applyLorebookToDraft, saveLorebookToDisk,
-         processHooksUpdate, commitDnaAnchor } from './sync-helpers.js';
+         reconcileLorebookLanes, processHooksUpdate, commitDnaAnchor } from './sync-helpers.js';
 
 // Re-export pure helpers so existing callers importing from sync.js don't break.
 export { computeSyncWindow, deriveLastCommittedPairs } from './transcript.js';
@@ -157,8 +157,11 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
         });
 
     // Lane entry text is pre-formatted here so both LLM calls can start immediately.
+    // General lane receives all entries — it tags accurately across all four categories.
+    // People lane receives only pre-sync #person entries — the reconciliation step below
+    // handles any entries the general lane newly promotes to #person this cycle.
     const peopleEntriesText = formatFilteredLorebookEntries(state._lorebookData, '#person', false);
-    const mainEntriesText   = formatFilteredLorebookEntries(state._lorebookData, '#person', true);
+    const mainEntriesText   = formatLorebookEntries(state._lorebookData);
 
     let peopleSuggestions = [];
     let mainSuggestions   = [];
@@ -218,7 +221,11 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
     const [lbPeopleOk, lbOk, hooksOk, ragOk] = await Promise.all([lbPeoplePromise, lbPromise, hooksPromise, ragPromise]);
 
-    // Single coordinated disk write after both LB lanes complete.
+    if (lbOk && lbPeopleOk) {
+        peopleSuggestions = await reconcileLorebookLanes(mainSuggestions, peopleSuggestions, lbTranscript);
+    }
+
+    // Single coordinated disk write after all LB work is complete.
     const allSuggestions = [...peopleSuggestions, ...mainSuggestions];
     let lbSaveOk = false;
     try {
