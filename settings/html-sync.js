@@ -93,6 +93,12 @@ export function buildSyncSectionHTML(s, escapeHtml, profileOptions) {
             <label class="cnz-label">Lorebook Sync Prompt</label>
             <button id="cnz-edit-lorebook-prompt" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
           </div>
+          <div class="cnz-settings-row">
+            <label class="cnz-checkbox-label">
+              <input id="cnz-set-enable-people-sync" type="checkbox" ${(s.enablePeopleSync ?? true) ? 'checked' : ''}>
+              <span>People Curator ${tip('When enabled, a dedicated AI pass tracks and updates character (#person) entries. Disable to treat your character entries as a manual source of truth — CNZ will sync world facts but never touch person entries.')}</span>
+            </label>
+          </div>
           <div class="cnz-setting-row">
             <label class="cnz-label">People Sync Prompt</label>
             <button id="cnz-edit-people-prompt" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>

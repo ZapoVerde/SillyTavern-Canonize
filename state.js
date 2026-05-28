@@ -58,6 +58,7 @@ export const PROFILE_DEFAULTS = Object.freeze({
     autoSync:                 true,
     profileId:                null,
     // Summary / Lorebook
+    enablePeopleSync:         true,
     liveContextBuffer:        5,
     lorebookSyncStart:        'syncPoint',   // 'syncPoint' | 'latestTurn'
     lorebookSyncPrompt:       DEFAULT_LOREBOOK_SYNC_PROMPT,
