@@ -132,7 +132,5 @@ Example form:
 
                Every source file does exactly one thing. If a file is doing two things, it should be two files.
 
-               300 lines is the budget, not a hard cutoff. Landing at 302 is fine. Landing at 340 is a signal to start thinking about a split. The budget exists to enforce good decomposition — not to be gamed by trimming blank lines, compressing expressions, or making code cryptically terse. If you find yourself doing any of that to stay under 300, you are solving the wrong problem.
-
-               When a file is meaningfully over budget, split along a natural fault line — by domain, by responsibility, or by call site. Do not shed blank lines or compress comments to squeeze under the limit.
+               When a file approaches 300 lines, start looking for a natural split — by domain, by responsibility, or by call site. Do not trim blank lines, compress expressions, or make code cryptically terse to stay under any number. That is the wrong problem to solve. If adding a feature pushes a file to 305 or 310, that is fine — just a reminder that a split may be coming.
                
