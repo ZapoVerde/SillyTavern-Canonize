@@ -128,11 +128,11 @@ Example form:
 
                ---
 
-               ## 11. Every File Has One Purpose and a Hard Size Limit
+               ## 11. Every File Has One Purpose and a Size Budget
 
                Every source file does exactly one thing. If a file is doing two things, it should be two files.
 
-               Any file touched in a session must be under 300 lines of code when the session ends. A file that cannot be brought under 300 lines without losing coherence is a file that has not been decomposed correctly. Split it first, then make the change.
+               300 lines is the budget, not a hard cutoff. Landing at 302 is fine. Landing at 340 is a signal to start thinking about a split. The budget exists to enforce good decomposition — not to be gamed by trimming blank lines, compressing expressions, or making code cryptically terse. If you find yourself doing any of that to stay under 300, you are solving the wrong problem.
 
-               When a file approaches the limit: split along a natural fault line — by domain, by responsibility, or by call site. Do not shed blank lines, compress comments, or make code cryptically terse to squeeze under the limit. The limit exists to enforce good decomposition, not to reward surgical trimming.
+               When a file is meaningfully over budget, split along a natural fault line — by domain, by responsibility, or by call site. Do not shed blank lines or compress comments to squeeze under the limit.
                
