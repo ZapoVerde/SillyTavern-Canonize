@@ -90,7 +90,21 @@ export function registerRoutes(router) {
             ]);
             console.log(`[cnz] query-chunks hybrid: content=${contentRows.length} header=${headerRows.length} keyword=${kwRows.length} → rrf topK=${topK}`);
             const merged = rrf({ content: contentRows, header: headerRows, keyword: kwRows }, topK);
-            return res.json(merged.map(r => ({ text: r.content, header: r.header, turnRange: r.turn_range, pairStart: r.pair_start, pairEnd: r.pair_end, score: Number(r.score), chatFile: r.chat_file ?? null, anchorUuid: r.anchor_uuid })));
+            const cSet = new Set(contentRows.map(r => r.content));
+            const hSet = new Set(headerRows.map(r => r.content));
+            const kSet = new Set(kwRows.map(r => r.content));
+            const srcSummary = {};
+            for (const r of merged) {
+                const key = [cSet.has(r.content) && 'vec', hSet.has(r.content) && 'hdr', kSet.has(r.content) && 'kw'].filter(Boolean).join('+') || '?';
+                srcSummary[key] = (srcSummary[key] || 0) + 1;
+            }
+            console.log(`[cnz] query-chunks merged=${merged.length} sources=${JSON.stringify(srcSummary)}`);
+            return res.json(merged.map(r => ({
+                text: r.content, header: r.header, turnRange: r.turn_range,
+                pairStart: r.pair_start, pairEnd: r.pair_end, score: Number(r.score),
+                chatFile: r.chat_file ?? null, anchorUuid: r.anchor_uuid,
+                sources: [cSet.has(r.content) && 'vec', hSet.has(r.content) && 'hdr', kSet.has(r.content) && 'kw'].filter(Boolean),
+            })));
         } catch (err) {
             console.error('[cnz] query-chunks:', err);
             return res.status(500).json({ error: err.message });

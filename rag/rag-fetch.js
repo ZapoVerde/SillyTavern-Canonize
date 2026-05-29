@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/rag/rag-fetch.js
- * @stamp {"utc":"2026-05-23T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-29T00:00:00.000Z"}
  * @architectural-role IO Wrapper — RAG retrieval execution
  * @description
  * Executes all three RAG paths (chat-context chunks, lorebook-context chunks,
@@ -99,6 +99,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
             chunks.push(r);
         }
     }
+    log('RagHook', `score filter: ${allChunkRows.length} raw → ${chunks.length} above noiseFloor=${noiseFloor}`);
 
     const totalPairs = allPairs.length;
     if (totalPairs > 0) {
@@ -110,6 +111,11 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     }
     chunks.sort((a, b) => b.score - a.score);
     chunks = chunks.slice(0, topK);
+    if (chunks.length) {
+        const srcMap = {};
+        for (const c of chunks) for (const s of (c.sources ?? [])) srcMap[s] = (srcMap[s] || 0) + 1;
+        log('RagHook', `final chunks=${chunks.length} sources=${JSON.stringify(srcMap)} scores=${chunks.at(-1).score.toFixed(3)}–${chunks[0].score.toFixed(3)}`);
+    }
 
     const activeUids = new Set((ctx.worldInfoActivated ?? []).map(e => e.uid));
     const toActivate = [...lbHitsRaw, ...plotHitsRaw]

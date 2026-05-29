@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/sync.js
- * @stamp {"utc":"2026-05-27T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-29T00:00:00.000Z"}
  * @version 1.1.0
  * @architectural-role Orchestrator
  * @description
@@ -34,10 +34,9 @@ import { setSyncInProgress } from '../scheduler.js';
 import { getSettings } from './settings.js';
 import { buildProsePairs, buildTranscript, computeSyncWindow } from './transcript.js';
 import { runLorebookSyncCall, runPeopleSyncCall, runHookseekerCall } from './llm-calls.js';
-import { readDnaChain } from './dna-chain.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
 import { lbEnsureLorebook } from '../lorebook/api.js';
-import { stripProtectedBlock, formatLorebookEntries } from '../lorebook/utils.js';
+import { stripProtectedBlock } from '../lorebook/utils.js';
 import { formatFilteredLorebookEntries } from '../lorebook/tags.js';
 import { runRagPipeline } from '../rag/pipeline.js';
 import { isPluginReachable } from '../rag/plugin-health.js';
@@ -162,11 +161,11 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
         });
 
     // Lane entry text is pre-formatted here so both LLM calls can start immediately.
-    // General lane receives all entries — it tags accurately across all four categories.
+    // General lane receives only non-#person entries (plus untagged entries for tag correction).
     // People lane receives only pre-sync #person entries — the reconciliation step below
     // handles any entries the general lane newly promotes to #person this cycle.
     const peopleEntriesText = formatFilteredLorebookEntries(state._lorebookData, '#person', false);
-    const mainEntriesText   = formatLorebookEntries(state._lorebookData);
+    const mainEntriesText   = formatFilteredLorebookEntries(state._lorebookData, '#person', true);
 
     let peopleSuggestions = [];
     let mainSuggestions   = [];
