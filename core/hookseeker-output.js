@@ -21,7 +21,7 @@
  */
 
 /**
- * @typedef {{ name: string, keys: string[], content: string }} PlotEntry
+ * @typedef {{ name: string, content: string }} PlotEntry
  */
 
 /**
@@ -78,20 +78,11 @@ function _parseEntryBlocks(text) {
         const name = headerMatch[1].trim().replace(/\*+$/, '').trim();
         if (!name) continue;
 
-        const rest      = part.slice(headerMatch[0].length);
-        const keysMatch = rest.match(/^Keys:\s*(.+)$/im);
-        const keys      = keysMatch
-            ? keysMatch[1].split(',').map(k => k.trim()).filter(Boolean)
-            : [];
-
-        const afterKeys = keysMatch
-            ? rest.slice(rest.indexOf(keysMatch[0]) + keysMatch[0].length)
-            : rest;
-
-        const content = afterKeys.trim();
+        const rest    = part.slice(headerMatch[0].length);
+        const content = rest.replace(/^Keys:\s*.+$/im, '').trim();
         if (!content) continue;
 
-        entries.push({ name, keys, content });
+        entries.push({ name, content });
     }
 
     return entries;

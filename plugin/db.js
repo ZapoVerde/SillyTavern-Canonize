@@ -1,34 +1,17 @@
 /**
  * @file plugins/cnz/db.js
- * @stamp {"utc":"2026-05-23T00:00:00.000Z"}
- * @architectural-role IO Wrapper — PGlite embedded database
+ * @stamp {"utc":"2026-05-29T00:00:00.000Z"}
+ * @architectural-role IO Wrapper — PGlite connection, schema, and chunk operations
  * @description
- * Schema init and query helpers over an embedded PGlite (WASM Postgres) database.
- * Vector dimension is detected lazily on first insert and stored in model_meta.
- * If the model changes and the dimension differs, tables are dropped and recreated —
- * the healer handles data rebuild from stamps. Cosine similarity is computed by
- * pgvector's <=> operator inside the DB; no JS-side similarity loops.
- * Hybrid retrieval: rag_chunks carries a nullable header_embedding vector and a
- * tsvector fts_vector column (GIN-indexed) for BM25 keyword search.
+ * Owns the PGlite connection, schema init, dimension management, and all
+ * rag_chunks query helpers. Lorebook and plot operations live in db-lb.js,
+ * which accesses the shared connection via getDb() / isSchemaReady().
  *
  * @api-declaration
- * initDb()                                           → Promise<void>
- * ensureDimension(dim)                               → Promise<void>
- * upsertChunks(rows)                                 → Promise<void>
- * queryChunks(validUuids, queryVec, topK, threshold) → Promise<Row[]>
- * queryChunksByHeader(validUuids, queryVec, topK)    → Promise<Row[]>
- * queryChunksByKeyword(validUuids, queryText, topK)  → Promise<Row[]>
- * upsertLbEntries(rows)                              → Promise<void>
- * queryLbEntries(validUuids, queryVec, topK, threshold) → Promise<Row[]>
- * purgeChunksByAnchor(anchorUuid)                    → Promise<void>
- * purgeChunksByAvatarKey(avatarKey)                  → Promise<void>
- * purgeLbEntriesByAnchor(anchorUuid)                 → Promise<void>
- * purgeLbEntriesByAvatarKey(avatarKey)               → Promise<void>
- * chunkCountForAvatar(avatarKey)                     → Promise<number>
- * chunkCountForAnchor(anchorUuid)                    → Promise<number>
- * lbEntryCountForAvatar(avatarKey)                   → Promise<number>
- * lbEntryCountForAnchor(anchorUuid)                  → Promise<number>
- * lbHashesForAnchor(anchorUuid)                      → Promise<number[]>
+ * initDb, ensureDimension, getDb, isSchemaReady
+ * upsertChunks, queryChunks, queryChunksByHeader, queryChunksByKeyword
+ * purgeChunksByAnchor, purgeChunksByAvatarKey
+ * chunkCountForAvatar, chunkCountForAnchor
  *
  * @contract
  *   assertions:
@@ -45,6 +28,9 @@ const DATA_DIR = process.env.CNZ_DB_PATH ?? './data/cnz-pg';
 let _db          = null;
 let _dim         = null;
 let _schemaReady = false;
+
+export const getDb          = () => _db;
+export const isSchemaReady  = () => _schemaReady;
 
 async function _createTables(dim) {
     await _db.exec(`
@@ -89,6 +75,13 @@ async function _createTables(dim) {
         CREATE INDEX        IF NOT EXISTS idx_lb_anchor ON lb_entries(anchor_uuid);
         ALTER TABLE lb_entries ADD COLUMN IF NOT EXISTS fts_vector tsvector;
         CREATE INDEX IF NOT EXISTS idx_lb_fts ON lb_entries USING GIN(fts_vector);
+
+        CREATE TABLE IF NOT EXISTS plot_filler_history (
+            lorebook_name       TEXT    NOT NULL,
+            arc_tag             TEXT    NOT NULL,
+            last_surfaced_turn  INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (lorebook_name, arc_tag)
+        );
     `);
     _schemaReady = true;
 }
@@ -105,10 +98,6 @@ export async function initDb() {
     console.log(`[cnz] DB ready at ${DATA_DIR} dim=${_dim ?? 'pending'}`);
 }
 
-/**
- * Called on first insert once we know the embedding dimension.
- * Drops and recreates tables if the model changed (dimension differs).
- */
 export async function ensureDimension(dim) {
     if (_schemaReady && _dim === dim) return;
     if (_dim !== null && _dim !== dim) {
@@ -124,11 +113,7 @@ export async function ensureDimension(dim) {
     if (!_schemaReady) await _createTables(dim);
 }
 
-// ── Vector formatting ─────────────────────────────────────────────────────────
-
 const toVec = arr => `[${arr.join(',')}]`;
-
-// ── Chunks ────────────────────────────────────────────────────────────────────
 
 export async function upsertChunks(rows) {
     for (const r of rows) {
@@ -153,10 +138,8 @@ export async function queryChunks(validUuids, queryVec, topK, threshold = 0) {
         `SELECT content, header, turn_range, pair_start, pair_end,
                 chat_file, anchor_uuid,
                 1 - (embedding <=> $1::vector) AS score
-         FROM rag_chunks
-         WHERE anchor_uuid = ANY($2)
-         ORDER BY embedding <=> $1::vector
-         LIMIT $3`,
+         FROM rag_chunks WHERE anchor_uuid = ANY($2)
+         ORDER BY embedding <=> $1::vector LIMIT $3`,
         [toVec(queryVec), validUuids, topK]
     );
     return r.rows.filter(row => row.score >= threshold);
@@ -169,10 +152,8 @@ export async function queryChunksByHeader(validUuids, queryVec, topK) {
                 chat_file, anchor_uuid,
                 1 - (header_embedding <=> $1::vector) AS score
          FROM rag_chunks
-         WHERE anchor_uuid = ANY($2)
-           AND header_embedding IS NOT NULL
-         ORDER BY header_embedding <=> $1::vector
-         LIMIT $3`,
+         WHERE anchor_uuid = ANY($2) AND header_embedding IS NOT NULL
+         ORDER BY header_embedding <=> $1::vector LIMIT $3`,
         [toVec(queryVec), validUuids, topK]
     );
     return r.rows;
@@ -188,8 +169,7 @@ export async function queryChunksByKeyword(validUuids, queryText, topK) {
          WHERE anchor_uuid = ANY($2)
            AND fts_vector IS NOT NULL
            AND fts_vector @@ plainto_tsquery('english', $1)
-         ORDER BY score DESC
-         LIMIT $3`,
+         ORDER BY score DESC LIMIT $3`,
         [queryText, validUuids, topK]
     );
     return r.rows;
@@ -213,78 +193,4 @@ export async function chunkCountForAnchor(anchorUuid) {
     if (!_schemaReady) return 0;
     const r = await _db.query('SELECT COUNT(*) AS n FROM rag_chunks WHERE anchor_uuid = $1', [anchorUuid]);
     return Number(r.rows[0].n);
-}
-
-// ── Lorebook entries ──────────────────────────────────────────────────────────
-
-export async function upsertLbEntries(rows) {
-    for (const r of rows) {
-        await _db.query(
-            `INSERT INTO lb_entries
-                (hash, anchor_uuid, avatar_key, lorebook_name, entry_uid, entry_keys, content, embedding, fts_vector)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8::vector,
-                     to_tsvector('english', $7 || ' ' || coalesce($6, '')))
-             ON CONFLICT (hash, anchor_uuid) DO NOTHING`,
-            [r.hash, r.anchor_uuid, r.avatar_key, r.lorebook_name,
-             r.entry_uid, r.entry_keys ?? null, r.content, toVec(r.embedding)]
-        );
-    }
-}
-
-export async function queryLbEntries(validUuids, queryVec, topK, threshold = 0, lorebookName = null) {
-    if (!_schemaReady || !validUuids.length) return [];
-    const r = await _db.query(
-        `SELECT lorebook_name, entry_uid, entry_keys, anchor_uuid,
-                1 - (embedding <=> $1::vector) AS score
-         FROM lb_entries
-         WHERE anchor_uuid = ANY($2)
-           AND ($4::text IS NULL OR lorebook_name = $4)
-         ORDER BY embedding <=> $1::vector
-         LIMIT $3`,
-        [toVec(queryVec), validUuids, topK, lorebookName ?? null]
-    );
-    return r.rows.filter(row => row.score >= threshold);
-}
-
-export async function queryLbEntriesByKeyword(validUuids, queryText, topK, lorebookName = null) {
-    if (!_schemaReady || !validUuids.length || !queryText?.trim()) return [];
-    const r = await _db.query(
-        `SELECT lorebook_name, entry_uid, entry_keys, anchor_uuid,
-                ts_rank_cd(fts_vector, plainto_tsquery('english', $1)) AS score
-         FROM lb_entries
-         WHERE anchor_uuid = ANY($2)
-           AND ($4::text IS NULL OR lorebook_name = $4)
-           AND fts_vector IS NOT NULL
-           AND fts_vector @@ plainto_tsquery('english', $1)
-         ORDER BY score DESC
-         LIMIT $3`,
-        [queryText, validUuids, topK, lorebookName ?? null]
-    );
-    return r.rows;
-}
-
-export async function purgeLbEntriesByAnchor(anchorUuid) {
-    await _db.query('DELETE FROM lb_entries WHERE anchor_uuid = $1', [anchorUuid]);
-}
-
-export async function purgeLbEntriesByAvatarKey(avatarKey) {
-    await _db.query('DELETE FROM lb_entries WHERE avatar_key = $1', [avatarKey]);
-}
-
-export async function lbEntryCountForAvatar(avatarKey) {
-    if (!_schemaReady) return 0;
-    const r = await _db.query('SELECT COUNT(*) AS n FROM lb_entries WHERE avatar_key = $1', [avatarKey]);
-    return Number(r.rows[0].n);
-}
-
-export async function lbEntryCountForAnchor(anchorUuid) {
-    if (!_schemaReady) return 0;
-    const r = await _db.query('SELECT COUNT(*) AS n FROM lb_entries WHERE anchor_uuid = $1', [anchorUuid]);
-    return Number(r.rows[0].n);
-}
-
-export async function lbHashesForAnchor(anchorUuid) {
-    if (!_schemaReady) return [];
-    const r = await _db.query('SELECT hash FROM lb_entries WHERE anchor_uuid = $1', [anchorUuid]);
-    return r.rows.map(row => Number(row.hash));
 }

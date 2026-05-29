@@ -56,23 +56,30 @@ function _onMessageSent() {
 }
 
 function _onWorldInfoUpdated(name) {
+    log('LbWatch', `WORLDINFO_UPDATED: "${name}" (tracking lb="${state._lorebookName ?? '—'}" plot="${state._plotLorebookName ?? '—'}")`);
+
     if (name === state._lorebookName) {
+        log('LbWatch', `Lorebook match — debouncing 7s`);
         clearTimeout(_lorebookEditTimer);
         _lorebookEditTimer = setTimeout(async () => {
-            if (state._lorebookName !== name) return;
+            if (state._lorebookName !== name) { log('LbWatch', `Lorebook debounce: name changed, aborting`); return; }
+            log('LbWatch', `Lorebook debounce fired — fetching fresh copy`);
             try {
                 const fresh = await lbGetLorebook(name);
+                const entryCount = Object.keys(fresh.entries ?? {}).length;
+                log('LbWatch', `Lorebook fetched: ${entryCount} entries`);
                 state._draftLorebook           = structuredClone(fresh);
                 state._lorebookData            = structuredClone(fresh);
                 state._lastIndexedLorebookHash = '';
-                if (!state._dnaChain?.lkg) return;
+                if (!state._dnaChain?.lkg) { log('LbWatch', `No LKG anchor — skipping chain patch`); return; }
                 const chatMsgs  = SillyTavern.getContext().chat ?? [];
                 const anchorMsg = chatMsgs[state._dnaChain.lkgMsgIdx];
-                if (!anchorMsg?.extra?.cnz) return;
+                if (!anchorMsg?.extra?.cnz) { log('LbWatch', `Anchor message missing CNZ data — skipping`); return; }
                 anchorMsg.extra.cnz = Object.assign({}, anchorMsg.extra.cnz, {
                     lorebook: Object.assign({ name }, structuredClone(state._draftLorebook)),
                 });
                 await SillyTavern.getContext().saveChat();
+                log('LbWatch', `Lorebook patched into anchor ${state._dnaChain.lkg.uuid?.slice(0, 8)} and chat saved`);
             } catch (err) {
                 error('Lorebook', 'WORLDINFO_UPDATED handler failed:', err);
             }
@@ -80,59 +87,77 @@ function _onWorldInfoUpdated(name) {
     }
 
     if (name === state._plotLorebookName) {
+        log('LbWatch', `Plot lorebook match — debouncing 7s`);
         clearTimeout(_plotEditTimer);
         _plotEditTimer = setTimeout(() => _applyPlotLorebookEdits(name), 7000);
+    }
+
+    if (name !== state._lorebookName && name !== state._plotLorebookName) {
+        log('LbWatch', `No match — ignored`);
     }
 }
 
 async function _applyPlotLorebookEdits(name) {
     if (state._plotLorebookName !== name) return;
+    log('LbWatch', `Plot debounce fired — fetching "${name}"`);
     try {
         const fresh   = await lbGetLorebook(name);
         const anchors = state._dnaChain?.anchors ?? [];
-        if (!anchors.length) return;
+        const incomingCount = Object.keys(fresh.entries ?? {}).length;
+        log('LbWatch', `Plot lorebook fetched: ${incomingCount} entries — scanning ${anchors.length} anchors`);
+        if (!anchors.length) { log('LbWatch', `No anchors in chain — aborting`); return; }
 
         const idx = new Map();
         for (const ref of anchors) {
             (ref.anchor.plotEntries ?? []).forEach((e, i) =>
-                idx.set(e.uid, { ref, i, hash: getStringHash(`${e.comment ?? ''}|${(e.keys ?? []).join(',')}|${e.content ?? ''}`) })
+                idx.set(e.uid, { ref, i, hash: getStringHash(`${e.comment ?? ''}|${e.content ?? ''}`) })
             );
         }
+        log('LbWatch', `Chain index built: ${idx.size} plot entries across ${anchors.length} anchors`);
 
         const changed = [];
         for (const [k, de] of Object.entries(fresh.entries ?? {})) {
             const uid  = parseInt(k, 10);
             const slot = idx.get(uid);
-            if (!slot) continue;
-            if (getStringHash(`${de.comment ?? ''}|${(de.key ?? []).join(',')}|${de.content ?? ''}`) === slot.hash) continue;
+            if (!slot) { log('LbWatch', `UID ${uid} not in chain index — skipping`); continue; }
+            if (getStringHash(`${de.comment ?? ''}|${de.content ?? ''}`) === slot.hash) continue;
+            log('LbWatch', `UID ${uid} "${de.comment}" — hash mismatch, queuing patch`);
             changed.push({ uid, de, ref: slot.ref, i: slot.i });
         }
-        if (!changed.length) return;
+        log('LbWatch', `Diff complete: ${changed.length} changed, ${idx.size - changed.length} unchanged`);
+        if (!changed.length) { log('LbWatch', `Nothing to patch`); return; }
 
         const msgs = SillyTavern.getContext().chat ?? [];
         for (const { uid, de, ref, i } of changed) {
             const m = msgs[ref.msgIdx];
-            if (m?.extra?.cnz?.plotEntries)
-                m.extra.cnz.plotEntries[i] = { uid, content: de.content ?? '', keys: de.key ?? [], comment: de.comment ?? '' };
+            if (m?.extra?.cnz?.plotEntries) {
+                m.extra.cnz.plotEntries[i] = { uid, content: de.content ?? '', comment: de.comment ?? '' };
+                log('LbWatch', `Patched UID ${uid} into anchor ${ref.anchor.uuid?.slice(0, 8)} entry[${i}]`);
+            }
         }
         await SillyTavern.getContext().saveChat();
-        log('PlotLb', `Patched ${changed.length} plot entry/entries in chain`);
+        log('LbWatch', `Chat saved — ${changed.length} plot entry/entries locked into DNA chain`);
 
         if (getSettings().enableRag) {
             const ctx  = SillyTavern.getContext();
             const char = ctx.characters[ctx.characterId];
-            if (char) {
-                const ak       = cnzAvatarKey(char.avatar);
-                const byAnchor = new Map();
-                for (const { uid, de, ref } of changed) {
-                    if (!byAnchor.has(ref.anchor.uuid)) byAnchor.set(ref.anchor.uuid, []);
-                    byAnchor.get(ref.anchor.uuid).push({ uid, content: de.content ?? '', keys: de.key ?? [], comment: de.comment ?? '' });
-                }
-                for (const [uuid, entries] of byAnchor) {
-                    try { await insertLorebookEntries(ak, uuid, name, entries); }
-                    catch (err) { error('PlotLb', `Re-vector failed (${uuid}):`, err); }
-                }
+            if (!char) { log('LbWatch', `No character selected — skipping re-vector`); return; }
+            const ak       = cnzAvatarKey(char.avatar);
+            const byAnchor = new Map();
+            for (const { uid, de, ref } of changed) {
+                if (!byAnchor.has(ref.anchor.uuid)) byAnchor.set(ref.anchor.uuid, []);
+                byAnchor.get(ref.anchor.uuid).push({ uid, content: de.content ?? '', comment: de.comment ?? '' });
             }
+            log('LbWatch', `Re-vectoring across ${byAnchor.size} anchor(s)`);
+            for (const [uuid, entries] of byAnchor) {
+                try {
+                    await insertLorebookEntries(ak, uuid, name, entries);
+                    log('LbWatch', `Re-vectored ${entries.length} entries for anchor ${uuid.slice(0, 8)}`);
+                } catch (err) { error('PlotLb', `Re-vector failed (${uuid}):`, err); }
+            }
+            log('LbWatch', `Re-vector complete`);
+        } else {
+            log('LbWatch', `RAG disabled — skipping re-vector`);
         }
     } catch (err) {
         error('PlotLb', 'Plot lorebook edit handler failed:', err);

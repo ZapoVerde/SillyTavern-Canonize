@@ -162,6 +162,24 @@ export function writeCnzRagPrompt(content) {
  * IO Executor. Clears the CNZ RAG prompt content.
  * No-op if the prompt does not yet exist or PromptManager is unavailable.
  */
+const _PLOT_MARKER = '\n\n<!-- cnz:plot -->';
+
+/**
+ * IO Executor. Appends formatted plot arc blocks to the CNZ Summary prompt,
+ * replacing any previously written arc section. Strips and rewrites cleanly
+ * each generation so stale arcs never accumulate.
+ * @param {string} arcsText  Formatted <arc_name>…</arc_name> blocks.
+ */
+export function appendCnzPlotArcs(arcsText) {
+    const pm = getCnzPromptManager();
+    if (!pm) return;
+    const prompt = pm.getPromptById(CNZ_SUMMARY_ID);
+    if (!prompt) return;
+    const scene = prompt.content.split(_PLOT_MARKER)[0].trimEnd();
+    prompt.content = arcsText ? `${scene}${_PLOT_MARKER}\n${arcsText}` : scene;
+    pm.saveServiceSettings();
+}
+
 export function clearCnzRagPrompt() {
     const pm = getCnzPromptManager();
     if (!pm) return;

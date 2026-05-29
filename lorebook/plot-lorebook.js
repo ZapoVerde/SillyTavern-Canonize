@@ -55,8 +55,8 @@ export async function appendPlotEntries(name, entries) {
 
     for (const e of entries) {
         const uid = nextUid++;
-        existing[String(uid)] = _buildPlotEntry(uid, e.name, e.keys, e.content);
-        written.push({ uid, content: e.content, keys: e.keys, comment: e.name });
+        existing[String(uid)] = _buildPlotEntry(uid, e.name, e.content);
+        written.push({ uid, content: e.content, comment: e.name });
     }
 
     lorebook.entries = existing;
@@ -80,7 +80,7 @@ export async function rebuildPlotLorebook(name, anchorChunks) {
     if (!allEntries.length) return;
     const entries = {};
     for (const e of allEntries) {
-        entries[String(e.uid)] = _buildPlotEntry(e.uid, e.comment, e.keys, e.content);
+        entries[String(e.uid)] = _buildPlotEntry(e.uid, e.comment, e.content);
     }
     await lbSaveLorebook(name, { entries }, { silent: true });
 }
@@ -96,10 +96,10 @@ export async function rebuildPlotLorebook(name, anchorChunks) {
  * @param {string}   content
  * @returns {object}
  */
-function _buildPlotEntry(uid, name, keys, content) {
+function _buildPlotEntry(uid, name, content) {
     return {
         uid,
-        key:              keys,
+        key:              [],
         keysecondary:     [],
         comment:          name,
         content,

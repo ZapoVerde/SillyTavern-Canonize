@@ -139,9 +139,8 @@ One entry per arc per sync window. If multiple developments occurred within the 
 
 Rules:
 - **Entry name:** A vivid label for this arc's progression in this window (e.g. "The Ashford Siege Breaks Open", "Elena's Allegiance Fractures").
-- **Keys:** 3–5 concise lowercase terms — the characters, places, or concepts directly involved.
 - **Content:** 2–4 sentences in past tense covering the arc's developments this window. What happened, why it matters, what tension or possibility it creates.
-- **Tags:** End every entry with #plot followed by the arc's stable thread tag. Tags must be stable across turns — once established (e.g. #ashford_siege), that exact form must be reused. Do not invent near-duplicates (#ashford, #ashford_arc, #siege_of_ashford are all wrong for the same arc). Only coin a new tag for a genuinely new arc.
+- **Tag:** End every entry with the arc's stable thread tag (e.g. #ashford_siege). Once a tag is established for an arc, that exact form must be reused every time. Do not invent near-duplicates. Only coin a new tag for a genuinely new arc.
 
 If none of the above occurred, output only the SCENE.
 
@@ -161,14 +160,12 @@ SCENE:
 [approximately 150–200 words of present-tense prose]
 
 **NEW: [Entry Name]**
-Keys: key1, key2, key3
 [2–4 sentences in past tense.]
-#plot #thread_tag
+#thread_tag
 
 **NEW: [Entry Name]**
-Keys: key1, key2
 [2–4 sentences in past tense.]
-#plot #thread_tag #second_tag
+#thread_tag
 `;
 
 // RAG classifier, targeted update/new prompts, and injection templates

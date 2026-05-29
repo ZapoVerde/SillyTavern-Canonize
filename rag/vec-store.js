@@ -208,7 +208,7 @@ export async function anchorStats(anchorUuid) {
  * @param {string} avatarKey     Sanitized avatar filename.
  * @param {string} anchorUuid    UUID of the owning anchor.
  * @param {string} lorebookName  Name of the lorebook (for WORLDINFO_FORCE_ACTIVATE).
- * @param {{ uid:number, content:string, keys:string[], comment:string }[]} entries
+ * @param {{ uid:number, content:string, comment:string }[]} entries
  * @returns {Promise<{ inserted: number }>}
  */
 export async function insertLorebookEntries(avatarKey, anchorUuid, lorebookName, entries) {
@@ -217,7 +217,7 @@ export async function insertLorebookEntries(avatarKey, anchorUuid, lorebookName,
         hash:    getStringHash(e.content),
         uid:     e.uid,
         content: e.content,
-        keys:    e.keys ?? [],
+        keys:    e.keys ?? [],    // kept for regular LB entries; empty [] for plot entries
     }));
     const cfg    = embedCfg();
     const result = await post('/insert-lorebook', { avatarKey, anchorUuid, lorebookName, entries: payload, ...cfg });
@@ -240,6 +240,10 @@ export async function queryLorebookEntries(validAnchorUuids, queryText, topK = 3
     const result = await post('/query-lorebook', { queryText, validAnchorUuids, topK, lorebookName, ...cfg }, signal);
     _reportEmbedUsage(queryText.length, cfg.embeddingModel);
     return result;
+}
+
+export async function queryRecentPlotEntries(lorebookName, validAnchorUuids, semanticUids, recencyCount = 3, signal, minArcs = 0, fillerEnabled = false, fillerCards = 1, fillerStrategy = 'random', currentTurn = 0) {
+    return post('/recent-plot-entries', { lorebookName, validAnchorUuids, semanticUids, recencyCount, minArcs, fillerEnabled, fillerCards, fillerStrategy, currentTurn }, signal);
 }
 
 export async function fetchEmbedStats() {

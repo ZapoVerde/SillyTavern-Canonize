@@ -82,8 +82,10 @@ export async function openDnaChainInspector() {
             const shortUuid   = anchor.uuid?.slice(0, 8) ?? '—';
             const expected    = anchor.ragHeaders?.length ?? 0;
             const s           = statsMap.get(anchor.uuid);
-            const dbChunks    = s?.chunksForAnchor ?? null;
-            const dbLb        = s?.lbEntriesForAnchor ?? null;
+            const dbChunks    = s?.chunksForAnchor    ?? null;
+            const dbLbTotal   = s?.lbEntriesForAnchor ?? null;
+            const dbPlot      = s?.plotEntriesForAnchor ?? null;
+            const dbLb        = dbLbTotal !== null && dbPlot !== null ? dbLbTotal - dbPlot : dbLbTotal;
 
             let statusCls, statusChr;
             if (dbChunks === null) {
@@ -99,12 +101,13 @@ export async function openDnaChainInspector() {
 
             const chunkLabel = dbChunks === null ? '—'
                 : expected > 0 ? `${dbChunks}/${expected} chunks` : `${dbChunks} chunks`;
-            const lbLabel    = dbLb === null ? '' : `  ${dbLb} lb`;
+            const lbLabel    = dbLb    !== null ? `  ${dbLb} lb`   : '';
+            const plotLabel  = dbPlot  !== null && dbPlot > 0 ? `  ${dbPlot} plot` : '';
 
             $body.append(`<div class="cnz-li-rag-row">
                 <span class="cnz-li-rag-label">${escapeHtml(`${label}  ${shortUuid}`)}</span>
                 <span class="cnz-li-rag-status ${statusCls}">${statusChr}</span>
-                <span class="cnz-li-rag-name">${escapeHtml(chunkLabel + lbLabel)}</span>
+                <span class="cnz-li-rag-name">${escapeHtml(chunkLabel + lbLabel + plotLabel)}</span>
             </div>`);
         }
     }
@@ -124,10 +127,12 @@ export async function openDnaChainInspector() {
         const { anchor } = reversed[i];
         const label     = i === 0 ? 'HEAD' : `#${total - i}`;
         const shortUuid = anchor.uuid?.slice(0, 8) ?? '—';
-        const entries   = Object.keys(anchor.lorebook?.entries ?? {}).length;
-        const chunks    = anchor.ragHeaders?.length ?? 0;
-        const dateStr   = anchor.committedAt ? anchor.committedAt.slice(0, 16).replace('T', ' ') : '—';
-        const summary   = `${label}  ${shortUuid}  ${entries} ${entries === 1 ? 'entry' : 'entries'}  ${chunks} ${chunks === 1 ? 'chunk' : 'chunks'}  ${dateStr}`;
+        const entries     = Object.keys(anchor.lorebook?.entries ?? {}).length;
+        const plotEntries = anchor.plotEntries?.length ?? 0;
+        const chunks      = anchor.ragHeaders?.length ?? 0;
+        const dateStr     = anchor.committedAt ? anchor.committedAt.slice(0, 16).replace('T', ' ') : '—';
+        const plotPart    = plotEntries > 0 ? `  ${plotEntries} plot` : '';
+        const summary     = `${label}  ${shortUuid}  ${entries} ${entries === 1 ? 'entry' : 'entries'}${plotPart}  ${chunks} ${chunks === 1 ? 'chunk' : 'chunks'}  ${dateStr}`;
 
         const $row      = $('<div class="cnz-li-node-row"></div>');
         const $head     = $(`<div class="cnz-li-node-header">
@@ -141,11 +146,17 @@ export async function openDnaChainInspector() {
             const expanding = !$nodeBody.hasClass('cnz-li-expanded');
             if (expanding && !loaded) {
                 loaded = true;
-                const lbName = escapeHtml(anchor.lorebook?.name ?? '—');
-                const s      = statsMap.get(anchor.uuid);
-                const dbLine = s
-                    ? escapeHtml(`${s.chunksForAnchor ?? 0} chunks / ${s.lbEntriesForAnchor ?? 0} lb entries`)
+                const lbName   = escapeHtml(anchor.lorebook?.name ?? '—');
+                const s        = statsMap.get(anchor.uuid);
+                const sPlot    = s?.plotEntriesForAnchor ?? 0;
+                const sLb      = s ? (s.lbEntriesForAnchor ?? 0) - sPlot : null;
+                const dbLine   = s
+                    ? escapeHtml(`${s.chunksForAnchor ?? 0} chunks / ${sLb} lb / ${sPlot} plot`)
                     : '<span class="cnz-li-status-muted">unavailable</span>';
+                const sceneRaw = anchor.scene ?? anchor.hooks ?? '';
+                const scenePreview = sceneRaw
+                    ? escapeHtml(sceneRaw.split(/\s+/).slice(0, 15).join(' ') + (sceneRaw.split(/\s+/).length > 15 ? '…' : ''))
+                    : '<span class="cnz-li-status-muted">(none)</span>';
                 $nodeBody.html(`
                     <div class="cnz-li-field"><span class="cnz-li-field-label">UUID: </span>${escapeHtml(anchor.uuid ?? '—')}</div>
                     <div class="cnz-li-field"><span class="cnz-li-field-label">Parent: </span>${escapeHtml(anchor.parentUuid ?? 'root')}</div>
@@ -153,8 +164,8 @@ export async function openDnaChainInspector() {
                     <div class="cnz-li-field"><span class="cnz-li-field-label">Lorebook: </span>${lbName}</div>
                     <div class="cnz-li-field"><span class="cnz-li-field-label">DB: </span>${dbLine}</div>
                     <div class="cnz-li-field cnz-li-hooks-block">
-                        <span class="cnz-li-field-label">Hooks:</span>
-                        <div class="cnz-li-hooks-preview">${escapeHtml(anchor.hooks || '(none)')}</div>
+                        <span class="cnz-li-field-label">Scene:</span>
+                        <div class="cnz-li-hooks-preview">${scenePreview}</div>
                     </div>
                 `);
             }

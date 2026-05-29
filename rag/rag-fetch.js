@@ -21,7 +21,7 @@
  */
 
 import { buildProsePairs, formatPairsAsTranscript, cleanForEmbedding } from '../core/transcript.js';
-import { querySyncChunks, queryLorebookEntries } from './vec-store.js';
+import { querySyncChunks, queryLorebookEntries, queryRecentPlotEntries } from './vec-store.js';
 import { state } from '../state.js';
 import { log, error } from '../log.js';
 import { DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
@@ -45,7 +45,12 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const validUuids = chain.anchors.map(r => r.anchor.uuid);
     const topK       = settings.ragRetrievalTopK    ?? 5;
     const topKLb     = settings.ragLbRetrievalTopK  ?? 3;
-    const topKPlot   = settings.ragPlotRetrievalTopK ?? 3;
+    const topKPlot         = settings.ragPlotRetrievalTopK ?? 3;
+    const plotRecencyCount = settings.ragPlotRecencyCount  ?? 3;
+    const plotMinArcs      = settings.ragPlotMinArcs        ?? 2;
+    const plotFillerOn     = settings.ragPlotFillerEnabled  ?? true;
+    const plotFillerCards  = settings.ragPlotFillerCards    ?? 1;
+    const plotFillerStrat  = settings.ragPlotFillerStrategy ?? 'random';
     const noiseFloor = settings.ragScoreThreshold   ?? 0.1;
 
     const horizonPairs = Math.max(1, settings.ragClassifierHistory ?? 3);
@@ -110,6 +115,18 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const toActivate = [...lbHitsRaw, ...plotHitsRaw]
         .filter(h => h.score >= noiseFloor && !activeUids.has(h.entryUid))
         .map(h => ({ world: h.lorebookName, uid: h.entryUid }));
+
+    if (plotLbName && (plotHitsRaw.length > 0 || (plotFillerOn && plotMinArcs > 0))) {
+        try {
+            const semanticUids  = plotHitsRaw.map(h => h.entryUid);
+            const recencyUids   = await queryRecentPlotEntries(plotLbName, validUuids, semanticUids, plotRecencyCount, signal, plotMinArcs, plotFillerOn, plotFillerCards, plotFillerStrat, allPairs.length);
+            const activatedSet  = new Set(toActivate.map(a => a.uid));
+            for (const uid of recencyUids)
+                if (!activatedSet.has(uid) && !activeUids.has(uid))
+                    toActivate.push({ world: plotLbName, uid });
+            if (recencyUids.length) log('RagHook', `plot recency: +${recencyUids.length} entries`);
+        } catch (err) { error('RagHook', 'Plot recency failed:', err); }
+    }
 
     let injection = '';
     if (chunks.length) {

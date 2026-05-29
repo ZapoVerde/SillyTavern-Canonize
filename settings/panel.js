@@ -27,6 +27,7 @@ import { escapeHtml } from '../state.js';
 import { getSettings, getMetaSettings } from './data.js';
 import { log, warn, setVerbose } from '../log.js';
 import { bindRagHandlers, updateRagAiControlsVisibility } from './handlers-rag.js';
+import { bindPlotHandlers } from './handlers-plot.js';
 import { bindCoreHandlers } from './handlers-core.js';
 import { getLastHealthResult } from '../rag/plugin-health.js';
 import { triggerSetupFromSettings } from '../core/plugin-setup-orchestrator.js';
@@ -127,8 +128,15 @@ function refreshSettingsUI() {
     $('#cnz-set-rag-score-threshold').val(s.ragScoreThreshold ?? 0.25);
     $('#cnz-set-rag-retrieval-topk').val(s.ragRetrievalTopK ?? 5);
     $('#cnz-set-rag-lb-retrieval-topk').val(s.ragLbRetrievalTopK ?? 3);
-    $('#cnz-set-rag-plot-retrieval-topk').val(s.ragPlotRetrievalTopK ?? 3);
     $('#cnz-set-rag-separator').val(s.ragSeparator ?? '%%%');
+
+    $('#cnz-set-plot-retrieval-topk').val(s.ragPlotRetrievalTopK ?? 3);
+    $('#cnz-set-plot-recency-count').val(s.ragPlotRecencyCount ?? 3);
+    $('#cnz-set-plot-min-arcs').val(s.ragPlotMinArcs ?? 2);
+    $('#cnz-set-plot-filler-enabled').prop('checked', s.ragPlotFillerEnabled ?? true);
+    $('#cnz-set-plot-filler-cards').val(s.ragPlotFillerCards ?? 1);
+    $('#cnz-set-plot-filler-strategy').val(s.ragPlotFillerStrategy ?? 'random');
+    $('#cnz-plot-filler-body').toggleClass('cnz-disabled', !(s.ragPlotFillerEnabled ?? true));
 
     updateRagAiControlsVisibility();
 
@@ -161,6 +169,7 @@ function refreshProfileDropdown() {
 
 function bindSettingsHandlers() {
     bindRagHandlers({ updateDirtyIndicator, openPromptModal });
+    bindPlotHandlers({ updateDirtyIndicator });
     bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refreshProfileDropdown, refreshSettingsUI });
 
     try {
