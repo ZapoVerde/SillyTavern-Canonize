@@ -6,7 +6,7 @@
  * Binds all Plot Management settings panel event handlers.
  *
  * @api-declaration
- * bindPlotHandlers({ updateDirtyIndicator })
+ * bindPlotHandlers({ updateDirtyIndicator, openPromptModal })
  *
  * @contract
  *   assertions:
@@ -17,8 +17,9 @@
 
 import { saveSettingsDebounced } from '../../../../../script.js';
 import { getSettings } from './data.js';
+import { DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE, DEFAULT_CNZ_SUMMARY_TEMPLATE } from '../defaults.js';
 
-export function bindPlotHandlers({ updateDirtyIndicator }) {
+export function bindPlotHandlers({ updateDirtyIndicator, openPromptModal }) {
 
     $('#cnz-set-plot-retrieval-topk').on('input', function () {
         getSettings().ragPlotRetrievalTopK = Math.max(0, parseInt($(this).val()) || 3);
@@ -50,4 +51,12 @@ export function bindPlotHandlers({ updateDirtyIndicator }) {
         getSettings().ragPlotFillerStrategy = $(this).val();
         saveSettingsDebounced(); updateDirtyIndicator();
     });
+
+    $('#cnz-edit-plot-chunk-template').on('click', () =>
+        openPromptModal('cnzPlotChunkTemplate', 'Edit Plot Chunk Template',
+            DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE, ['arc_tag', 'text']));
+
+    $('#cnz-edit-summary-template').on('click', () =>
+        openPromptModal('cnzSummaryTemplate', 'Edit Summary Injection Template',
+            DEFAULT_CNZ_SUMMARY_TEMPLATE, ['summary', 'plot']));
 }

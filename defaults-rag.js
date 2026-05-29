@@ -16,6 +16,7 @@
  * DEFAULT_TARGETED_NEW_PROMPT     — targeted fact extractor system prompt.
  * DEFAULT_RAG_INJECTION_TEMPLATE  — injection wrapper template ({{text}} placeholder).
  * DEFAULT_RAG_CHUNK_TEMPLATE      — per-chunk wrapper template ({{text}}, {{turn_range}}).
+ * DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE — per-arc wrapper template ({{text}}, {{arc_tag}}).
  *
  * @contract
  *   assertions:
@@ -178,3 +179,8 @@ export const DEFAULT_RAG_CHUNK_TEMPLATE =
 `<memory turns="{{turn_range}}">
 {{text}}
 </memory>`;
+
+export const DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE =
+`<{{arc_tag}}>
+{{text}}
+</{{arc_tag}}>`;

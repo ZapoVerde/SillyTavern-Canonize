@@ -21,6 +21,9 @@
  * DEFAULT_TARGETED_NEW_PROMPT      — targeted fact extractor system prompt.
  * DEFAULT_RAG_INJECTION_TEMPLATE   — injection wrapper template ({{text}} placeholder).
  * DEFAULT_RAG_CHUNK_TEMPLATE       — per-chunk wrapper template ({{text}}, {{turn_range}}, {{header}}, {{char_name}}).
+ * DEFAULT_CNZ_SUMMARY_TEMPLATE     — overall CNZ Summary prompt wrapper ({{summary}}, {{plot}}).
+ * DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE  — per-arc wrapper template ({{text}}, {{arc_tag}}).
+ * buildCnzSummaryContent(scene, plot, tmpl) — renders the summary prompt from scene + plot strings.
  *
  * @contract
  *   assertions:
@@ -168,8 +171,30 @@ SCENE:
 #thread_tag
 `;
 
+// ─── CNZ Summary Injection Templates ─────────────────────────────────────────
+
+export const DEFAULT_CNZ_SUMMARY_TEMPLATE =
+`{{#if plot}}The following is a summary of the active plot threads:
+{{plot}}
+
+{{/if}}{{#if summary}}The following is a summary of the current situation:
+{{summary}}{{/if}}`;
+
+/**
+ * Renders the CNZ Summary prompt content from summary and plot strings.
+ * Returns empty string if both inputs are empty.
+ * @param {string} summary  Scene/situation prose from hookseeker.
+ * @param {string} plot     Formatted plot arc blocks (may be empty string).
+ * @param {string} [tmpl]   Template; defaults to DEFAULT_CNZ_SUMMARY_TEMPLATE.
+ * @returns {string}
+ */
+export function buildCnzSummaryContent(summary, plot, tmpl = DEFAULT_CNZ_SUMMARY_TEMPLATE) {
+    if (!summary && !plot) return '';
+    return interpolate(tmpl, { summary: summary ?? '', plot: plot ?? '' });
+}
+
 // RAG classifier, targeted update/new prompts, and injection templates
 // have moved to defaults-rag.js to keep this file under 300 lines.
 export { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_TARGETED_UPDATE_PROMPT,
          DEFAULT_TARGETED_NEW_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE,
-         DEFAULT_RAG_CHUNK_TEMPLATE } from './defaults-rag.js';
+         DEFAULT_RAG_CHUNK_TEMPLATE, DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE } from './defaults-rag.js';

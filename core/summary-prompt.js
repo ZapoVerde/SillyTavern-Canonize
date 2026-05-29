@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/summary-prompt.js
- * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-29T00:00:00.000Z"}
  * @version 1.1.0
  * @architectural-role IO Wrapper
  * @description
@@ -22,6 +22,8 @@
 
 import { promptManager } from '../../../../../scripts/openai.js';
 import { CNZ_SUMMARY_ID, CNZ_RAG_ID } from '../state.js';
+import { buildCnzSummaryContent, DEFAULT_CNZ_SUMMARY_TEMPLATE } from '../defaults.js';
+import { getSettings } from '../settings/data.js';
 
 // ─── CNZ Summary Prompt Management ────────────────────────────────────────────
 
@@ -64,20 +66,23 @@ export function ensureCnzSummaryPrompt(pm) {
 }
 
 /**
- * IO Executor. Writes hooks text, character avatar, and anchor UUID to the
- * CNZ Summary prompt object, then persists via saveServiceSettings.
- * Creates the prompt if absent.
+ * IO Executor. Writes scene text, character avatar, and anchor UUID to the
+ * CNZ Summary prompt object, then re-renders content via the summary template.
+ * Creates the prompt if absent. Preserves any existing cnz_plot.
  * @param {string}      avatar      Character avatar filename.
- * @param {string}      content     Hooks summary text.
+ * @param {string}      sceneText   Scene/situation prose from hookseeker.
  * @param {string|null} anchorUuid  Head anchor UUID, or null if not yet committed.
  */
-export function writeCnzSummaryPrompt(avatar, content, anchorUuid) {
+export function writeCnzSummaryPrompt(avatar, sceneText, anchorUuid) {
     const pm = getCnzPromptManager();
     if (!pm) return;
     ensureCnzSummaryPrompt(pm);
     const prompt = pm.getPromptById(CNZ_SUMMARY_ID);
     if (!prompt) return;
-    prompt.content         = content;
+    const tmpl             = getSettings()?.cnzSummaryTemplate || DEFAULT_CNZ_SUMMARY_TEMPLATE;
+    prompt.cnz_scene       = sceneText ?? '';
+    prompt.cnz_plot        = prompt.cnz_plot ?? '';
+    prompt.content         = buildCnzSummaryContent(prompt.cnz_scene, prompt.cnz_plot, tmpl);
     prompt.cnz_avatar      = avatar;
     prompt.cnz_anchor_uuid = anchorUuid ?? null;
     pm.saveServiceSettings();
@@ -99,6 +104,8 @@ export function syncCnzSummaryOnCharacterSwitch(char, chain) {
 
     if (!char) {
         prompt.content         = '';
+        prompt.cnz_scene       = '';
+        prompt.cnz_plot        = '';
         prompt.cnz_avatar      = null;
         prompt.cnz_anchor_uuid = null;
         return;
@@ -109,7 +116,11 @@ export function syncCnzSummaryOnCharacterSwitch(char, chain) {
         return;
     }
 
-    prompt.content         = head?.scene ?? head?.hooks ?? '';
+    const scene            = head?.scene ?? head?.hooks ?? '';
+    const tmpl             = getSettings()?.cnzSummaryTemplate || DEFAULT_CNZ_SUMMARY_TEMPLATE;
+    prompt.cnz_scene       = scene;
+    prompt.cnz_plot        = '';
+    prompt.content         = buildCnzSummaryContent(scene, '', tmpl);
     prompt.cnz_avatar      = char.avatar;
     prompt.cnz_anchor_uuid = head?.uuid ?? null;
 }
@@ -159,24 +170,19 @@ export function writeCnzRagPrompt(content) {
 }
 
 /**
- * IO Executor. Clears the CNZ RAG prompt content.
- * No-op if the prompt does not yet exist or PromptManager is unavailable.
- */
-const _PLOT_MARKER = '\n\n<!-- cnz:plot -->';
-
-/**
- * IO Executor. Appends formatted plot arc blocks to the CNZ Summary prompt,
- * replacing any previously written arc section. Strips and rewrites cleanly
- * each generation so stale arcs never accumulate.
- * @param {string} arcsText  Formatted <arc_name>…</arc_name> blocks.
+ * IO Executor. Writes formatted plot arc blocks to the CNZ Summary prompt,
+ * replacing any previously written arc section, then re-renders content via
+ * the summary template. Pass empty string to clear the plot section.
+ * @param {string} arcsText  Formatted arc blocks (already applied chunk template).
  */
 export function appendCnzPlotArcs(arcsText) {
     const pm = getCnzPromptManager();
     if (!pm) return;
     const prompt = pm.getPromptById(CNZ_SUMMARY_ID);
     if (!prompt) return;
-    const scene = prompt.content.split(_PLOT_MARKER)[0].trimEnd();
-    prompt.content = arcsText ? `${scene}${_PLOT_MARKER}\n${arcsText}` : scene;
+    const tmpl       = getSettings()?.cnzSummaryTemplate || DEFAULT_CNZ_SUMMARY_TEMPLATE;
+    prompt.cnz_plot  = arcsText ?? '';
+    prompt.content   = buildCnzSummaryContent(prompt.cnz_scene ?? '', prompt.cnz_plot, tmpl);
     pm.saveServiceSettings();
 }
 

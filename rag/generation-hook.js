@@ -38,8 +38,10 @@ import { log, error }        from '../log.js';
 import { eventSource, event_types } from '../../../../../script.js';
 import { writeCnzRagPrompt, clearCnzRagPrompt, appendCnzPlotArcs } from '../core/summary-prompt.js';
 import { lbGetLorebook } from '../lorebook/api.js';
+import { DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE } from '../defaults.js';
 
-function _formatPlotArcs(entries) {
+function _formatPlotArcs(entries, chunkTmpl) {
+    const tmpl = chunkTmpl || DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE;
     const arcMap = new Map();
     for (const { content } of entries) {
         const tags = content.match(/#\w+/g) ?? [];
@@ -50,7 +52,12 @@ function _formatPlotArcs(entries) {
         arcMap.get(tag).push(text);
     }
     return [...arcMap.entries()]
-        .map(([tag, texts]) => { const n = tag.slice(1); return `<${n}>\n${texts.join('\n\n')}\n</${n}>`; })
+        .map(([tag, texts]) => {
+            const arcTag = tag.slice(1);
+            return tmpl
+                .replace(/\{\{arc_tag\}\}/g, arcTag)
+                .replace(/\{\{text\}\}/g, texts.join('\n\n'));
+        })
         .join('\n\n');
 }
 
@@ -333,7 +340,7 @@ export async function onGenerationStarted() {
             if (plotActivate.length) {
                 const lb      = await lbGetLorebook(plotLbName);
                 const entries = plotActivate.map(a => lb.entries?.[String(a.uid)]).filter(Boolean);
-                appendCnzPlotArcs(entries.length ? _formatPlotArcs(entries) : '');
+                appendCnzPlotArcs(entries.length ? _formatPlotArcs(entries, settings.cnzPlotChunkTemplate) : '');
                 if (entries.length) log('RagHook', `Plot arcs injected: ${plotActivate.length} entries`);
             } else {
                 appendCnzPlotArcs('');

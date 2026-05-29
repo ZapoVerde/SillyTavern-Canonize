@@ -38,6 +38,8 @@ import {
     DEFAULT_TARGETED_NEW_PROMPT,
     DEFAULT_RAG_INJECTION_TEMPLATE,
     DEFAULT_RAG_CHUNK_TEMPLATE,
+    DEFAULT_CNZ_SUMMARY_TEMPLATE,
+    DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE,
 } from './defaults.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -88,6 +90,8 @@ export const PROFILE_DEFAULTS = Object.freeze({
     ragPlotFillerStrategy:    'random',
     ragScoreThreshold:        0.25,
     ragInjectionTemplate:     DEFAULT_RAG_INJECTION_TEMPLATE,
+    cnzSummaryTemplate:       DEFAULT_CNZ_SUMMARY_TEMPLATE,
+    cnzPlotChunkTemplate:     DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE,
     ragEmbeddingSource:       'openrouter',
     ragEmbeddingModel:        '',
     ragEmbeddingApiKey:       '',

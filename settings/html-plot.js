@@ -47,6 +47,15 @@ export function buildPlotSectionHTML(s, escapeHtml) {
                 </label>
               </div>
 
+              <div class="cnz-setting-row">
+                <label class="cnz-label">Plot Chunk Template ${tip('Wraps each individual arc block. Use {{arc_tag}} for the arc name and {{text}} for its content.')}</label>
+                <button id="cnz-edit-plot-chunk-template" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
+              </div>
+              <div class="cnz-setting-row">
+                <label class="cnz-label">Summary Injection Template ${tip('Controls the layout of the CNZ Summary prompt. Use {{plot}} for the arc blocks and {{summary}} for the situation prose.')}</label>
+                <button id="cnz-edit-summary-template" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
+              </div>
+
               <div id="cnz-plot-filler-body" class="${fillerEnabled ? '' : 'cnz-disabled'}">
                 <div class="cnz-settings-inline-row">
                   <label for="cnz-set-plot-filler-cards">Cards per filler arc ${tip('How many recent entries to include per filler arc. Keep low — fillers are background context.')}</label>

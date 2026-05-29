@@ -169,7 +169,7 @@ function refreshProfileDropdown() {
 
 function bindSettingsHandlers() {
     bindRagHandlers({ updateDirtyIndicator, openPromptModal });
-    bindPlotHandlers({ updateDirtyIndicator });
+    bindPlotHandlers({ updateDirtyIndicator, openPromptModal });
     bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refreshProfileDropdown, refreshSettingsUI });
 
     try {
