@@ -132,5 +132,5 @@ Example form:
 
                Every source file does exactly one thing. If a file is doing two things, it should be two files.
 
-               When a file approaches 300 lines, start looking for a natural split — by domain, by responsibility, or by call site. Do not trim blank lines, compress expressions, or make code cryptically terse to stay under any number. That is the wrong problem to solve. If adding a feature pushes a file to 305 or 310, that is fine — just a reminder that a split may be coming.
+               When you reach 300 lines, split the file along the nearest fault line and continue. This should take minutes — the preamble already tells you what the file owns, and the fault lines follow from that. Do not count lines to avoid the split. That is more work than the split itself, and it makes the code worse.
                
