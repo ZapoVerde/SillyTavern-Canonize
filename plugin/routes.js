@@ -38,6 +38,7 @@ import {
     purgeLbEntriesByAnchor, purgeLbEntriesByAvatarKey,
     chunkCountForAvatar, chunkCountForAnchor,
     lbEntryCountForAvatar, lbEntryCountForAnchor, lbHashesForAnchor,
+    fetchEntryContentByUids, queryRecentByTag,
 } from './db.js';
 import { rrf } from './rrf.js';
 
@@ -149,15 +150,15 @@ export function registerRoutes(router) {
     // ── POST /query-lorebook ──────────────────────────────────────────────────
     router.post('/query-lorebook', async (req, res) => {
         try {
-            const { queryText, validAnchorUuids, topK = 3 } = req.body;
+            const { queryText, validAnchorUuids, topK = 3, lorebookName = null } = req.body;
             if (!queryText || !Array.isArray(validAnchorUuids) || !validAnchorUuids.length)
                 return res.json([]);
 
             const cfg      = embedCfg(req);
             const queryVec = await embedWithSource(cfg, queryText);
             const [semRows, kwRows] = await Promise.all([
-                queryLbEntries(validAnchorUuids, queryVec, topK * 2),
-                queryLbEntriesByKeyword(validAnchorUuids, queryText, topK * 2),
+                queryLbEntries(validAnchorUuids, queryVec, topK * 2, 0, lorebookName),
+                queryLbEntriesByKeyword(validAnchorUuids, queryText, topK * 2, lorebookName),
             ]);
             // Union by entry_uid — prefer semantic score; keyword hits use fixed 0.85
             const byUid = new Map();
@@ -221,7 +222,28 @@ export function registerRoutes(router) {
         res.flushHeaders();
         res.write(`data: ${JSON.stringify(getEmbedStats())}\n\n`); // send current state immediately
         addSseClient(res);
-        req.on('close', () => removeSseClient(res));
+        const heartbeat = setInterval(() => { try { res.write(': keepalive\n\n'); } catch { clearInterval(heartbeat); } }, 20000);
+        req.on('close', () => { clearInterval(heartbeat); removeSseClient(res); });
+    });
+
+    // ── POST /recent-plot-entries ─────────────────────────────────────────────
+    router.post('/recent-plot-entries', async (req, res) => {
+        try {
+            const { lorebookName, validAnchorUuids, semanticUids = [], recencyCount = 3 } = req.body;
+            if (!lorebookName || !Array.isArray(validAnchorUuids) || !validAnchorUuids.length || !semanticUids.length)
+                return res.json([]);
+            const rows = await fetchEntryContentByUids(lorebookName, semanticUids);
+            const tags = [...new Set(rows.flatMap(r => (r.content.match(/#\w+/g) ?? [])))];
+            if (!tags.length) return res.json([]);
+            const byTag  = await Promise.all(tags.map(t => queryRecentByTag(lorebookName, validAnchorUuids, t, recencyCount)));
+            const seen   = new Set(semanticUids.map(Number));
+            const result = [];
+            for (const uids of byTag) for (const uid of uids) if (!seen.has(uid)) { seen.add(uid); result.push(uid); }
+            return res.json(result);
+        } catch (err) {
+            console.error('[cnz] recent-plot-entries:', err);
+            return res.status(500).json({ error: err.message });
+        }
     });
 
     // ── GET /health ───────────────────────────────────────────────────────────
