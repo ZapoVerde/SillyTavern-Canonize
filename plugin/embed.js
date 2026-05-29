@@ -25,15 +25,34 @@
  *     external_io:     [ST vector modules — openai-vectors, ollama-vectors, etc.]
  */
 
-import { getOpenAIVector, getOpenAIBatchVector }         from '../../src/vectors/openai-vectors.js';
-import { getOllamaVector, getOllamaBatchVector }         from '../../src/vectors/ollama-vectors.js';
-import { getVllmVector, getVllmBatchVector }             from '../../src/vectors/vllm-vectors.js';
-import { getLlamaCppVector, getLlamaCppBatchVector }     from '../../src/vectors/llamacpp-vectors.js';
-import { getTransformersVector, getTransformersBatchVector } from '../../src/vectors/embedding.js';
-import { getCohereVector, getCohereBatchVector }         from '../../src/vectors/cohere-vectors.js';
-import { getNomicAIVector, getNomicAIBatchVector }       from '../../src/vectors/nomicai-vectors.js';
-import { getMakerSuiteVector, getMakerSuiteBatchVector,
-         getVertexVector, getVertexBatchVector }         from '../../src/vectors/google-vectors.js';
+import { fileURLToPath } from 'url';
+import path              from 'path';
+import fs                from 'fs';
+
+// Static relative imports break when the plugin is loaded via a symlink because
+// Node.js resolves import.meta.url to the real file path (after following the symlink),
+// making ../../src/vectors/ resolve relative to the extension directory rather than
+// the ST root. Walk up from the real location to find ST root dynamically instead.
+function _findStRoot() {
+    let dir = path.dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 10; i++) {
+        if (fs.existsSync(path.join(dir, 'src', 'vectors', 'openai-vectors.js'))) return dir;
+        dir = path.dirname(dir);
+    }
+    throw new Error(`[CNZ embed] Cannot locate ST root from ${path.dirname(fileURLToPath(import.meta.url))}`);
+}
+
+const _stVec = path.join(_findStRoot(), 'src', 'vectors');
+
+const { getOpenAIVector, getOpenAIBatchVector }              = await import(`${_stVec}/openai-vectors.js`);
+const { getOllamaVector, getOllamaBatchVector }              = await import(`${_stVec}/ollama-vectors.js`);
+const { getVllmVector, getVllmBatchVector }                  = await import(`${_stVec}/vllm-vectors.js`);
+const { getLlamaCppVector, getLlamaCppBatchVector }          = await import(`${_stVec}/llamacpp-vectors.js`);
+const { getTransformersVector, getTransformersBatchVector }  = await import(`${_stVec}/embedding.js`);
+const { getCohereVector, getCohereBatchVector }              = await import(`${_stVec}/cohere-vectors.js`);
+const { getNomicAIVector, getNomicAIBatchVector }            = await import(`${_stVec}/nomicai-vectors.js`);
+const { getMakerSuiteVector, getMakerSuiteBatchVector,
+        getVertexVector, getVertexBatchVector }              = await import(`${_stVec}/google-vectors.js`);
 
 const BATCH_SIZE     = 5;
 const MAX_CONCURRENT = 20;
