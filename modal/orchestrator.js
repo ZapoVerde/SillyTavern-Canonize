@@ -184,7 +184,7 @@ export async function openReviewModal() {
         const _pm        = getCnzPromptManager();
         const _cnzPrompt = _pm?.getPromptById(CNZ_SUMMARY_ID);
         state._priorSituation = (_cnzPrompt && _cnzPrompt.cnz_avatar === char.avatar)
-            ? (_cnzPrompt.content ?? '')
+            ? (_cnzPrompt.cnz_scene ?? _cnzPrompt.content ?? '')
             : '';
     }
 
