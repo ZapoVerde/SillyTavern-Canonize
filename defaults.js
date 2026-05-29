@@ -155,7 +155,10 @@ TRANSCRIPT:
 PREVIOUS SCENE:
 {{prev_scene}}
 
----
+{{#if existing_threads}}Currently running plots:
+{{existing_threads}}
+
+{{/if}}---
 
 OUTPUT FORMAT (follow exactly):
 

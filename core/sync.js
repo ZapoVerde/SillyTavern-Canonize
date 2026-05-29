@@ -35,7 +35,7 @@ import { getSettings } from './settings.js';
 import { buildProsePairs, buildTranscript, computeSyncWindow } from './transcript.js';
 import { runLorebookSyncCall, runPeopleSyncCall, runHookseekerCall } from './llm-calls.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
-import { lbEnsureLorebook } from '../lorebook/api.js';
+import { lbEnsureLorebook, lbGetLorebook } from '../lorebook/api.js';
 import { stripProtectedBlock } from '../lorebook/utils.js';
 import { formatFilteredLorebookEntries } from '../lorebook/tags.js';
 import { runRagPipeline } from '../rag/pipeline.js';
@@ -50,6 +50,56 @@ import { logSyncStart, applyLorebookToDraft, saveLorebookToDisk,
 
 // Re-export pure helpers so existing callers importing from sync.js don't break.
 export { computeSyncWindow, deriveLastCommittedPairs } from './transcript.js';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Reads the plot lorebook and returns a formatted "Currently running plots:"
+ * block for injection into the hookseeker prompt. Each arc is wrapped in
+ * <plot_arc_{tag}> tags and contains its first entry plus up to the last three,
+ * deduplicated. Returns empty string if the lorebook is empty or unavailable.
+ * @param {string} plotLbName
+ * @returns {Promise<string>}
+ */
+async function _buildExistingThreads(plotLbName) {
+    try {
+        const lb = await lbGetLorebook(plotLbName);
+        const allEntries = Object.values(lb?.entries ?? {});
+        if (!allEntries.length) return '';
+
+        // Group entries by their thread tag (last #word in content), sorted by uid.
+        const arcMap = new Map();
+        for (const e of allEntries) {
+            const tags = e.content?.match(/#\w+/g) ?? [];
+            const tag  = tags[tags.length - 1];
+            if (!tag) continue;
+            if (!arcMap.has(tag)) arcMap.set(tag, []);
+            arcMap.get(tag).push(e);
+        }
+        if (!arcMap.size) return '';
+
+        const arcBlocks = [];
+        for (const [tag, entries] of arcMap) {
+            entries.sort((a, b) => a.uid - b.uid);
+
+            // First entry + last 3, deduplicated.
+            const selected = entries.length <= 4
+                ? entries
+                : [entries[0], ...entries.slice(-3)];
+
+            const entryLines = selected
+                .map(e => `**${e.comment}**\n${e.content}`)
+                .join('\n\n');
+
+            const arcTag = tag.slice(1); // strip leading #
+            arcBlocks.push(`<plot_arc_${arcTag}>\n${entryLines}\n</plot_arc_${arcTag}>`);
+        }
+
+        return arcBlocks.join('\n\n');
+    } catch {
+        return '';
+    }
+}
 
 // ─── Sync pipeline ────────────────────────────────────────────────────────────
 
@@ -204,7 +254,8 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
     const hooksPromise = (async () => {
         log('Hooks', 'Lane 2: starting');
         try {
-            const raw = await runHookseekerCall(hookTranscript, state._priorSituation);
+            const existingThreads = await _buildExistingThreads(plotLbName);
+            const raw = await runHookseekerCall(hookTranscript, state._priorSituation, existingThreads);
             const { scene, entries } = parseHookseekerOutput(raw);
             processSceneUpdate(scene);
             state._priorSituation = scene;
