@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/settings/html-rag.js
- * @stamp {"utc":"2026-05-25T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-30T00:00:00.000Z"}
  * @architectural-role Pure Functions
  * @description
  * Builds the HTML for the RAG area of the CNZ settings panel: an exposed
@@ -148,6 +148,13 @@ export function buildRagSectionHTML(s, escapeHtml) {
                   </div>
                 </div>
                 <select id="cnz-embedding-model-list" class="cnz-select cnz-hidden" style="width:100%;margin-top:4px;font-size:0.8rem"></select>
+              </div>
+              <div class="cnz-settings-inline-row">
+                <label class="cnz-label">Embedding Test ${tip('Sends a short probe sentence through the configured provider and model. Returns the vector dimension and round-trip latency.')}</label>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <button id="cnz-test-embedding" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Test</button>
+                  <span id="cnz-embed-test-result" style="font-size:0.82rem"></span>
+                </div>
               </div>
               <div class="cnz-settings-inline-row">
                 <label for="cnz-set-rag-score-threshold">Score Threshold ${tip('Minimum cosine similarity (0–1) for a chunk to be injected.')}</label>

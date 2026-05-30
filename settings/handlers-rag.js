@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/settings/handlers-rag.js
- * @stamp {"utc":"2026-05-22T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-30T00:00:00.000Z"}
  * @version 1.0.0
  * @architectural-role IO Wrapper
  * @description
@@ -19,6 +19,7 @@
  */
 
 import { saveSettingsDebounced } from '../../../../../script.js';
+import { testEmbed } from '../rag/vec-store.js';
 import { state } from '../state.js';
 import { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 import { getSettings } from './data.js';
@@ -179,6 +180,23 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
 
     $('#cnz-edit-chunk-template').on('click', () =>
         openPromptModal('ragChunkTemplate', 'Edit Chunk Template', DEFAULT_RAG_CHUNK_TEMPLATE, ['text', 'turn_range', 'header', 'char_name']));
+
+    // ── Embedding test ────────────────────────────────────────────────────────
+    $('#cnz-test-embedding').on('click', async function () {
+        const $btn    = $(this);
+        const $result = $('#cnz-embed-test-result');
+        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i>');
+        $result.removeAttr('style').text('');
+        try {
+            const { dim, nonZero, ms } = await testEmbed();
+            const allZero = nonZero === 0 ? ' ⚠ all zeros' : '';
+            $result.css('color', 'var(--cnz-btn-success-fg)').text(`OK — ${dim}-dim in ${ms}ms${allZero}`);
+        } catch (err) {
+            $result.addClass('cnz-error-inline').text(err.message);
+        } finally {
+            $btn.prop('disabled', false).text('Test');
+        }
+    });
 
     // ── Embedding model browser ───────────────────────────────────────────────
     $('#cnz-browse-embedding-model').on('click', async function () {

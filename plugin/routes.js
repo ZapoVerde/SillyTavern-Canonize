@@ -1,6 +1,6 @@
 /**
  * @file plugins/cnz/routes.js
- * @stamp {"utc":"2026-05-29T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-30T00:00:00.000Z"}
  * @architectural-role IO Wrapper — Chunk route handlers
  * @description
  * Registers chunk, embed-stream, purge, and health endpoints, then delegates
@@ -14,6 +14,7 @@
  *   POST /query-chunks     — embed query, return top-K chunks by cosine score
  *   POST /purge-anchor     — delete all chunks + lb entries for an anchor
  *   POST /purge-character  — delete all chunks + lb entries for an avatarKey
+ *   POST /test-embed       — probe the configured embedding model with a short sentence
  *   GET  /embed-stats      — current embedding queue stats
  *   GET  /embed-stream     — SSE stream of embedding progress
  *   GET  /health           — chunk + lb entry counts for avatar / anchor
@@ -133,8 +134,22 @@ export function registerRoutes(router) {
         } catch (err) { console.error('[cnz] purge-character:', err); return res.status(500).json({ error: err.message }); }
     });
 
+    // ── POST /test-embed ──────────────────────────────────────────────────────
+    router.post('/test-embed', async (req, res) => {
+        try {
+            const cfg   = embedCfg(req);
+            const start = Date.now();
+            const vec   = await embedWithSource(cfg, 'The quick brown fox jumps over the lazy dog.');
+            const ms    = Date.now() - start;
+            return res.json({ ok: true, dim: vec.length, nonZero: vec.filter(v => v !== 0).length, ms });
+        } catch (err) {
+            console.error('[cnz] test-embed:', err);
+            return res.status(500).json({ error: err.message });
+        }
+    });
+
     // ── GET /embed-stats ──────────────────────────────────────────────────────
-    router.get('/embed-stats', (req, res) => res.json(getEmbedStats()));
+    router.get('/embed-stats', (_req, res) => res.json(getEmbedStats()));
 
     // ── GET /embed-stream ─────────────────────────────────────────────────────
     router.get('/embed-stream', (req, res) => {

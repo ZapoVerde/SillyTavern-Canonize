@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/rag/vec-store.js
- * @stamp {"utc":"2026-05-28T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-30T00:00:00.000Z"}
  * @version 1.2.0
  * @architectural-role IO Wrapper
  * @description
@@ -12,6 +12,7 @@
  * so the caller can surface it via toastr rather than silently failing.
  *
  * @api-declaration
+ * testEmbed()                                              → Promise<{ ok, dim, nonZero, ms }>
  * insertSyncChunks(avatarKey, anchorUuid, chatFile, chunks, pairOffset)
  * querySyncChunks(avatarKey, validAnchorUuids, queryText, topK)
  * insertLorebookEntries(avatarKey, anchorUuid, lorebookName, entries)
@@ -248,4 +249,8 @@ export async function queryRecentPlotEntries(lorebookName, validAnchorUuids, sem
 
 export async function fetchEmbedStats() {
     return get('/embed-stats');
+}
+
+export async function testEmbed() {
+    return post('/test-embed', embedCfg());
 }
