@@ -23,7 +23,7 @@ import { testEmbed } from '../rag/vec-store.js';
 import { state } from '../state.js';
 import { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 import { getSettings } from './data.js';
-import { error } from '../log.js';
+import { log, error } from '../log.js';
 
 let _orModelCache = null;
 
@@ -185,13 +185,17 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
     $('#cnz-test-embedding').on('click', async function () {
         const $btn    = $(this);
         const $result = $('#cnz-embed-test-result');
+        const s       = getSettings();
         $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i>');
-        $result.removeAttr('style').text('');
+        $result.removeAttr('style').removeClass('cnz-error-inline').text('');
+        log('EmbedTest', `source=${s.ragEmbeddingSource ?? 'openrouter'} model=${s.ragEmbeddingModel || '(unset)'}`);
         try {
             const { dim, nonZero, ms } = await testEmbed();
-            const allZero = nonZero === 0 ? ' ⚠ all zeros' : '';
-            $result.css('color', 'var(--cnz-btn-success-fg)').text(`OK — ${dim}-dim in ${ms}ms${allZero}`);
+            const allZero = nonZero === 0 ? ' — ALL ZEROS' : '';
+            log('EmbedTest', `OK dim=${dim} nonZero=${nonZero} ms=${ms}${allZero}`);
+            $result.css('color', 'var(--cnz-btn-success-fg)').text(`OK — ${dim}-dim in ${ms}ms${nonZero === 0 ? ' ⚠ all zeros' : ''}`);
         } catch (err) {
+            error('EmbedTest', err.message);
             $result.addClass('cnz-error-inline').text(err.message);
         } finally {
             $btn.prop('disabled', false).text('Test');
