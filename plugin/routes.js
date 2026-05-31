@@ -1,6 +1,6 @@
 /**
  * @file plugins/cnz/routes.js
- * @stamp {"utc":"2026-05-30T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-31T00:00:00.000Z"}
  * @architectural-role IO Wrapper — Chunk route handlers
  * @description
  * Registers chunk, embed-stream, purge, and health endpoints, then delegates
@@ -26,7 +26,7 @@
  *     external_io:     [embed.js, db.js, db-lb.js, rrf.js]
  */
 
-import { embedWithSource, embedBatchWithSource, getEmbedStats, addSseClient, removeSseClient } from './embed.js';
+import { embedWithSource, embedBatchWithSource, getEmbedStats, addSseClient, removeSseClient, readMakerSuiteKey } from './embed.js';
 import { ensureDimension, upsertChunks, queryChunks, queryChunksByHeader, queryChunksByKeyword,
          purgeChunksByAvatarKey, purgeChunksByAnchor, chunkCountForAvatar, chunkCountForAnchor } from './db.js';
 import { purgeLbEntriesByAnchor, purgeLbEntriesByAvatarKey,
@@ -177,6 +177,28 @@ export function registerRoutes(router) {
             if (anchorUuid) result.lbHashesForAnchor     = await lbHashesForAnchor(String(anchorUuid));
             return res.json(result);
         } catch (err) { console.error('[cnz] health:', err); return res.status(500).json({ error: err.message }); }
+    });
+
+    // ── GET /aistudio-models ──────────────────────────────────────────────────
+    router.get('/aistudio-models', async (req, res) => {
+        try {
+            const apiKey = readMakerSuiteKey(req.user.directories);
+            if (!apiKey) return res.status(400).json({ error: 'Google AI Studio API key not configured in ST.' });
+            const url  = `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=${encodeURIComponent(apiKey)}`;
+            const resp = await fetch(url);
+            if (!resp.ok) {
+                const text = await resp.text();
+                return res.status(resp.status).json({ error: `Google AI error ${resp.status}: ${text}` });
+            }
+            const data   = await resp.json();
+            const models = (data.models ?? [])
+                .filter(m => (m.supportedGenerationMethods ?? []).includes('embedContent'))
+                .map(m => ({ id: m.name.replace(/^models\//, ''), displayName: m.displayName ?? '' }));
+            return res.json({ models });
+        } catch (err) {
+            console.error('[cnz] aistudio-models:', err);
+            return res.status(500).json({ error: err.message });
+        }
     });
 
     registerLbRoutes(router);

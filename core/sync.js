@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/sync.js
- * @stamp {"utc":"2026-05-29T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-31T00:00:00.000Z"}
  * @version 1.1.0
  * @architectural-role Orchestrator
  * @description
@@ -61,7 +61,7 @@ export { computeSyncWindow, deriveLastCommittedPairs } from './transcript.js';
  * @param {string} plotLbName
  * @returns {Promise<string>}
  */
-async function _buildExistingThreads(plotLbName) {
+export async function buildExistingThreads(plotLbName) {
     try {
         const lb = await lbGetLorebook(plotLbName);
         const allEntries = Object.values(lb?.entries ?? {});
@@ -254,7 +254,7 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
     const hooksPromise = (async () => {
         log('Hooks', 'Lane 2: starting');
         try {
-            const existingThreads = await _buildExistingThreads(plotLbName);
+            const existingThreads = await buildExistingThreads(plotLbName);
             const raw = await runHookseekerCall(hookTranscript, state._priorSituation, existingThreads);
             const { scene, entries } = parseHookseekerOutput(raw);
             processSceneUpdate(scene);

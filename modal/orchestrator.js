@@ -39,7 +39,7 @@ import { readDnaChain } from '../core/dna-chain.js';
 import { getCnzPromptManager } from '../core/summary-prompt.js';
 import { buildProsePairs, deriveLastCommittedPairs } from '../core/transcript.js';
 import { buildRagChunks } from '../rag/pipeline.js';
-import { cnzDefaultLbName } from '../rag/api.js';
+import { cnzDefaultLbName, cnzPlotLbName } from '../rag/api.js';
 import { lbEnsureLorebook } from '../lorebook/api.js';
 import { deriveSuggestionsFromAnchorDiff, serialiseSuggestionsToFreeform } from '../lorebook/utils.js';
 import { patchCharacterWorld } from './commit.js';
@@ -47,6 +47,7 @@ import { updateHooksDiff } from './hooks-workshop.js';
 import { populateLbIngesterDropdown, renderLbIngesterDetail, populateTargetedEntrySelect } from './lb-workshop.js';
 import { setHooksLoading } from './hooks-workshop.js';
 import { setLbLoading } from './lb-workshop.js';
+import { populatePlotLbDropdown, populatePlotLbFullEntrySelect, syncPlotLbFreeform } from './plot-lb-workshop.js';
 
 // ─── Show / Hide ──────────────────────────────────────────────────────────────
 
@@ -61,15 +62,18 @@ export function showModal() {
 export function closeModal() {
     $('#cnz-overlay').addClass('cnz-hidden');
     invalidateAllJobs();
-    state._hooksLoading          = false;
-    state._lorebookLoading       = false;
-    state._lbActiveIngesterIndex = 0;
-    state._lbPendingWrite        = null;
-    state._ragRawDetached        = false;
-    state._currentStep           = 1;
-    state._modalOpenHeadUuid     = null;
-    state._hooksRegenGen         = 0;
-    state._lbRegenGen            = 0;
+    state._hooksLoading               = false;
+    state._lorebookLoading            = false;
+    state._lbActiveIngesterIndex      = 0;
+    state._lbPendingWrite             = null;
+    state._plotLbActiveIngesterIndex  = 0;
+    state._plotLbPendingWrite         = null;
+    state._plotLorebookSuggestions    = [];
+    state._ragRawDetached             = false;
+    state._currentStep                = 1;
+    state._modalOpenHeadUuid          = null;
+    state._hooksRegenGen              = 0;
+    state._lbRegenGen                 = 0;
 }
 
 // ─── Wizard UI Reset ──────────────────────────────────────────────────────────
@@ -119,8 +123,18 @@ export function initWizardSession(preserveSuggestions = false) {
     });
     $('#cnz-rag-tab-sectioned').removeClass('cnz-hidden');
     $('#cnz-rag-tab-raw').addClass('cnz-hidden');
+    // Plot LB reset
+    $('#cnz-plot-lb-tab-bar .cnz-tab-btn').each(function () {
+        $(this).toggleClass('cnz-tab-active', $(this).data('tab') === 'entries');
+    });
+    $('#cnz-plot-lb-tab-entries').removeClass('cnz-hidden');
+    $('#cnz-plot-lb-tab-freeform').addClass('cnz-hidden');
+    $('#cnz-plot-lb-freeform').val('');
+    $('#cnz-plot-lb-error').addClass('cnz-hidden').text('');
+
     if (!preserveSuggestions) {
-        state._lbActiveIngesterIndex = 0;
+        state._lbActiveIngesterIndex      = 0;
+        state._plotLbActiveIngesterIndex  = 0;
     }
     setHooksLoading(false);
     setLbLoading(false);
@@ -134,16 +148,22 @@ export function initWizardSession(preserveSuggestions = false) {
  */
 export function updateWizard(n) {
     import('./rag-workshop.js').then(({ onLeaveRagWorkshop, onEnterRagWorkshop }) => {
-        if (state._currentStep === 3 && n < 3) onLeaveRagWorkshop();
+        if (state._currentStep === 4 && n < 4) onLeaveRagWorkshop();
         state._currentStep = n;
-        for (let i = 1; i <= 4; i++) {
+        for (let i = 1; i <= 5; i++) {
             $(`#cnz-step-${i}`).toggleClass('cnz-hidden', i !== n);
         }
         $('#cnz-move-back').toggleClass('cnz-hidden', n === 1);
-        $('#cnz-move-next').toggleClass('cnz-hidden', n === 4);
-        $('#cnz-confirm').toggleClass('cnz-hidden',   n !== 4);
-        if (n === 3) onEnterRagWorkshop();
-        if (n === 4) {
+        $('#cnz-move-next').toggleClass('cnz-hidden', n === 5);
+        $('#cnz-confirm').toggleClass('cnz-hidden',   n !== 5);
+        if (n === 2) {
+            populatePlotLbDropdown();
+            populatePlotLbFullEntrySelect();
+            syncPlotLbFreeform();
+            $('#cnz-plot-lb-title').text(`Plot Lorebook: ${state._plotLorebookName ?? ''}`);
+        }
+        if (n === 4) onEnterRagWorkshop();
+        if (n === 5) {
             import('./commit-ui.js').then(({ populateStep4Summary }) => populateStep4Summary());
         }
     });
@@ -173,10 +193,29 @@ export async function openReviewModal() {
         }
     }
 
+    // Load plot lorebook
+    const plotLbName = state._plotLorebookName || cnzPlotLbName(char.avatar);
+    state._plotLorebookName = plotLbName;
+    try {
+        state._plotLorebookData  = await lbEnsureLorebook(plotLbName);
+        state._draftPlotLorebook = structuredClone(state._plotLorebookData);
+    } catch (err) {
+        error('Modal', 'openReviewModal: plot lorebook load failed:', err);
+        state._plotLorebookData  = { entries: {} };
+        state._draftPlotLorebook = { entries: {} };
+    }
+
     state._dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
     setDnaChain(state._dnaChain);
     const headRef   = state._dnaChain.lkg ? { anchor: state._dnaChain.lkg, msgIdx: state._dnaChain.lkgMsgIdx } : null;
     const parentRef = headRef ? (state._dnaChain.anchors[state._dnaChain.anchors.length - 2] ?? null) : null;
+
+    // Suggestions = entries written by the last hookseeker sync, stored in the head anchor
+    state._plotLorebookSuggestions = (headRef?.anchor?.plotEntries ?? []).map(e => ({
+        uid:    e.uid,
+        name:   e.comment ?? String(e.uid),
+        status: 'pending',
+    }));
 
     const isSameSession = !!headRef && state._modalOpenHeadUuid === headRef.anchor.uuid && !!state._draftLorebook;
 

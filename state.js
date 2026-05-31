@@ -150,6 +150,10 @@ export const state = {
     _parentNodeLorebook:  null,
     /** name of the plot lorebook file (append-only, hookseeker lane only) */
     _plotLorebookName:    null,
+    /** live disk snapshot of the plot lorebook at modal open */
+    _plotLorebookData:    null,
+    /** working copy of the plot lorebook; committed on Finalize */
+    _draftPlotLorebook:   null,
 
     // ── Orphan check state — set by checkOrphans(), read by openOrphanModal() ──
     _pendingOrphans:      [],
@@ -163,13 +167,18 @@ export const state = {
     _dnaChain:            null,
 
     // ── Modal Session State (cleared by closeModal()) ───────────────────────────
-    /** active wizard step (1–4) */
-    _currentStep:           1,
-    _lorebookLoading:       false,
-    _hooksLoading:          false,
-    _lbActiveIngesterIndex: 0,
+    /** active wizard step (1–5) */
+    _currentStep:               1,
+    _lorebookLoading:           false,
+    _hooksLoading:              false,
+    _lbActiveIngesterIndex:     0,
     /** {uid, name, keys, content} captured at last keystroke; flushed to draft on blur */
-    _lbPendingWrite:        null,
+    _lbPendingWrite:            null,
+    _plotLbActiveIngesterIndex: 0,
+    /** {uid, name, status} for entries written by the last hookseeker sync */
+    _plotLorebookSuggestions:   [],
+    /** {uid, name, content} captured at last keystroke; flushed to plot draft on blur */
+    _plotLbPendingWrite:        null,
     _ragRawDetached:        false,
     /** lkg anchor uuid captured at modal open; concurrent-sync guard */
     _modalOpenHeadUuid:     null,

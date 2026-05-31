@@ -54,7 +54,7 @@ export const Recipes = {
         inputs:       ['transcript', 'prev_scene'],
         buildPrompt:  (inputs, settings) => interpolate(
             settings.hookseekerPrompt || DEFAULT_HOOKSEEKER_PROMPT,
-            { transcript: inputs.transcript, prev_scene: inputs.prev_scene ?? '' }
+            { transcript: inputs.transcript, prev_scene: inputs.prev_scene ?? '', existing_threads: inputs.existing_threads ?? '' }
         ),
         profileKey:   'profileId',
         maxTokens:    null,

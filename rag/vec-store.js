@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/rag/vec-store.js
- * @stamp {"utc":"2026-05-30T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-31T00:00:00.000Z"}
  * @version 1.2.0
  * @architectural-role IO Wrapper
  * @description
@@ -22,6 +22,7 @@
  * purgeCharacterLbEntries(avatarKey)
  * anchorChunkCount(avatarKey, anchorUuid)
  * anchorStats(anchorUuid)
+ * fetchAiStudioModels()                                          → Promise<{ models: {id,displayName}[] }>
  *
  * @contract
  *   assertions:
@@ -249,6 +250,10 @@ export async function queryRecentPlotEntries(lorebookName, validAnchorUuids, sem
 
 export async function fetchEmbedStats() {
     return get('/embed-stats');
+}
+
+export async function fetchAiStudioModels() {
+    return get('/aistudio-models');
 }
 
 export async function testEmbed() {

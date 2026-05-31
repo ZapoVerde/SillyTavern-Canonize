@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/modal/hooks-workshop.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-31T00:00:00.000Z"}
  * @version 1.0.16
  * @architectural-role Orchestrator
  * @description
@@ -23,6 +23,7 @@ import { state } from '../state.js';
 import { getSettings } from '../core/settings.js';
 import { buildProsePairs, buildTranscript } from '../core/transcript.js';
 import { wordDiff } from '../lorebook/utils.js';
+import { buildExistingThreads } from '../core/sync.js';
 
 // ─── Modal: Hooks Workshop ────────────────────────────────────────────────────
 
@@ -106,8 +107,10 @@ export function onRegenHooksClick() {
     const regenSettings = getSettings();
     const transcript    = buildSyncWindowTranscript(horizon, regenMessages, regenSettings);
 
-    import('../core/llm-calls.js').then(({ runHookseekerCall }) => {
-        runHookseekerCall(transcript, state._priorSituation)
+    const plotLbName = state._plotLorebookName;
+    import('../core/llm-calls.js').then(async ({ runHookseekerCall }) => {
+        const existingThreads = plotLbName ? await buildExistingThreads(plotLbName) : '';
+        runHookseekerCall(transcript, state._priorSituation, existingThreads)
             .then(text => {
                 if (state._hooksRegenGen !== thisGen) return;
                 const trimmed = text.trim();

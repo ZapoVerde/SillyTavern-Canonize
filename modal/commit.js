@@ -147,7 +147,21 @@ async function commitChanges(char, hooksText) {
         lorebookChanged = true;
     }
 
-    // ── Step 3: RAG status ───────────────────────────────────────────────────
+    // ── Step 3: Plot lorebook save ───────────────────────────────────────────
+    if (isDraftDirty(state._draftPlotLorebook, state._plotLorebookData) && state._draftPlotLorebook && state._plotLorebookName) {
+        try {
+            await lbSaveLorebook(state._plotLorebookName, state._draftPlotLorebook, { silent: true });
+            state._plotLorebookData = structuredClone(state._draftPlotLorebook);
+            const count = Object.keys(state._draftPlotLorebook.entries ?? {}).length;
+            results.push({ task: 'plot', status: 'success', detail: `Plot Lorebook saved: ${count} entr${count !== 1 ? 'ies' : 'y'}` });
+        } catch (err) {
+            results.push({ task: 'plot', status: 'failed', error: `Plot Lorebook save failed: ${err.message}` });
+        }
+    } else {
+        results.push({ task: 'plot', status: 'skipped' });
+    }
+
+    // ── Step 4: RAG status ───────────────────────────────────────────────────
     const settledChunks = state._ragChunks.filter(c => c.status === 'complete' || c.status === 'manual');
     if (settledChunks.length > 0) {
         results.push({ task: 'rag', status: 'success', detail: `Narrative Memory: ${settledChunks.length} chunk${settledChunks.length !== 1 ? 's' : ''} indexed in vector DB` });
