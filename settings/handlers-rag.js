@@ -50,12 +50,22 @@ const MISTRAL_EMBED_MODELS = [
 ];
 
 const VOYAGE_EMBED_MODELS = [
-    { id: 'voyage-3-large',       label: 'voyage-3-large' },
-    { id: 'voyage-3',             label: 'voyage-3' },
-    { id: 'voyage-3-lite',        label: 'voyage-3-lite' },
-    { id: 'voyage-code-3',        label: 'voyage-code-3' },
-    { id: 'voyage-finance-2',     label: 'voyage-finance-2' },
-    { id: 'voyage-law-2',         label: 'voyage-law-2' },
+    // Voyage 4 (current flagship)
+    { id: 'voyage-4-large',        label: 'voyage-4-large' },
+    { id: 'voyage-4',              label: 'voyage-4' },
+    { id: 'voyage-4-lite',         label: 'voyage-4-lite' },
+    { id: 'voyage-4-nano',         label: 'voyage-4-nano' },
+    // Voyage 3.5
+    { id: 'voyage-3.5',            label: 'voyage-3.5' },
+    { id: 'voyage-3.5-lite',       label: 'voyage-3.5-lite' },
+    // Voyage 3
+    { id: 'voyage-3-large',        label: 'voyage-3-large' },
+    { id: 'voyage-3',              label: 'voyage-3' },
+    { id: 'voyage-3-lite',         label: 'voyage-3-lite' },
+    // Specialised
+    { id: 'voyage-code-3',         label: 'voyage-code-3' },
+    { id: 'voyage-finance-2',      label: 'voyage-finance-2' },
+    { id: 'voyage-law-2',          label: 'voyage-law-2' },
     { id: 'voyage-multilingual-2', label: 'voyage-multilingual-2' },
 ];
 
