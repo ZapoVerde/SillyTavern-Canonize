@@ -168,11 +168,16 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
     });
 
     // ── Retrieval settings ────────────────────────────────────────────────────
+    const EMBED_KEY_MAP = { voyageai: 'api_key_voyageai', nomicai: 'api_key_nomicai' };
+
     $('#cnz-set-embedding-source').on('change', function () {
-        const src = $(this).val();
+        const src    = $(this).val();
+        const apiKey = EMBED_KEY_MAP[src] ?? null;
         getSettings().ragEmbeddingSource = src;
         saveSettingsDebounced(); updateDirtyIndicator();
         $('#cnz-embed-or-note').toggleClass('cnz-hidden', src !== 'openrouter');
+        $('#cnz-embed-set-key-row').toggleClass('cnz-hidden', !apiKey);
+        if (apiKey) $('#cnz-embed-set-key-btn').attr('data-key', apiKey);
     });
 
     $('#cnz-set-embedding-model').on('input', function () {

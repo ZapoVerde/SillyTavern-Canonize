@@ -24,6 +24,10 @@ export function buildRagSectionHTML(s, escapeHtml) {
     const isDefinedHere = ragSumSrc === 'defined';
     const embedSource   = s.ragEmbeddingSource  ?? 'openrouter';
 
+    // Sources that need a dedicated key not accessible from the main ST connections panel.
+    const EMBED_KEY_MAP = { voyageai: 'api_key_voyageai', nomicai: 'api_key_nomicai' };
+    const embedApiKey   = EMBED_KEY_MAP[embedSource] ?? null;
+
     const embedOptions = [
         ['openrouter',   'OpenRouter'],
         ['openai',       'OpenAI'],
@@ -138,6 +142,15 @@ export function buildRagSectionHTML(s, escapeHtml) {
               </div>
               <div id="cnz-embed-or-note" class="cnz-settings-note${embedSource === 'openrouter' ? '' : ' cnz-hidden'}">
                 OpenRouter pre-filters the model browser to embedding models only.
+              </div>
+              <div id="cnz-embed-set-key-row" class="cnz-settings-inline-row${embedApiKey ? '' : ' cnz-hidden'}">
+                <label class="cnz-label">API Key</label>
+                <div id="cnz-embed-set-key-btn"
+                     class="menu_button menu_button_icon manage-api-keys"
+                     data-key="${embedApiKey ?? ''}">
+                  <i class="fa-solid fa-key"></i>
+                  <span>Click to set</span>
+                </div>
               </div>
               <div id="cnz-rag-remote-embed-rows">
                 <div class="cnz-settings-inline-row">
