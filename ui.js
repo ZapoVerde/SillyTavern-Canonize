@@ -76,8 +76,8 @@ export function buildModalHTML() {
       <div id="cnz-error-1" class="cnz-error-banner cnz-hidden"></div>
     </div>
 
-    <!-- ── Step 2: Lorebook Workshop ── -->
-    <div id="cnz-step-2" class="cnz-step cnz-hidden">
+    <!-- ── Step 3: Lorebook Workshop ── -->
+    <div id="cnz-step-3" class="cnz-step cnz-hidden">
       <div class="cnz-section-header">
         <h3 id="cnz-lb-title" class="cnz-title">Lorebook</h3>
         <span id="cnz-lb-spinner" class="cnz-section-spin fa-solid fa-spinner fa-spin cnz-hidden"></span>
@@ -187,8 +187,74 @@ export function buildModalHTML() {
       <div id="cnz-lb-error" class="cnz-error-banner cnz-hidden"></div>
     </div>
 
-    <!-- ── Step 3: Narrative Memory Workshop ── -->
-    <div id="cnz-step-3" class="cnz-step cnz-hidden">
+    <!-- ── Step 2: Plot Lorebook Workshop ── -->
+    <div id="cnz-step-2" class="cnz-step cnz-hidden">
+      <div class="cnz-section-header">
+        <h3 id="cnz-plot-lb-title" class="cnz-title">Plot Lorebook</h3>
+      </div>
+
+      <div class="cnz-tab-bar" id="cnz-plot-lb-tab-bar">
+        <button class="cnz-tab-btn cnz-tab-active" data-tab="entries">Entries</button>
+        <button class="cnz-tab-btn" data-tab="freeform">Freeform</button>
+      </div>
+
+      <!-- Entries tab -->
+      <div id="cnz-plot-lb-tab-entries" class="cnz-tab-panel">
+
+        <!-- Last-sync entries (default list) -->
+        <div class="cnz-settings-row">
+          <label for="cnz-plot-lb-entry-select">New this sync</label>
+          <div class="cnz-select-with-nav">
+            <select id="cnz-plot-lb-entry-select" class="cnz-select"></select>
+            <button id="cnz-plot-lb-ingester-next" class="cnz-btn cnz-btn-secondary cnz-btn-sm"
+                    title="Jump to next unreviewed entry">&#x27A1; Next</button>
+          </div>
+        </div>
+
+        <hr class="cnz-lane-divider" />
+
+        <!-- Full history explorer -->
+        <div class="cnz-settings-row">
+          <label for="cnz-plot-lb-full-entry-select">Load from history</label>
+          <div class="cnz-select-with-nav">
+            <select id="cnz-plot-lb-full-entry-select" class="cnz-input cnz-targeted-entry-select">
+              <option value="">Load from history...</option>
+            </select>
+            <button id="cnz-plot-lb-add" class="cnz-btn cnz-btn-secondary cnz-btn-sm" title="Add a blank plot entry">+ New</button>
+          </div>
+        </div>
+
+        <hr class="cnz-lane-divider" />
+
+        <!-- Shared editor -->
+        <div class="cnz-settings-row">
+          <label for="cnz-plot-lb-editor-name">Name</label>
+          <input id="cnz-plot-lb-editor-name" class="cnz-input" type="text" spellcheck="false">
+        </div>
+
+        <span class="cnz-label">Content</span>
+        <textarea id="cnz-plot-lb-editor-content" class="cnz-textarea" spellcheck="false"></textarea>
+
+        <div class="cnz-buttons cnz-buttons-split">
+          <div></div>
+          <div class="cnz-btn-group">
+            <button id="cnz-plot-lb-delete" class="cnz-btn cnz-btn-danger cnz-btn-sm">Delete</button>
+            <button id="cnz-plot-lb-apply"  class="cnz-btn cnz-btn-success cnz-btn-sm">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Freeform tab -->
+      <div id="cnz-plot-lb-tab-freeform" class="cnz-tab-panel cnz-hidden">
+        <textarea id="cnz-plot-lb-freeform" class="cnz-textarea cnz-textarea-tall" readonly spellcheck="false"
+                  placeholder="Plot entries will appear here grouped by arc tag."></textarea>
+      </div>
+
+      <div id="cnz-plot-lb-error" class="cnz-error-banner cnz-hidden"></div>
+    </div>
+
+    <!-- ── Step 4: Narrative Memory Workshop ── -->
+    <div id="cnz-step-4" class="cnz-step cnz-hidden">
       <h3 class="cnz-title">Narrative Memory Workshop</h3>
 
       <div id="cnz-rag-mode-note" class="cnz-mode-note cnz-hidden"></div>
@@ -220,13 +286,14 @@ export function buildModalHTML() {
       </div>
     </div>
 
-    <!-- ── Step 4: Review & Commit ── -->
-    <div id="cnz-step-4" class="cnz-step cnz-hidden">
+    <!-- ── Step 5: Review & Commit ── -->
+    <div id="cnz-step-5" class="cnz-step cnz-hidden">
       <h3 class="cnz-title">Review &amp; Commit</h3>
 
       <div id="cnz-step4-summary" class="cnz-step4-summary">
         <div id="cnz-step4-hooks" class="cnz-step4-row"></div>
         <div id="cnz-step4-lore"  class="cnz-step4-row"></div>
+        <div id="cnz-step4-plot"  class="cnz-step4-row"></div>
         <div id="cnz-step4-rag" class="cnz-rag-panel cnz-hidden">
           <span class="cnz-label">Narrative Memory (RAG)</span>
           <div id="cnz-rag-timeline" class="cnz-rag-timeline"></div>
