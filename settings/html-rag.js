@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/settings/html-rag.js
- * @stamp {"utc":"2026-05-30T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-31T00:00:00.000Z"}
  * @architectural-role Pure Functions
  * @description
  * Builds the HTML for the RAG area of the CNZ settings panel: an exposed
@@ -36,9 +36,11 @@ export function buildRagSectionHTML(s, escapeHtml) {
         ['nanogpt',      'NanoGPT'],
         ['siliconflow',  'SiliconFlow'],
         ['workers_ai',   'Cloudflare Workers AI'],
-        ['palm',         'Google AI Studio (PaLM)'],
+        ['aistudio',     'Google AI Studio'],
+        ['palm',         'Google AI Studio (legacy)'],
         ['vertexai',     'Google Vertex AI'],
         ['ollama',       'Ollama (local URL)'],
+        ['voyageai',     'Voyage AI'],
         ['vllm',         'vLLM (local URL)'],
         ['llamacpp',     'llama.cpp (local URL)'],
         ['transformers', 'Transformers (local)'],

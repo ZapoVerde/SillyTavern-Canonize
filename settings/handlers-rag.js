@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/settings/handlers-rag.js
- * @stamp {"utc":"2026-05-30T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-31T00:00:00.000Z"}
  * @version 1.0.0
  * @architectural-role IO Wrapper
  * @description
@@ -19,7 +19,7 @@
  */
 
 import { saveSettingsDebounced } from '../../../../../script.js';
-import { testEmbed } from '../rag/vec-store.js';
+import { testEmbed, fetchAiStudioModels } from '../rag/vec-store.js';
 import { state } from '../state.js';
 import { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 import { getSettings } from './data.js';
@@ -47,6 +47,16 @@ const NOMIC_EMBED_MODELS = [
 
 const MISTRAL_EMBED_MODELS = [
     { id: 'mistral-embed', label: 'mistral-embed' },
+];
+
+const VOYAGE_EMBED_MODELS = [
+    { id: 'voyage-3-large',       label: 'voyage-3-large' },
+    { id: 'voyage-3',             label: 'voyage-3' },
+    { id: 'voyage-3-lite',        label: 'voyage-3-lite' },
+    { id: 'voyage-code-3',        label: 'voyage-code-3' },
+    { id: 'voyage-finance-2',     label: 'voyage-finance-2' },
+    { id: 'voyage-law-2',         label: 'voyage-law-2' },
+    { id: 'voyage-multilingual-2', label: 'voyage-multilingual-2' },
 ];
 
 function _renderEmbedModelList(items, showingAll, withToggle = false) {
@@ -209,6 +219,23 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
         if (source === 'cohere') { _renderEmbedModelList(COHERE_EMBED_MODELS, false); return; }
         if (source === 'nomicai') { _renderEmbedModelList(NOMIC_EMBED_MODELS, false); return; }
         if (source === 'mistral') { _renderEmbedModelList(MISTRAL_EMBED_MODELS, false); return; }
+        if (source === 'voyageai') { _renderEmbedModelList(VOYAGE_EMBED_MODELS, false); return; }
+        if (source === 'aistudio' || source === 'palm') {
+            const $btn = $(this);
+            const orig = $btn.html();
+            $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i>');
+            try {
+                const { models } = await fetchAiStudioModels();
+                const items = models.map(m => ({ id: m.id, label: m.displayName ? `${m.id} — ${m.displayName}` : m.id }));
+                _renderEmbedModelList(items, false);
+            } catch (err) {
+                error('Settings', 'AI Studio model list fetch failed:', err);
+                toastr.error(`Could not fetch AI Studio models: ${err?.message || err}`);
+            } finally {
+                $btn.prop('disabled', false).html(orig);
+            }
+            return;
+        }
         if (source !== 'openrouter') {
             toastr.info('No model list available for this provider — enter the model ID manually.');
             return;
