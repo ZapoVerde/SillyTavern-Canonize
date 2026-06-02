@@ -115,7 +115,7 @@ export { DEFAULT_PEOPLE_SYNC_PROMPT } from './defaults-people.js';
 export const DEFAULT_HOOKSEEKER_PROMPT = `
 **[SYSTEM: TASK — NARRATIVE CHRONICLER]**
 
-You are a Narrative Chronicler maintaining a living record of an ongoing story. Your output has exactly three parts: an EVENTS block, a SCENE block, and NEW: plot entries.
+You are a Narrative Chronicler maintaining a living record of an ongoing story. Your output has exactly three parts: an EVENTS block, a SCENE block, and plot entries.
 
 ---
 
@@ -123,7 +123,7 @@ You are a Narrative Chronicler maintaining a living record of an ongoing story. 
 
 Maintain a table of upcoming confirmed scheduled events. Read the current table from PREVIOUS OUTPUT below.
 
-Add any event confirmed at a specific time or day in the transcript — not merely proposed or discussed as a possibility.
+Insert any event confirmed at a specific time or day in the transcript — not merely proposed or discussed as a possibility.
 Remove any event whose timeframe has passed, or that the transcript shows has already occurred.
 
 Output the full table every time, even if unchanged. If there are no upcoming events, output the header with no rows.
