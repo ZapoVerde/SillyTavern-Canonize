@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/sync.js
- * @stamp {"utc":"2026-05-27T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-31T00:00:00.000Z"}
  * @version 1.1.0
  * @architectural-role Orchestrator
  * @description
@@ -34,21 +34,72 @@ import { setSyncInProgress } from '../scheduler.js';
 import { getSettings } from './settings.js';
 import { buildProsePairs, buildTranscript, computeSyncWindow } from './transcript.js';
 import { runLorebookSyncCall, runPeopleSyncCall, runHookseekerCall } from './llm-calls.js';
-import { readDnaChain } from './dna-chain.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
-import { lbEnsureLorebook } from '../lorebook/api.js';
-import { stripProtectedBlock, formatLorebookEntries } from '../lorebook/utils.js';
+import { lbEnsureLorebook, lbGetLorebook } from '../lorebook/api.js';
+import { stripProtectedBlock } from '../lorebook/utils.js';
 import { formatFilteredLorebookEntries } from '../lorebook/tags.js';
 import { runRagPipeline } from '../rag/pipeline.js';
 import { isPluginReachable } from '../rag/plugin-health.js';
-import { cnzDefaultLbName } from '../rag/api.js';
+import { cnzDefaultLbName, cnzPlotLbName } from '../rag/api.js';
 import { patchCharacterWorld } from '../modal/commit.js';
 import { state } from '../state.js';
+import { parseHookseekerOutput } from './hookseeker-output.js';
 import { logSyncStart, applyLorebookToDraft, saveLorebookToDisk,
-         reconcileLorebookLanes, processHooksUpdate, commitDnaAnchor } from './sync-helpers.js';
+         reconcileLorebookLanes, processSceneUpdate,
+         appendAndIndexPlotEntries, commitDnaAnchor } from './sync-helpers.js';
 
 // Re-export pure helpers so existing callers importing from sync.js don't break.
 export { computeSyncWindow, deriveLastCommittedPairs } from './transcript.js';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Reads the plot lorebook and returns a formatted "Currently running plots:"
+ * block for injection into the hookseeker prompt. Each arc is wrapped in
+ * <plot_arc_{tag}> tags and contains its first entry plus up to the last three,
+ * deduplicated. Returns empty string if the lorebook is empty or unavailable.
+ * @param {string} plotLbName
+ * @returns {Promise<string>}
+ */
+export async function buildExistingThreads(plotLbName) {
+    try {
+        const lb = await lbGetLorebook(plotLbName);
+        const allEntries = Object.values(lb?.entries ?? {});
+        if (!allEntries.length) return '';
+
+        // Group entries by their thread tag (last #word in content), sorted by uid.
+        const arcMap = new Map();
+        for (const e of allEntries) {
+            const tags = e.content?.match(/#\w+/g) ?? [];
+            const tag  = tags[tags.length - 1];
+            if (!tag) continue;
+            if (!arcMap.has(tag)) arcMap.set(tag, []);
+            arcMap.get(tag).push(e);
+        }
+        if (!arcMap.size) return '';
+
+        const arcBlocks = [];
+        for (const [tag, entries] of arcMap) {
+            entries.sort((a, b) => a.uid - b.uid);
+
+            // First entry + last 3, deduplicated.
+            const selected = entries.length <= 4
+                ? entries
+                : [entries[0], ...entries.slice(-3)];
+
+            const entryLines = selected
+                .map(e => `**${e.comment}**\n${e.content}`)
+                .join('\n\n');
+
+            const arcTag = tag.slice(1); // strip leading #
+            arcBlocks.push(`<plot_arc_${arcTag}>\n${entryLines}\n</plot_arc_${arcTag}>`);
+        }
+
+        return arcBlocks.join('\n\n');
+    } catch {
+        return '';
+    }
+}
 
 // ─── Sync pipeline ────────────────────────────────────────────────────────────
 
@@ -93,6 +144,8 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
 
     const lbName = state._lorebookName || cnzDefaultLbName(char.avatar);
     state._lorebookName = lbName;
+    const plotLbName = state._plotLorebookName || cnzPlotLbName(char.avatar);
+    state._plotLorebookName = plotLbName;
     const freshLorebook = await lbEnsureLorebook(lbName);
 
     let externalDeletions = [];
@@ -158,11 +211,11 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
         });
 
     // Lane entry text is pre-formatted here so both LLM calls can start immediately.
-    // General lane receives all entries — it tags accurately across all four categories.
+    // General lane receives only non-#person entries (plus untagged entries for tag correction).
     // People lane receives only pre-sync #person entries — the reconciliation step below
     // handles any entries the general lane newly promotes to #person this cycle.
     const peopleEntriesText = formatFilteredLorebookEntries(state._lorebookData, '#person', false);
-    const mainEntriesText   = formatLorebookEntries(state._lorebookData);
+    const mainEntriesText   = formatFilteredLorebookEntries(state._lorebookData, '#person', true);
 
     let peopleSuggestions = [];
     let mainSuggestions   = [];
@@ -197,12 +250,19 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
         return true;
     })();
 
+    let stagedPlotEntries = [];
     const hooksPromise = (async () => {
         log('Hooks', 'Lane 2: starting');
         try {
-            const text = await runHookseekerCall(hookTranscript, state._priorSituation);
-            await processHooksUpdate(text);
-            state._priorSituation = text;
+            const existingThreads = await buildExistingThreads(plotLbName);
+            const raw = await runHookseekerCall(hookTranscript, state._priorSituation, existingThreads);
+            const { scene, entries } = parseHookseekerOutput(raw);
+            processSceneUpdate(scene);
+            state._priorSituation = scene;
+            if (entries.length) {
+                stagedPlotEntries = await appendAndIndexPlotEntries(entries, anchorUuid, char.avatar, plotLbName);
+                log('Hooks', `Lane 2: ${stagedPlotEntries.length} plot entry/entries written`);
+            }
             log('Hooks', 'Lane 2: ✓ ok');
             return true;
         } catch (e) {
@@ -256,7 +316,7 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
     log('DnaChain', 'committing anchor');
     let anchorOk = false;
     try {
-        await commitDnaAnchor(messages, anchorUuid);
+        await commitDnaAnchor(messages, anchorUuid, stagedPlotEntries);
         anchorOk = true;
         log('DnaChain', '✓ ok');
         const newUuid = state._dnaChain.lkg?.uuid ?? null;

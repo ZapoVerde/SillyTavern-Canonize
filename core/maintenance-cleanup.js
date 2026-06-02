@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/maintenance-cleanup.js
- * @stamp {"utc":"2026-05-28T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-29T00:00:00.000Z"}
  * @version 1.0.0
  * @architectural-role Orchestrator
  * @description
@@ -23,7 +23,7 @@
 
 import { callPopup } from '../../../../../script.js';
 import { state } from '../state.js';
-import { cnzAvatarKey } from '../rag/api.js';
+import { cnzAvatarKey, cnzPlotLbName } from '../rag/api.js';
 import { purgeCharacterChunks, purgeCharacterLbEntries } from '../rag/vec-store.js';
 import { lbSaveLorebook } from '../lorebook/api.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
@@ -90,8 +90,9 @@ export async function purgeCnzFiles() {
         <p>For <strong>${escapeHtml(char.name)}</strong>, this will:</p>
         <ul>
             <li>Purge all CNZ chunks and lorebook vectors from the vector DB</li>
+            <li>Clear the plot lorebook file (entries can be restored via Rebuild RAG)</li>
         </ul>
-        <p>The lorebook file and hooks will not be changed.</p>
+        <p>The narrative lorebook and hooks will not be changed.</p>
         <p>Chunks and vectors can be rebuilt at any time via Rebuild RAG.</p>`,
         'confirm',
     );
@@ -101,7 +102,11 @@ export async function purgeCnzFiles() {
         const ak = cnzAvatarKey(char.avatar);
         await purgeCharacterChunks(ak);
         await purgeCharacterLbEntries(ak);
-        toastr.success('CNZ: Vector DB chunks and lorebook vectors purged.');
+
+        const plotLbName = state._plotLorebookName ?? cnzPlotLbName(char.avatar);
+        await lbSaveLorebook(plotLbName, { entries: {} }, { silent: true });
+
+        toastr.success('CNZ: Vector DB chunks, lorebook vectors, and plot lorebook cleared.');
     } catch (err) {
         error('Maintenance', 'purgeCnzFiles:', err);
         toastr.error(`CNZ: Purge failed: ${err.message}`);

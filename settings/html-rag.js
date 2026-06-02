@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/settings/html-rag.js
- * @stamp {"utc":"2026-05-25T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-31T00:00:00.000Z"}
  * @architectural-role Pure Functions
  * @description
  * Builds the HTML for the RAG area of the CNZ settings panel: an exposed
@@ -24,6 +24,10 @@ export function buildRagSectionHTML(s, escapeHtml) {
     const isDefinedHere = ragSumSrc === 'defined';
     const embedSource   = s.ragEmbeddingSource  ?? 'openrouter';
 
+    // Sources that need a dedicated key not accessible from the main ST connections panel.
+    const EMBED_KEY_MAP = { voyageai: 'api_key_voyageai', nomicai: 'api_key_nomicai' };
+    const embedApiKey   = EMBED_KEY_MAP[embedSource] ?? null;
+
     const embedOptions = [
         ['openrouter',   'OpenRouter'],
         ['openai',       'OpenAI'],
@@ -36,9 +40,11 @@ export function buildRagSectionHTML(s, escapeHtml) {
         ['nanogpt',      'NanoGPT'],
         ['siliconflow',  'SiliconFlow'],
         ['workers_ai',   'Cloudflare Workers AI'],
-        ['palm',         'Google AI Studio (PaLM)'],
+        ['aistudio',     'Google AI Studio'],
+        ['palm',         'Google AI Studio (legacy)'],
         ['vertexai',     'Google Vertex AI'],
         ['ollama',       'Ollama (local URL)'],
+        ['voyageai',     'Voyage AI'],
         ['vllm',         'vLLM (local URL)'],
         ['llamacpp',     'llama.cpp (local URL)'],
         ['transformers', 'Transformers (local)'],
@@ -137,6 +143,15 @@ export function buildRagSectionHTML(s, escapeHtml) {
               <div id="cnz-embed-or-note" class="cnz-settings-note${embedSource === 'openrouter' ? '' : ' cnz-hidden'}">
                 OpenRouter pre-filters the model browser to embedding models only.
               </div>
+              <div id="cnz-embed-set-key-row" class="cnz-settings-inline-row${embedApiKey ? '' : ' cnz-hidden'}">
+                <label class="cnz-label">API Key</label>
+                <div id="cnz-embed-set-key-btn"
+                     class="menu_button menu_button_icon manage-api-keys"
+                     data-key="${embedApiKey ?? ''}">
+                  <i class="fa-solid fa-key"></i>
+                  <span>Click to set</span>
+                </div>
+              </div>
               <div id="cnz-rag-remote-embed-rows">
                 <div class="cnz-settings-inline-row">
                   <label for="cnz-set-embedding-model">Embedding Model ${tip('Model ID for the selected provider. Click Browse to pick from a live list. OpenRouter: provider/model-name. OpenAI: model name only.')}</label>
@@ -148,6 +163,13 @@ export function buildRagSectionHTML(s, escapeHtml) {
                   </div>
                 </div>
                 <select id="cnz-embedding-model-list" class="cnz-select cnz-hidden" style="width:100%;margin-top:4px;font-size:0.8rem"></select>
+              </div>
+              <div class="cnz-settings-inline-row">
+                <label class="cnz-label">Embedding Test ${tip('Sends a short probe sentence through the configured provider and model. Returns the vector dimension and round-trip latency.')}</label>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <button id="cnz-test-embedding" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Test</button>
+                  <span id="cnz-embed-test-result" style="font-size:0.82rem"></span>
+                </div>
               </div>
               <div class="cnz-settings-inline-row">
                 <label for="cnz-set-rag-score-threshold">Score Threshold ${tip('Minimum cosine similarity (0–1) for a chunk to be injected.')}</label>

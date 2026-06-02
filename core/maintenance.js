@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/maintenance.js
- * @stamp {"utc":"2026-05-28T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-29T00:00:00.000Z"}
  * @version 2.1.0
  * @architectural-role Orchestrator
  * @description
@@ -25,8 +25,9 @@ import { readDnaChain } from './dna-chain.js';
 import { buildProsePairs, formatPairsAsTranscript } from './transcript.js';
 import { buildRagChunks } from '../rag/chunks.js';
 import { waitForRagChunks } from '../rag/pipeline.js';
-import { cnzAvatarKey } from '../rag/api.js';
+import { cnzAvatarKey, cnzPlotLbName } from '../rag/api.js';
 import { insertSyncChunks, insertLorebookEntries, anchorChunkCount } from '../rag/vec-store.js';
+import { rebuildPlotLorebook } from '../lorebook/plot-lorebook.js';
 import { getSettings } from './settings.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
 import { error, log } from '../log.js';
@@ -218,6 +219,21 @@ export async function rebuildRag() {
         } else {
             const lbEntries = Object.values(state._draftLorebook.entries);
             await insertLorebookEntries(avatarKey, chain.lkg.uuid, state._lorebookName, lbEntries);
+        }
+
+        // ── 5. Rebuild plot lorebook file and re-index plot entry vectors ─────
+        const anchorChunks = chain.anchors
+            .map(ref => ({ uuid: ref.anchor.uuid, entries: ref.anchor.plotEntries ?? [] }))
+            .filter(c => c.entries.length > 0);
+
+        if (anchorChunks.length) {
+            const plotLbName = state._plotLorebookName ?? cnzPlotLbName(char.avatar);
+            state._plotLorebookName = plotLbName;
+            await rebuildPlotLorebook(plotLbName, anchorChunks);
+            for (const { uuid, entries } of anchorChunks) {
+                await insertLorebookEntries(avatarKey, uuid, plotLbName, entries);
+            }
+            log('Maintenance', `rebuildRag: plot lorebook rebuilt (${anchorChunks.reduce((n, c) => n + c.entries.length, 0)} entries)`);
         }
 
     } catch (err) {

@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/rag/vec-store.js
- * @stamp {"utc":"2026-05-28T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-31T00:00:00.000Z"}
  * @version 1.2.0
  * @architectural-role IO Wrapper
  * @description
@@ -12,6 +12,7 @@
  * so the caller can surface it via toastr rather than silently failing.
  *
  * @api-declaration
+ * testEmbed()                                              → Promise<{ ok, dim, nonZero, ms }>
  * insertSyncChunks(avatarKey, anchorUuid, chatFile, chunks, pairOffset)
  * querySyncChunks(avatarKey, validAnchorUuids, queryText, topK)
  * insertLorebookEntries(avatarKey, anchorUuid, lorebookName, entries)
@@ -21,6 +22,7 @@
  * purgeCharacterLbEntries(avatarKey)
  * anchorChunkCount(avatarKey, anchorUuid)
  * anchorStats(anchorUuid)
+ * fetchAiStudioModels()                                          → Promise<{ models: {id,displayName}[] }>
  *
  * @contract
  *   assertions:
@@ -208,7 +210,7 @@ export async function anchorStats(anchorUuid) {
  * @param {string} avatarKey     Sanitized avatar filename.
  * @param {string} anchorUuid    UUID of the owning anchor.
  * @param {string} lorebookName  Name of the lorebook (for WORLDINFO_FORCE_ACTIVATE).
- * @param {{ uid:number, content:string, keys:string[], comment:string }[]} entries
+ * @param {{ uid:number, content:string, comment:string }[]} entries
  * @returns {Promise<{ inserted: number }>}
  */
 export async function insertLorebookEntries(avatarKey, anchorUuid, lorebookName, entries) {
@@ -217,7 +219,7 @@ export async function insertLorebookEntries(avatarKey, anchorUuid, lorebookName,
         hash:    getStringHash(e.content),
         uid:     e.uid,
         content: e.content,
-        keys:    e.keys ?? [],
+        keys:    e.keys ?? [],    // kept for regular LB entries; empty [] for plot entries
     }));
     const cfg    = embedCfg();
     const result = await post('/insert-lorebook', { avatarKey, anchorUuid, lorebookName, entries: payload, ...cfg });
@@ -235,13 +237,25 @@ export async function insertLorebookEntries(avatarKey, anchorUuid, lorebookName,
  * @param {number}   [topK=3]
  * @returns {Promise<{ lorebookName:string, entryUid:number, score:number }[]>}
  */
-export async function queryLorebookEntries(validAnchorUuids, queryText, topK = 3, signal) {
+export async function queryLorebookEntries(validAnchorUuids, queryText, topK = 3, signal, lorebookName = null) {
     const cfg    = embedCfg();
-    const result = await post('/query-lorebook', { queryText, validAnchorUuids, topK, ...cfg }, signal);
+    const result = await post('/query-lorebook', { queryText, validAnchorUuids, topK, lorebookName, ...cfg }, signal);
     _reportEmbedUsage(queryText.length, cfg.embeddingModel);
     return result;
 }
 
+export async function queryRecentPlotEntries(lorebookName, validAnchorUuids, semanticUids, recencyCount = 3, signal, minArcs = 0, fillerEnabled = false, fillerCards = 1, fillerStrategy = 'random', currentTurn = 0) {
+    return post('/recent-plot-entries', { lorebookName, validAnchorUuids, semanticUids, recencyCount, minArcs, fillerEnabled, fillerCards, fillerStrategy, currentTurn }, signal);
+}
+
 export async function fetchEmbedStats() {
     return get('/embed-stats');
+}
+
+export async function fetchAiStudioModels() {
+    return get('/aistudio-models');
+}
+
+export async function testEmbed() {
+    return post('/test-embed', embedCfg());
 }

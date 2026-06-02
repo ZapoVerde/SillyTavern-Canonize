@@ -36,7 +36,30 @@ import { getStringHash }     from '../../../../utils.js';
 import { stripProtectedBlock } from '../lorebook/utils.js';
 import { log, error }        from '../log.js';
 import { eventSource, event_types } from '../../../../../script.js';
-import { writeCnzRagPrompt, clearCnzRagPrompt } from '../core/summary-prompt.js';
+import { writeCnzRagPrompt, clearCnzRagPrompt, appendCnzPlotArcs } from '../core/summary-prompt.js';
+import { lbGetLorebook } from '../lorebook/api.js';
+import { DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE } from '../defaults.js';
+
+function _formatPlotArcs(entries, chunkTmpl) {
+    const tmpl = chunkTmpl || DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE;
+    const arcMap = new Map();
+    for (const { content } of entries) {
+        const tags = content.match(/#\w+/g) ?? [];
+        const tag  = tags[tags.length - 1];
+        if (!tag) continue;
+        const text = content.replace(/#\w+/g, '').trim();
+        if (!arcMap.has(tag)) arcMap.set(tag, []);
+        arcMap.get(tag).push(text);
+    }
+    return [...arcMap.entries()]
+        .map(([tag, texts]) => {
+            const arcTag = tag.slice(1);
+            return tmpl
+                .replace(/\{\{arc_tag\}\}/g, arcTag)
+                .replace(/\{\{text\}\}/g, texts.join('\n\n'));
+        })
+        .join('\n\n');
+}
 
 let _prefetchPromise  = null;
 let _prefetchChatLen  = -1;
@@ -296,15 +319,34 @@ export async function onGenerationStarted() {
         clearCnzRagPrompt();
     }
 
-    if (result.toActivate.length) {
-        log('RagHook', `Semantic LB activation: ${result.toActivate.length} entries`);
+    const plotLbName   = state._plotLorebookName ?? null;
+    const lbActivate   = plotLbName ? result.toActivate.filter(a => a.world !== plotLbName) : result.toActivate;
+    const plotActivate = plotLbName ? result.toActivate.filter(a => a.world === plotLbName) : [];
+
+    if (lbActivate.length) {
+        log('RagHook', `Semantic LB activation: ${lbActivate.length} entries`);
         try {
             window.loggeryze?.time('CNZ LB activate [blocking]');
-            await eventSource.emit(event_types.WORLDINFO_FORCE_ACTIVATE, result.toActivate);
+            await eventSource.emit(event_types.WORLDINFO_FORCE_ACTIVATE, lbActivate);
             window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
         } catch (err) {
             window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
             error('RagHook', 'Lorebook semantic activation failed:', err);
+        }
+    }
+
+    if (plotLbName) {
+        try {
+            if (plotActivate.length) {
+                const lb      = await lbGetLorebook(plotLbName);
+                const entries = plotActivate.map(a => lb.entries?.[String(a.uid)]).filter(Boolean);
+                appendCnzPlotArcs(entries.length ? _formatPlotArcs(entries, settings.cnzPlotChunkTemplate) : '');
+                if (entries.length) log('RagHook', `Plot arcs injected: ${plotActivate.length} entries`);
+            } else {
+                appendCnzPlotArcs('');
+            }
+        } catch (err) {
+            error('RagHook', 'Plot arc injection failed:', err);
         }
     }
 

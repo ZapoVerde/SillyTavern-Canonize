@@ -18,6 +18,7 @@
 
 import { buildSyncSectionHTML  } from './html-sync.js';
 import { buildRagSectionHTML   } from './html-rag.js';
+import { buildPlotSectionHTML  } from './html-plot.js';
 import { buildAdminSectionHTML } from './html-admin.js';
 
 export function buildSettingsHTML(
@@ -52,6 +53,7 @@ export function buildSettingsHTML(
       <div id="cnz-main-settings"${enableCnz ? '' : ' class="cnz-disabled"'}>
         ${buildSyncSectionHTML(settings, escapeHtml, profileOptions)}
         ${buildRagSectionHTML(settings, escapeHtml)}
+        ${buildPlotSectionHTML(settings, escapeHtml)}
         ${buildAdminSectionHTML(escapeHtml, verboseLogging, pluginLinked)}
       </div>
 

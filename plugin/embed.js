@@ -42,7 +42,8 @@ function _findStRoot() {
     throw new Error(`[CNZ embed] Cannot locate ST root from ${path.dirname(fileURLToPath(import.meta.url))}`);
 }
 
-const _stVec = path.join(_findStRoot(), 'src', 'vectors');
+const _stRoot = _findStRoot();
+const _stVec  = path.join(_stRoot, 'src', 'vectors');
 
 const { getOpenAIVector, getOpenAIBatchVector }              = await import(`${_stVec}/openai-vectors.js`);
 const { getOllamaVector, getOllamaBatchVector }              = await import(`${_stVec}/ollama-vectors.js`);
@@ -53,6 +54,12 @@ const { getCohereVector, getCohereBatchVector }              = await import(`${_
 const { getNomicAIVector, getNomicAIBatchVector }            = await import(`${_stVec}/nomicai-vectors.js`);
 const { getMakerSuiteVector, getMakerSuiteBatchVector,
         getVertexVector, getVertexBatchVector }              = await import(`${_stVec}/google-vectors.js`);
+const { readSecret, SECRET_KEYS }                           = await import(`${_stRoot}/src/endpoints/secrets.js`);
+
+/** Reads the Google AI Studio (MakerSuite) API key from ST's secrets store. */
+export function readMakerSuiteKey(directories) {
+    return readSecret(directories, SECRET_KEYS.MAKERSUITE);
+}
 
 const BATCH_SIZE     = 5;
 const MAX_CONCURRENT = 20;
@@ -108,7 +115,7 @@ function _release() {
 
 const OPENAI_COMPAT = new Set([
     'openrouter', 'openai', 'mistral', 'togetherai', 'electronhub',
-    'chutes', 'nanogpt', 'siliconflow', 'workers_ai',
+    'chutes', 'nanogpt', 'siliconflow', 'workers_ai', 'voyageai',
 ]);
 
 async function _one(cfg, text) {
@@ -122,6 +129,7 @@ async function _one(cfg, text) {
         case 'transformers': return getTransformersVector(text);
         case 'cohere':       return getCohereVector(text, false, directories, model);
         case 'nomicai':      return getNomicAIVector(text, source, directories);
+        case 'aistudio':
         case 'palm':         return getMakerSuiteVector(text, model, request);
         case 'vertexai':     return getVertexVector(text, model, request);
         default: throw new Error(`CNZ embed: unsupported source "${source}"`);
@@ -139,6 +147,7 @@ async function _batch(cfg, texts) {
         case 'transformers': return getTransformersBatchVector(texts);
         case 'cohere':       return getCohereBatchVector(texts, false, directories, model);
         case 'nomicai':      return getNomicAIBatchVector(texts, source, directories);
+        case 'aistudio':
         case 'palm':         return getMakerSuiteBatchVector(texts, model, request);
         case 'vertexai':     return getVertexBatchVector(texts, model, request);
         default: throw new Error(`CNZ embed: unsupported source "${source}"`);

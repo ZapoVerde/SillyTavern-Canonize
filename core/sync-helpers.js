@@ -20,7 +20,8 @@
  * saveLorebookToDisk(anchorUuid, allSuggestions) — disk write + vectoring
  * reconcileLorebookLanes(mainSuggestions, peopleSuggestions, lbTranscript)
  *   — detects general-lane #person promotions, scraps and reruns the people lane if needed
- * processHooksUpdate(hooksText) — writes hookseeker output to ST summary prompt
+ * processSceneUpdate(sceneText) — writes SCENE prose to ST summary prompt
+ * appendAndIndexPlotEntries(entries, anchorUuid, avatarFilename, plotLbName) — appends + RAG-indexes plot entries
  * commitDnaAnchor(messages, anchorUuid) — writes DNA anchor and link chain
  *
  * @contract
@@ -43,6 +44,7 @@ import { parseLbSuggestions, enrichLbSuggestions,
          nextLorebookUid, makeLbDraftEntry,
          stripProtectedBlock, stitchProtectedBlock } from '../lorebook/utils.js';
 import { stitchMeceTag, extractMeceTag, formatFilteredLorebookEntries } from '../lorebook/tags.js';
+import { appendPlotEntries, ensurePlotLorebook } from '../lorebook/plot-lorebook.js';
 import { state } from '../state.js';
 
 export function logSyncStart(hookPairs, lbPairs, ragPairs, coverAll, chunkEveryN) {
@@ -200,14 +202,44 @@ export async function reconcileLorebookLanes(mainSuggestions, peopleSuggestions,
     }
 }
 
-export function processHooksUpdate(hooksText) {
+/**
+ * Writes the SCENE prose to the CNZ Summary prompt.
+ * @param {string} sceneText  Parsed SCENE block from hookseeker output.
+ */
+export function processSceneUpdate(sceneText) {
     const ctx  = SillyTavern.getContext();
     const char = ctx.characters[ctx.characterId];
     if (!char) throw new Error('No character selected');
-    writeCnzSummaryPrompt(char.avatar, hooksText.trim(), null);
+    writeCnzSummaryPrompt(char.avatar, sceneText.trim(), null);
 }
 
-export async function commitDnaAnchor(messages, anchorUuid) {
+/**
+ * Appends plot entries to the plot lorebook and indexes them in the RAG store.
+ * Sets state._plotLorebookName on first use.
+ * No-op if entries is empty.
+ * @param {{ name: string, keys: string[], content: string }[]} entries
+ * @param {string}      anchorUuid
+ * @param {string}      avatarFilename
+ * @param {string|null} plotLbName  Current plot lorebook name (may be null on first sync).
+ */
+/**
+ * @returns {Promise<{ uid: number, content: string, keys: string[], comment: string }[]>}
+ *   The written entries with UIDs assigned — store these in the anchor payload.
+ */
+export async function appendAndIndexPlotEntries(entries, anchorUuid, avatarFilename, plotLbName) {
+    if (!entries.length) return [];
+    await ensurePlotLorebook(plotLbName);
+    const written = await appendPlotEntries(plotLbName, entries);
+    if (!written.length) return [];
+    try {
+        await insertLorebookEntries(cnzAvatarKey(avatarFilename), anchorUuid, plotLbName, written);
+    } catch (err) {
+        warn('PlotLb', 'RAG indexing of plot entries failed:', err);
+    }
+    return written;
+}
+
+export async function commitDnaAnchor(messages, anchorUuid, plotEntries = []) {
     if (state._stagedProsePairs.length === 0) {
         warn('DnaChain', 'commitDnaAnchor: no staged pairs — skipping anchor write');
         return;
@@ -230,10 +262,12 @@ export async function commitDnaAnchor(messages, anchorUuid) {
         }));
 
     const anchor = buildAnchorPayload({
-        uuid:        anchorUuid,
-        committedAt: new Date().toISOString(),
-        hooks:       state._priorSituation,
-        lorebook:    Object.assign({ name: state._lorebookName }, structuredClone(state._draftLorebook ?? { entries: {} })),
+        uuid:             anchorUuid,
+        committedAt:      new Date().toISOString(),
+        scene:            state._priorSituation,
+        plotLorebookName: state._plotLorebookName,
+        plotEntries,
+        lorebook:         Object.assign({ name: state._lorebookName }, structuredClone(state._draftLorebook ?? { entries: {} })),
         ragHeaders,
         parentUuid,
     });
