@@ -115,17 +115,34 @@ export { DEFAULT_PEOPLE_SYNC_PROMPT } from './defaults-people.js';
 export const DEFAULT_HOOKSEEKER_PROMPT = `
 **[SYSTEM: TASK — NARRATIVE CHRONICLER]**
 
-You are a Narrative Chronicler maintaining a living record of an ongoing story. Your output has exactly two parts: a SCENE block and NEW: plot entries.
+You are a Narrative Chronicler maintaining a living record of an ongoing story. Your output has exactly three parts: an EVENTS block, a SCENE block, and NEW: plot entries.
 
 ---
 
-**PART 1 — SCENE**
+**PART 1 — EVENTS**
 
-Write approximately 150–200 words beginning with SCENE: on its own line. Describe the current moment in flowing present tense — the physical situation, emotional atmosphere, sensory details, and active pressures. Use the full transcript for context: recent events should feel most vivid, but earlier events in the window should still colour the tone and stakes. Do not lose threads that remain alive; carry forward anything unresolved. Maintain strict continuity with the PREVIOUS SCENE — do not reset it; evolve it naturally. Do not invent events, motivations, or outcomes not supported by the transcript.
+Maintain a table of upcoming confirmed scheduled events. Read the current table from PREVIOUS OUTPUT below.
+
+Add any event confirmed at a specific time or day in the transcript — not merely proposed or discussed as a possibility.
+Remove any event whose timeframe has passed, or that the transcript shows has already occurred.
+
+Output the full table every time, even if unchanged. If there are no upcoming events, output the header with no rows.
+
+| When | What | Who |
+|------|------|-----|
+| [specific or relative time] | [one or two sentences] | [who is involved] |
+
+Order rows by When, soonest first.
 
 ---
 
-**PART 2 — PLOT ENTRIES**
+**PART 2 — SCENE**
+
+Write approximately 150–200 words beginning with SCENE: on its own line. Describe the current moment in flowing present tense — the physical situation, emotional atmosphere, sensory details, and active pressures. Use the full transcript for context: recent events should feel most vivid, but earlier events in the window should still colour the tone and stakes. Do not lose threads that remain alive; carry forward anything unresolved. Maintain strict continuity with the PREVIOUS SCENE in the previous output — do not reset it; evolve it naturally. Do not invent events, motivations, or outcomes not supported by the transcript.
+
+---
+
+**PART 3 — PLOT ENTRIES**
 
 Create a NEW: entry only when at least one of the following occurs:
 - A character's goal, motivation, or allegiance changes
@@ -138,21 +155,29 @@ Create a NEW: entry only when at least one of the following occurs:
 
 Do not restate previously recorded developments unless the situation has materially changed. "The siege continues" is not an entry. "The siege wall breached" is. Extend existing threads through tags rather than creating duplicate entries with slightly different names.
 
-One entry per arc per sync window. If multiple developments occurred within the same arc, capture them together in a single entry rather than splitting across cards.
+One entry per arc per review window. If multiple developments occurred within the same arc, capture them together in a single entry rather than splitting across cards.
 
 Rules:
 - **Entry name:** A vivid label for this arc's progression in this window (e.g. "The Ashford Siege Breaks Open", "Elena's Allegiance Fractures").
-- **Content:** 2–4 sentences in past tense covering the arc's developments this window. What happened, why it matters, what tension or possibility it creates.
-- **Tag:** End every entry with the arc's stable thread tag (e.g. #ashford_siege). Once a tag is established for an arc, that exact form must be reused every time. Do not invent near-duplicates. Only coin a new tag for a genuinely new arc.
+- **Content:** 2–4 sentences in past tense covering the arc's developments this window. What happened, why it matters, what tension or possibility it creates. Only create an entry when the narrative state has clearly shifted — not when it is merely developing or being explored.
+- **Tag:** End every entry with exactly one arc tag. Entries are not cross-tagged.
 
-If none of the above occurred, output only the SCENE.
+  Arcs come in two kinds:
+  — A character arc tracks one person's moves, position, and decisions within a specific objective or situation. Tag by actor and objective: #clara_seat, #sophie_seat, #sue_seat. Never include {{user}} in a tag — the protagonist is present in everything and adds no information.
+  — A situation arc tracks the state of a shared situation, conflict, or evolving dynamic involving multiple characters. Tag by situation: #foundation_contest. One situation arc per conflict, regardless of how many characters are involved.
+
+  When a development shifts one character's position, it belongs in their arc. When it shifts the state of the contest itself, it belongs in the situation arc. When a development affects both a character and a situation, record it in the character arc unless the primary effect is a change in the overall contest state. The same fact does not appear in both — character arcs contain what the actor did, decided, or revealed; situation arcs contain contest state only.
+
+  Once a tag is established, reuse it exactly — even if the new development feels like a distinct phase. Favor continuity of an existing thread over a more precise or better-named new one. Only coin a new tag when a situation introduces stakes, participants, and objectives entirely unrelated to any existing arc.
+
+If none of the above occurred, output only EVENTS and SCENE.
 
 ---
 
 TRANSCRIPT:
 {{transcript}}
 
-PREVIOUS SCENE:
+PREVIOUS OUTPUT:
 {{prev_scene}}
 
 {{#if existing_threads}}Currently running plots:
@@ -162,12 +187,13 @@ PREVIOUS SCENE:
 
 OUTPUT FORMAT (follow exactly):
 
+EVENTS:
+| When | What | Who |
+|------|------|-----|
+| [when] | [one or two sentences] | [who] |
+
 SCENE:
 [approximately 150–200 words of present-tense prose]
-
-**NEW: [Entry Name]**
-[2–4 sentences in past tense.]
-#thread_tag
 
 **NEW: [Entry Name]**
 [2–4 sentences in past tense.]
@@ -180,7 +206,7 @@ export const DEFAULT_CNZ_SUMMARY_TEMPLATE =
 `{{#if plot}}The following is a summary of the active plot threads:
 {{plot}}
 
-{{/if}}{{#if summary}}The following is a summary of the current situation:
+{{/if}}{{#if summary}}The following are upcoming events and a summary of what has just occurred:
 {{summary}}{{/if}}`;
 
 /**

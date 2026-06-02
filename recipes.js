@@ -86,6 +86,7 @@ export const Recipes = {
                           {
                               lorebook_entries: inputs.lorebook_entries,
                               transcript:       inputs.transcript,
+                              user:             inputs.user ?? 'the user',
                           }
                       ),
         profileKey:   'profileId',
