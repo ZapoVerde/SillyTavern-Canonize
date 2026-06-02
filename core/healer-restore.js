@@ -43,14 +43,19 @@ export async function restoreLorebookToNode(_char, node, nodeFile = null) {
 }
 
 /**
- * Restores the CNZ Summary prompt to the hooks state stored in `nodeFile.state.hooks`.
+ * Restores the CNZ Summary prompt and plot lorebook name from a node file.
+ * Reads `state.scene` (new) with fallback to `state.hooks` (legacy anchors).
+ * Also seeds state._plotLorebookName from the anchor so the next sync writes
+ * to the correct plot lorebook file.
  * @param {object} char     Character object from ST context.
  * @param {object} _node    Chain entry (unused; kept for call-site symmetry).
- * @param {object} nodeFile Full node file object with state.hooks and state.uuid.
+ * @param {object} nodeFile Full node file object.
  */
 export function restoreHooksToNode(char, _node, nodeFile = null) {
-    const hooksText  = nodeFile?.state?.hooks ?? '';
+    const sceneText  = nodeFile?.state?.scene ?? nodeFile?.state?.hooks ?? '';
     const anchorUuid = nodeFile?.state?.uuid  ?? null;
-    writeCnzSummaryPrompt(char.avatar, hooksText, anchorUuid);
+    writeCnzSummaryPrompt(char.avatar, sceneText, anchorUuid);
+    state._priorSituation  = sceneText;
+    state._plotLorebookName = nodeFile?.state?.plotLorebookName ?? null;
 }
 

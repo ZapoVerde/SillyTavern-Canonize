@@ -84,10 +84,12 @@ export function populateStep4Summary() {
     const pendingText = pendingLb > 0
         ? ` ⚠ ${pendingLb} suggestion${pendingLb !== 1 ? 's' : ''} pending review`
         : '';
+    const plotCount = Object.keys(state._draftPlotLorebook?.entries ?? {}).length;
     const hooksText    = $('#cnz-situation-text').val().trim();
     const hooksPreview = hooksText.length > 100 ? hooksText.slice(0, 100) + '…' : (hooksText || '(empty)');
     $('#cnz-step4-hooks').text(`Hooks: ${hooksPreview}`);
     $('#cnz-step4-lore').text(`Lore: ${loreLabel} staged for update/creation${pendingText}`);
+    $('#cnz-step4-plot').text(`Plot: ${plotCount} entr${plotCount !== 1 ? 'ies' : 'y'}`);
     populateRagPanel();
 }
 

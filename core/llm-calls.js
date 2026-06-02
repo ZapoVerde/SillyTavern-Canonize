@@ -107,14 +107,17 @@ export function runPeopleSyncCall(transcript, lorebookEntriesText) {
 
 /**
  * Fires the Hookseeker AI call via the bus.
+ * Returns raw text containing a SCENE block followed by **NEW:** plot entries.
  * @param {string} transcript
- * @param {string} prevSummary
+ * @param {string} prevScene          SCENE prose from the prior sync (continuity anchor).
+ * @param {string} [existingThreads]  Formatted "Currently running plots:" block with arc entries.
  * @returns {Promise<string>}
  */
-export function runHookseekerCall(transcript, prevSummary = '') {
+export function runHookseekerCall(transcript, prevScene = '', existingThreads = '') {
     return _waitForRecipe('hookseeker', {
         transcript,
-        prev_summary: prevSummary,
+        prev_scene:        prevScene,
+        existing_threads:  existingThreads,
     });
 }
 

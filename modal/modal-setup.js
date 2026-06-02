@@ -38,6 +38,11 @@ import {
     onLbIngesterApply, onLbApplyAllUnresolved, onTargetedGenerateClick,
     onLbRegenClick, flushLbEditorToDraft,
 } from './lb-workshop.js';
+import {
+    onPlotLbTabSwitch, onPlotLbEditorInput, onPlotLbSuggestionSelectChange,
+    onPlotLbFullEntrySelectChange, onPlotLbApply, onPlotLbDelete,
+    onPlotLbAddEntry, flushPlotLbEditorToDraft, onPlotLbIngesterNext,
+} from './plot-lb-workshop.js';
 import { onConfirmClick } from './commit.js';
 import { deleteLbEntry, syncFreeformFromSuggestions } from '../lorebook/utils.js';
 
@@ -73,7 +78,7 @@ export function injectModal() {
         import('./hooks-workshop.js').then(({ onRegenHooksClick }) => onRegenHooksClick());
     });
 
-    // Step 2 — Lorebook Workshop
+    // Step 3 — Lorebook Workshop
     $('#cnz-lb-freeform-regen').on('click',       onLbRegenClick);
     $('#cnz-lb-suggestion-select').on('change',   onLbSuggestionSelectChange);
     $('#cnz-lb-editor-name').on('input',          onLbIngesterEditorInput);
@@ -122,7 +127,21 @@ export function injectModal() {
     });
     $('#cnz-modal').on('click', '#cnz-targeted-generate', onTargetedGenerateClick);
 
-    // Step 3 — Narrative Memory Workshop
+    // Step 2 — Plot Lorebook Workshop
+    $('#cnz-modal').on('click', '#cnz-plot-lb-tab-bar .cnz-tab-btn', function () {
+        onPlotLbTabSwitch($(this).data('tab'));
+    });
+    $('#cnz-plot-lb-entry-select').on('change',       onPlotLbSuggestionSelectChange);
+    $('#cnz-plot-lb-ingester-next').on('click',       onPlotLbIngesterNext);
+    $('#cnz-plot-lb-full-entry-select').on('change',  onPlotLbFullEntrySelectChange);
+    $('#cnz-plot-lb-editor-name').on('input',         onPlotLbEditorInput);
+    $('#cnz-plot-lb-editor-content').on('input',      onPlotLbEditorInput);
+    $('#cnz-plot-lb-editor-name, #cnz-plot-lb-editor-content').on('blur', flushPlotLbEditorToDraft);
+    $('#cnz-plot-lb-apply').on('click',               onPlotLbApply);
+    $('#cnz-plot-lb-delete').on('click',              onPlotLbDelete);
+    $('#cnz-plot-lb-add').on('click',                 onPlotLbAddEntry);
+
+    // Step 4 — Narrative Memory Workshop
     $('#cnz-modal').on('click', '#cnz-rag-tab-bar .cnz-tab-btn', function () {
         onRagTabSwitch($(this).data('tab'));
     });

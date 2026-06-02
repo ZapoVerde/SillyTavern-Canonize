@@ -33,7 +33,8 @@
  *     external_io:     [db.js, routes.js, setup.js]
  */
 
-import { initDb, chunkCountForAvatar, lbEntryCountForAvatar } from './db.js';
+import { initDb, chunkCountForAvatar } from './db.js';
+import { lbEntryCountForAvatar } from './db-lb.js';
 import { registerRoutes } from './routes.js';
 import { getInstallStatus, installSymlink } from './setup.js';
 

@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/defaults-people.js
- * @stamp {"utc":"2026-05-28T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2026-06-01T00:00:00.000Z"}
+ * @version 2.0.0
  * @architectural-role Pure Functions
  * @description
  * Default prompt template for the people curator lane.
@@ -21,137 +21,131 @@
 
 export const DEFAULT_PEOPLE_SYNC_PROMPT = `
 **[SYSTEM: TASK — PEOPLE CURATOR]**
-You are reviewing a session transcript and the current person entries for this story world.
-Your job is to maintain accurate, living records of the people who populate it — their appearance, personality, relationship with {{user}}, and personal goals.
+You will receive a transcript of recent story events and the current person entries for this story. The primary character is {{user}}.
+Your job is to maintain accurate, living records of every named person. Each card has five sections: **Appearance** (fixed physical description, set once at creation), **Personality** (fixed character axes, set once at creation), **Connections** (a table of this character's relationships to other named characters in the world), **Relationship with {{user}}** (the live current dynamic between this character and the protagonist), and **Goals** (the character's own personal ambitions, long-term and immediate). The output for each review is a set of NEW or UPDATE blocks — one per card that requires action.
 
-ENTRY TIERS:
-Person entries use one of two formats based on narrative weight.
+If a card is missing any section — Appearance, Personality, Connections, Relationship with {{user}}, or Goals — add all missing sections in full as part of its UPDATE.
 
-Surface NPC: a named character who has appeared but remains peripheral — no meaningful dialogue, no expressed goals, no developed relationship with {{user}}.
-  One paragraph covering identity, role, and initial connection to {{user}}, followed by a brief appearance description.
-
-Full Treatment: any character who has been updated, recurs with meaningful dialogue, expresses goals, or has a relationship with {{user}} that has developed texture.
-  Structured sections: Appearance, Personality, Relationship with {{user}}, Goals.
-
-UPGRADE PATH:
-Any UPDATE to a surface NPC entry must be output in full treatment format. If a character merits an update, they merit full treatment. Synthesise Personality axes and Goals from the existing entry plus the transcript. Reproduce ## Appearance exactly.
+---
 
 SECTION RULES:
 
 ## Appearance — set once at creation. Physically inherent traits only: body type, height, build, bone structure, facial features, natural hair colour and texture, permanent features such as scars or birthmarks. Exclude clothing, accessories, current hairstyle, and injuries.
-  If the transcript does not describe a trait, invent something consistent with the character's implied tone and setting — commit to it, do not leave gaps.
+  If a trait is not established in the transcript, invent something consistent with the character's tone and setting — commit to it, do not leave gaps.
   Reproduce exactly in every UPDATE — do not alter, rephrase, or reorder.
 
-## Personality — set once at creation (full treatment only). Choose 3–5 axes that are genuinely revealing of this specific character. Format each as:
-  [Quality A] ↔ [Quality B]: brief note on where they sit and why it matters.
+## Personality — set once at creation. Choose 3–5 axes genuinely revealing of this specific character. Format:
+  [Quality A] ↔ [Quality B]: one sentence on where they sit and why it matters.
   Reproduce exactly in every UPDATE — do not alter, rephrase, or reorder.
 
-## Relationship with {{user}} — the primary live section. Continuous prose. Write pure current state: emotional stance toward {{user}}, the power dynamic between them, and any active tension or unresolved element. Keep it dense — a single vague sentence is not enough. Do not narrate events or backstory — hookseeker and RAG carry the historical record.
+## Connections — a reference table of this character's direct relationships to other named characters. Omit {{user}} — that axis lives in ## Relationship with {{user}}.
 
-## Goals — updateable. One major goal (the character's core drive, slow-moving) and exactly three minor goals (immediate or emerging intentions, not generic traits).
-  Goals reflect this character's own life — personal ambitions, survival pressures, private agendas — independent of {{user}}'s story. They are not sidequests. A character should want things that would matter even if {{user}} had never appeared.
-  If goals are not yet established in the transcript, invent plausible ones — a character with direction is more useful than one without.
-  Examples:
-    Major: Reclaim her family's ancestral lands — her father died before he could, and she intends to finish it.
-    Major: Escape his contract with the merchant house permanently, cleanly, and without being pursued.
-    Major: Restore her standing in the Scholars' Guild before the decade is out.
-    Minor: Acquire a faster horse before the trade season closes.
-    Minor: Track down the man who left with her father's signet ring.
-    Minor: Keep the debt hidden long enough to negotiate better terms.
+  | Person | Relation | Tone |
+  |--------|----------|------|
+  | [Two Word Name] | [structural role] | [one word] |
+
+  Person: the exact two-word card name of the connected character. Only include characters with an existing lorebook entry.
+  Relation: structural or role relationship, up to three words (grandfather, employer, daughter, rival, father-in-law). Set at creation; update only if the structural fact changes (marriage, death, formal role change).
+  Tone: one word describing the current emotional or political quality of the connection. Not a bounded list — choose any single word that is accurate. One word only, no hyphens, no qualifiers. Update when the dynamic meaningfully shifts.
+
+  Add rows as new connections form. If a relationship ends or sours, update Tone — do not remove the row.
+  In every UPDATE: reproduce all existing rows exactly; only change Tone values that have meaningfully shifted.
+
+## Relationship with {{user}} — the live state section. Continuous prose.
+
+  Convert events into persistent conditions. This section is not a record of what happened — it is a compression of those events into what remains true after the scene ends.
+
+  Cover: emotional posture toward {{user}}, power balance, any active leverage or asymmetry, and direction of movement. Write 2–4 sentences.
+
+  Persistence test: if a sentence would stop being true once the immediate scene ends, cut it.
+
+  When an event is relevant, express its ongoing consequence instead:
+  "She covered for him" → "She is now implicitly aligned with him, carrying shared risk if the truth surfaces."
+
+  Exclude: event narration, references to specific past exchanges, time-based phrasing ("recently", "last time", "since their last meeting"), and scheduled or future actions.
+
+## Goals — one major goal and exactly three minor goals.
+
+  The major goal is this character's own long-term ambition — something that would remain meaningful if {{user}} were removed from the story entirely. It is slow-moving and changes only when something fundamental shifts in the character's situation.
+
+  Minor goals are the character's immediate personal intentions. They may brush against {{user}}'s story at the edges, but they exist because this character has a life of their own.
+
+  If goals are not yet established in the transcript, invent plausible ones consistent with the character's personality and situation.
+
+---
 
 CATEGORY TAGS:
-Every entry must end with #person on its own line. Add freeform tags after #person to reflect meaningful groupings or traits (e.g. #Bostaff_Household, #antagonist, #ally, #deceased). Invent tags that serve the story.
-Never create entries tagged #place, #thing, or #concept — those belong to a separate curator.
+Every entry must end with #person on its own line. Add freeform tags for meaningful groupings or traits (e.g. #Bostaff_Household, #antagonist, #ally, #deceased). Invent tags that serve the story.
 
 NAMING CONVENTION:
 Every entry name is exactly two words. No parenthetical qualifiers — ever.
 
   Full name known:     Firstname Lastname       → Elara Mornwood, Thomas Harwick
-  Title + first name:  Title Firstname          → Queen Elara, Lady Harwick, Duchess Elara
-  Single name only:    Role Firstname           → Guard Renn, Maid Rose, Smith Alvin
+  Title + first name:  Title Firstname          → Queen Elara, Lady Harwick, Guard Renn
+  Single name only:    Role Firstname           → Maid Rose, Smith Alvin
 
-No two entries may share the same two-word name. If a collision would occur, use a more specific title to distinguish (Duchess Elara vs Lady Elara). The name is set once at creation and never changed.
+No two entries may share the same two-word name. Name is set at creation and never changed.
+
+---
 
 CURRENT PERSON ENTRIES:
 {{lorebook_entries}}
 
-SESSION TRANSCRIPT:
+TRANSCRIPT:
 {{transcript}}
+
+---
 
 INSTRUCTIONS:
 Work through these steps internally before writing any output:
 1. Identify every named person in the transcript.
-2. For each: locate any matching existing entry. A match exists when the person's name appears as either word in an existing entry's two-word comment. Check every entry — do not stop at the first partial match.
-3. For existing entries: assess whether relationship with {{user}} or goals have meaningfully shifted.
-4. For new persons: determine the appropriate tier based on their narrative weight.
-5. Output blocks only for those requiring action.
+2. For each: locate any matching existing entry. A match exists when the person's name appears as either word in an existing entry's two-word comment. Check every entry.
+3. For existing entries: assess whether Connections Tone, Relationship with {{user}}, or Goals have meaningfully shifted.
+4. For new persons: create a full treatment entry, inventing any details not established in the transcript.
+5. Output blocks only for entries requiring action.
 
 Rules:
-- Never create an entry for {{user}} — the protagonist is not a lorebook subject.
-- Before creating a NEW entry, confirm no existing entry's two-word comment contains this person's name as either word. If a match exists, output an UPDATE for that entry — not a NEW block.
-- New entry names must follow the naming convention: exactly two words, no parentheticals. Choose the most specific available title to ensure the name is unique across all existing entries.
-- **Duplicate Flagging:** If two existing entries clearly cover the same person, merge their content into the primary entry via an UPDATE, then output a second UPDATE for the redundant entry with the content \`**dup** — duplicate of [Primary Name]\` so it can be manually removed.
+- Never create an entry for {{user}}.
+- Before creating a NEW entry, confirm no existing entry covers this person. If a match exists, output an UPDATE instead.
+- New entry names: exactly two words, no parentheticals.
+- **Duplicate Flagging:** If two existing entries clearly cover the same person, merge content into the primary via UPDATE, then output a second UPDATE for the redundant entry with content \`**dup** — duplicate of [Primary Name]\`.
 - Only update on clear, meaningful change — do not issue micro-adjustments or speculative updates.
-- Any UPDATE to a surface NPC must use the full treatment format.
-- Reproduce ## Appearance and ## Personality exactly as they appear in the current entry — do not alter them under any circumstances.
-- Keys: name(s) and meaningful aliases only (2–5, lowercase).
+- Reproduce ## Appearance and ## Personality exactly — never alter them.
+- Keys: include the character's name, all known aliases and nicknames, and any titles or roles they are consistently called by. 2–5 entries, lowercase. If a person could plausibly be referenced in the transcript without their full name, that reference form belongs in the keys. Never key on {{user}} or any name or alias for {{user}}.
 - Write in third-person present tense.
 - If no changes are needed, output exactly: NO CHANGES NEEDED
 
+---
+
 ### OUTPUT FORMAT — use exactly these structures:
 
-**NEW — surface NPC:**
-**NEW: [Two Word Name]**
-Keys: firstname, lastname
-[One paragraph — identity, role, relationship to {{user}}.]
-
-## Appearance
-[Physically inherent description — invent details consistent with tone if not established.]
-
-#person #optional_tags
-
-**NEW — full treatment:**
 **NEW: [Two Word Name]**
 Keys: firstname, lastname
 ## Appearance
 [Physically inherent description — invent details consistent with tone if not established.]
 
 ## Personality
-Warm ↔ Guarded: leans guarded — slow to trust, but fiercely loyal once earned.
+[Quality A] ↔ [Quality B]: [one sentence]
 [2–4 more character-specific axes]
 
+## Connections
+| Person | Relation | Tone |
+|--------|----------|------|
+| [Card Name] | [role] | [one word] |
+
 ## Relationship with {{user}}
-[Emotional stance, power dynamic, active tension — current state only, no event narration.]
+[Current posture, power balance, active tension — no events, no appointments.]
 
 ## Goals
-Major: [one driving ambition]
+Major: [this character's own long-term ambition, independent of {{user}}]
 Minor: [first immediate intention]
 Minor: [second immediate intention]
 Minor: [third immediate intention]
 
 #person #optional_tags
 
-**UPDATE — surface NPC (always expands to full treatment):**
-**UPDATE: [Exact Two Word Name]**
-Keys: firstname, lastname
-## Appearance
-[Copied exactly from existing entry.]
+---
 
-## Personality
-[Newly drafted — 3–5 character-specific axes synthesised from existing entry and transcript.]
-
-## Relationship with {{user}}
-[Current state only.]
-
-## Goals
-Major: [synthesised from existing entry or invented if absent]
-Minor: [first]
-Minor: [second]
-Minor: [third]
-
-#person #optional_tags
-
-**UPDATE — full treatment:**
 **UPDATE: [Exact Two Word Name]**
 Keys: firstname, lastname
 ## Appearance
@@ -160,16 +154,23 @@ Keys: firstname, lastname
 ## Personality
 [Copied exactly from existing entry.]
 
+## Connections
+[All existing rows copied exactly. Update Tone values that have meaningfully shifted. Add new rows below existing ones.]
+| Person | Relation | Tone |
+|--------|----------|------|
+
 ## Relationship with {{user}}
-[Updated current state only.]
+[Updated current state — no events, no appointments.]
 
 ## Goals
-Major: [updated if changed, otherwise unchanged]
+Major: [updated if changed, otherwise unchanged — no deadlines]
 Minor: [first]
 Minor: [second]
 Minor: [third]
 
 #person #optional_tags
+
+---
 
 **UPDATE — duplicate flag:**
 **UPDATE: [Redundant Entry Name]**

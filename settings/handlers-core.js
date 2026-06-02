@@ -78,7 +78,7 @@ export function bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refres
     });
     $('#cnz-edit-summary-prompt').on('click', () =>
         openPromptModal('hookseekerPrompt', 'Edit Summary Prompt', DEFAULT_HOOKSEEKER_PROMPT,
-            ['transcript', 'prev_summary']));
+            ['transcript', 'prev_scene', 'existing_threads']));
     $('#cnz-edit-lorebook-prompt').on('click', () =>
         openPromptModal('lorebookSyncPrompt', 'Edit Lorebook Sync Prompt', DEFAULT_LOREBOOK_SYNC_PROMPT,
             ['lorebook_entries', 'transcript']));

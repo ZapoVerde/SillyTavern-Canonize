@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/settings/handlers-rag.js
- * @stamp {"utc":"2026-05-22T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-31T00:00:00.000Z"}
  * @version 1.0.0
  * @architectural-role IO Wrapper
  * @description
@@ -19,10 +19,11 @@
  */
 
 import { saveSettingsDebounced } from '../../../../../script.js';
+import { testEmbed, fetchAiStudioModels } from '../rag/vec-store.js';
 import { state } from '../state.js';
 import { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 import { getSettings } from './data.js';
-import { error } from '../log.js';
+import { log, error } from '../log.js';
 
 let _orModelCache = null;
 
@@ -46,6 +47,26 @@ const NOMIC_EMBED_MODELS = [
 
 const MISTRAL_EMBED_MODELS = [
     { id: 'mistral-embed', label: 'mistral-embed' },
+];
+
+const VOYAGE_EMBED_MODELS = [
+    // Voyage 4 (current flagship)
+    { id: 'voyage-4-large',        label: 'voyage-4-large' },
+    { id: 'voyage-4',              label: 'voyage-4' },
+    { id: 'voyage-4-lite',         label: 'voyage-4-lite' },
+    { id: 'voyage-4-nano',         label: 'voyage-4-nano' },
+    // Voyage 3.5
+    { id: 'voyage-3.5',            label: 'voyage-3.5' },
+    { id: 'voyage-3.5-lite',       label: 'voyage-3.5-lite' },
+    // Voyage 3
+    { id: 'voyage-3-large',        label: 'voyage-3-large' },
+    { id: 'voyage-3',              label: 'voyage-3' },
+    { id: 'voyage-3-lite',         label: 'voyage-3-lite' },
+    // Specialised
+    { id: 'voyage-code-3',         label: 'voyage-code-3' },
+    { id: 'voyage-finance-2',      label: 'voyage-finance-2' },
+    { id: 'voyage-law-2',          label: 'voyage-law-2' },
+    { id: 'voyage-multilingual-2', label: 'voyage-multilingual-2' },
 ];
 
 function _renderEmbedModelList(items, showingAll, withToggle = false) {
@@ -147,11 +168,16 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
     });
 
     // ── Retrieval settings ────────────────────────────────────────────────────
+    const EMBED_KEY_MAP = { voyageai: 'api_key_voyageai', nomicai: 'api_key_nomicai' };
+
     $('#cnz-set-embedding-source').on('change', function () {
-        const src = $(this).val();
+        const src    = $(this).val();
+        const apiKey = EMBED_KEY_MAP[src] ?? null;
         getSettings().ragEmbeddingSource = src;
         saveSettingsDebounced(); updateDirtyIndicator();
         $('#cnz-embed-or-note').toggleClass('cnz-hidden', src !== 'openrouter');
+        $('#cnz-embed-set-key-row').toggleClass('cnz-hidden', !apiKey);
+        if (apiKey) $('#cnz-embed-set-key-btn').attr('data-key', apiKey);
     });
 
     $('#cnz-set-embedding-model').on('input', function () {
@@ -180,6 +206,27 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
     $('#cnz-edit-chunk-template').on('click', () =>
         openPromptModal('ragChunkTemplate', 'Edit Chunk Template', DEFAULT_RAG_CHUNK_TEMPLATE, ['text', 'turn_range', 'header', 'char_name']));
 
+    // ── Embedding test ────────────────────────────────────────────────────────
+    $('#cnz-test-embedding').on('click', async function () {
+        const $btn    = $(this);
+        const $result = $('#cnz-embed-test-result');
+        const s       = getSettings();
+        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i>');
+        $result.removeAttr('style').removeClass('cnz-error-inline').text('');
+        log('EmbedTest', `source=${s.ragEmbeddingSource ?? 'openrouter'} model=${s.ragEmbeddingModel || '(unset)'}`);
+        try {
+            const { dim, nonZero, ms } = await testEmbed();
+            const allZero = nonZero === 0 ? ' — ALL ZEROS' : '';
+            log('EmbedTest', `OK dim=${dim} nonZero=${nonZero} ms=${ms}${allZero}`);
+            $result.css('color', 'var(--cnz-btn-success-fg)').text(`OK — ${dim}-dim in ${ms}ms${nonZero === 0 ? ' ⚠ all zeros' : ''}`);
+        } catch (err) {
+            error('EmbedTest', err.message);
+            $result.addClass('cnz-error-inline').text(err.message);
+        } finally {
+            $btn.prop('disabled', false).text('Test');
+        }
+    });
+
     // ── Embedding model browser ───────────────────────────────────────────────
     $('#cnz-browse-embedding-model').on('click', async function () {
         const source = getSettings().ragEmbeddingSource ?? 'openrouter';
@@ -187,6 +234,23 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
         if (source === 'cohere') { _renderEmbedModelList(COHERE_EMBED_MODELS, false); return; }
         if (source === 'nomicai') { _renderEmbedModelList(NOMIC_EMBED_MODELS, false); return; }
         if (source === 'mistral') { _renderEmbedModelList(MISTRAL_EMBED_MODELS, false); return; }
+        if (source === 'voyageai') { _renderEmbedModelList(VOYAGE_EMBED_MODELS, false); return; }
+        if (source === 'aistudio' || source === 'palm') {
+            const $btn = $(this);
+            const orig = $btn.html();
+            $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i>');
+            try {
+                const { models } = await fetchAiStudioModels();
+                const items = models.map(m => ({ id: m.id, label: m.displayName ? `${m.id} — ${m.displayName}` : m.id }));
+                _renderEmbedModelList(items, false);
+            } catch (err) {
+                error('Settings', 'AI Studio model list fetch failed:', err);
+                toastr.error(`Could not fetch AI Studio models: ${err?.message || err}`);
+            } finally {
+                $btn.prop('disabled', false).html(orig);
+            }
+            return;
+        }
         if (source !== 'openrouter') {
             toastr.info('No model list available for this provider — enter the model ID manually.');
             return;

@@ -21,6 +21,9 @@
  * DEFAULT_TARGETED_NEW_PROMPT      — targeted fact extractor system prompt.
  * DEFAULT_RAG_INJECTION_TEMPLATE   — injection wrapper template ({{text}} placeholder).
  * DEFAULT_RAG_CHUNK_TEMPLATE       — per-chunk wrapper template ({{text}}, {{turn_range}}, {{header}}, {{char_name}}).
+ * DEFAULT_CNZ_SUMMARY_TEMPLATE     — overall CNZ Summary prompt wrapper ({{summary}}, {{plot}}).
+ * DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE  — per-arc wrapper template ({{text}}, {{arc_tag}}).
+ * buildCnzSummaryContent(scene, plot, tmpl) — renders the summary prompt from scene + plot strings.
  *
  * @contract
  *   assertions:
@@ -110,51 +113,117 @@ Keys: keyword1
 export { DEFAULT_PEOPLE_SYNC_PROMPT } from './defaults-people.js';
 
 export const DEFAULT_HOOKSEEKER_PROMPT = `
-**[SYSTEM: TASK — NARRATIVE STATE ANALYST]**
+**[SYSTEM: TASK — NARRATIVE CHRONICLER]**
 
-You are a precise Narrative State Analyst. Your job is to update the existing narrative state by carefully integrating the new transcript into the previous summary.
+You are a Narrative Chronicler maintaining a living record of an ongoing story. Your output has exactly three parts: an EVENTS block, a SCENE block, and plot entries.
 
-The PREVIOUS SUMMARY serves as the initial state and your foundation. Update it thoroughly with the new TRANSCRIPT: incorporate any new threads and developments, evolve or tie off threads that have been resolved or advanced, and keep every unresolved element active and full of tension. Never prematurely close anything that remains open in the story.
+---
 
-Output only the structured document with no additional text. Write entirely in present tense. Keep the total length between 400 and 600 words. Follow the exact heading hierarchy below without changing, adding, or removing any headings. Preserve recent moments of rest, trust, or interpersonal shifts even when they do not drive the immediate plot. Focus on what remains alive: active pressures, character intentions that have not yet played out, unresolved threads, key facts, and relationships the narrative must continue to honor.
+**PART 1 — EVENTS**
 
-Follow this exact hierarchy every single time:
+Maintain a table of upcoming confirmed scheduled events. Read the current table from PREVIOUS OUTPUT below.
 
-## Narrative State
+Insert any event confirmed at a specific time or day in the transcript — not merely proposed or discussed as a possibility.
+Remove any event whose timeframe has passed, or that the transcript shows has already occurred.
 
-### Current Scene
+Output the full table every time, even if unchanged. If there are no upcoming events, output the header with no rows.
 
-Describe where the characters are physically and emotionally right now, incorporating the latest developments from the transcript.
+| When | What | Who |
+|------|------|-----|
+| [specific or relative time] | [one or two sentences] | [who is involved] |
 
-### Active Characters and Their Intentions
+Order rows by When, soonest first.
 
-Detail the key characters who are currently relevant, their updated emotional states, and what they want or intend next. Show any internal conflict or decisions still hanging.
+---
 
-### Unresolved Threads and Tensions
+**PART 2 — SCENE**
 
-Describe every significant open thread and source of tension that remains alive after integrating the transcript. Note any new threads that have emerged. Clearly indicate which previous threads have been resolved or significantly advanced.
+Write approximately 150–200 words beginning with SCENE: on its own line. Describe the current moment in flowing present tense — the physical situation, emotional atmosphere, sensory details, and active pressures. Use the full transcript for context: recent events should feel most vivid, but earlier events in the window should still colour the tone and stakes. Do not lose threads that remain alive; carry forward anything unresolved. Maintain strict continuity with the PREVIOUS SCENE in the previous output — do not reset it; evolve it naturally. Do not invent events, motivations, or outcomes not supported by the transcript.
 
-### Key Facts and Relationships
+---
 
-Clearly state the important established facts and character relationships that the story must continue to respect. Update with any new facts or shifts in dynamics from the transcript, including recent changes in trust, power, or connection.
+**PART 3 — PLOT ENTRIES**
 
-### Narrative Momentum
+Create a NEW: entry only when at least one of the following occurs:
+- A character's goal, motivation, or allegiance changes
+- A major decision is made or a consequential action taken
+- Important information is revealed — a secret exposed, a mystery deepened or resolved
+- A threat escalates or resolves
+- An alliance or relationship dynamic shifts
+- A lasting consequence takes hold
+- A new narrative thread begins
 
-Describe the current forward momentum of the story — what feels imminent or inevitable now, and what forces are pushing the characters forward after the latest events.
+Do not restate previously recorded developments unless the situation has materially changed. "The siege continues" is not an entry. "The siege wall breached" is. Extend existing threads through tags rather than creating duplicate entries with slightly different names.
 
-Write in flowing, descriptive continuous prose under each subheading. The document must read as a living, updated continuation of the previous summary so that someone reading only this latest version can step straight back into the story with full continuity and no loss of important details.
+One entry per arc per review window. If multiple developments occurred within the same arc, capture them together in a single entry rather than splitting across cards.
+
+Rules:
+- **Entry name:** A vivid label for this arc's progression in this window (e.g. "The Ashford Siege Breaks Open", "Elena's Allegiance Fractures").
+- **Content:** 2–4 sentences in past tense covering the arc's developments this window. What happened, why it matters, what tension or possibility it creates. Only create an entry when the narrative state has clearly shifted — not when it is merely developing or being explored.
+- **Tag:** End every entry with exactly one arc tag. Entries are not cross-tagged.
+
+  Arcs come in two kinds:
+  — A character arc tracks one person's moves, position, and decisions within a specific objective or situation. Tag by actor and objective: #clara_seat, #sophie_seat, #sue_seat. Never include {{user}} in a tag — the protagonist is present in everything and adds no information.
+  — A situation arc tracks the state of a shared situation, conflict, or evolving dynamic involving multiple characters. Tag by situation: #foundation_contest. One situation arc per conflict, regardless of how many characters are involved.
+
+  When a development shifts one character's position, it belongs in their arc. When it shifts the state of the contest itself, it belongs in the situation arc. When a development affects both a character and a situation, record it in the character arc unless the primary effect is a change in the overall contest state. The same fact does not appear in both — character arcs contain what the actor did, decided, or revealed; situation arcs contain contest state only.
+
+  Once a tag is established, reuse it exactly — even if the new development feels like a distinct phase. Favor continuity of an existing thread over a more precise or better-named new one. Only coin a new tag when a situation introduces stakes, participants, and objectives entirely unrelated to any existing arc.
+
+If none of the above occurred, output only EVENTS and SCENE.
+
+---
 
 TRANSCRIPT:
 {{transcript}}
 
-PREVIOUS SUMMARY:
-{{prev_summary}}
+PREVIOUS OUTPUT:
+{{prev_scene}}
 
-REMINDER: You are maintaining narrative continuity by thoughtfully updating the previous state with the new transcript. Add new elements, evolve or tie off resolved ones, and keep unresolved tension intact.
+{{#if existing_threads}}Currently running plots:
+{{existing_threads}}
+
+{{/if}}---
+
+OUTPUT FORMAT (follow exactly):
+
+EVENTS:
+| When | What | Who |
+|------|------|-----|
+| [when] | [one or two sentences] | [who] |
+
+SCENE:
+[approximately 150–200 words of present-tense prose]
+
+**NEW: [Entry Name]**
+[2–4 sentences in past tense.]
+#thread_tag
 `;
+
+// ─── CNZ Summary Injection Templates ─────────────────────────────────────────
+
+export const DEFAULT_CNZ_SUMMARY_TEMPLATE =
+`{{#if plot}}The following is a summary of the active plot threads:
+{{plot}}
+
+{{/if}}{{#if summary}}The following are upcoming events and a summary of what has just occurred:
+{{summary}}{{/if}}`;
+
+/**
+ * Renders the CNZ Summary prompt content from summary and plot strings.
+ * Returns empty string if both inputs are empty.
+ * @param {string} summary  Scene/situation prose from hookseeker.
+ * @param {string} plot     Formatted plot arc blocks (may be empty string).
+ * @param {string} [tmpl]   Template; defaults to DEFAULT_CNZ_SUMMARY_TEMPLATE.
+ * @returns {string}
+ */
+export function buildCnzSummaryContent(summary, plot, tmpl = DEFAULT_CNZ_SUMMARY_TEMPLATE) {
+    if (!summary && !plot) return '';
+    return interpolate(tmpl, { summary: summary ?? '', plot: plot ?? '' });
+}
 
 // RAG classifier, targeted update/new prompts, and injection templates
 // have moved to defaults-rag.js to keep this file under 300 lines.
 export { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_TARGETED_UPDATE_PROMPT,
          DEFAULT_TARGETED_NEW_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE,
-         DEFAULT_RAG_CHUNK_TEMPLATE } from './defaults-rag.js';
+         DEFAULT_RAG_CHUNK_TEMPLATE, DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE } from './defaults-rag.js';

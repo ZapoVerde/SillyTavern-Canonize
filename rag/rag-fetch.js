@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/rag/rag-fetch.js
- * @stamp {"utc":"2026-05-23T00:00:00.000Z"}
+ * @stamp {"utc":"2026-05-29T00:00:00.000Z"}
  * @architectural-role IO Wrapper — RAG retrieval execution
  * @description
  * Executes all three RAG paths (chat-context chunks, lorebook-context chunks,
@@ -21,7 +21,8 @@
  */
 
 import { buildProsePairs, formatPairsAsTranscript, cleanForEmbedding } from '../core/transcript.js';
-import { querySyncChunks, queryLorebookEntries } from './vec-store.js';
+import { querySyncChunks, queryLorebookEntries, queryRecentPlotEntries } from './vec-store.js';
+import { state } from '../state.js';
 import { log, error } from '../log.js';
 import { DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 
@@ -42,9 +43,15 @@ import { DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../d
 export async function doRagFetch(ctx, settings, chain, signal) {
     const messages   = ctx.chat ?? [];
     const validUuids = chain.anchors.map(r => r.anchor.uuid);
-    const topK       = settings.ragRetrievalTopK   ?? 5;
-    const topKLb     = settings.ragLbRetrievalTopK ?? 3;
-    const noiseFloor = settings.ragScoreThreshold  ?? 0.1;
+    const topK       = settings.ragRetrievalTopK    ?? 5;
+    const topKLb     = settings.ragLbRetrievalTopK  ?? 3;
+    const topKPlot         = settings.ragPlotRetrievalTopK ?? 3;
+    const plotRecencyCount = settings.ragPlotRecencyCount  ?? 3;
+    const plotMinArcs      = settings.ragPlotMinArcs        ?? 2;
+    const plotFillerOn     = settings.ragPlotFillerEnabled  ?? true;
+    const plotFillerCards  = settings.ragPlotFillerCards    ?? 1;
+    const plotFillerStrat  = settings.ragPlotFillerStrategy ?? 'random';
+    const noiseFloor = settings.ragScoreThreshold   ?? 0.1;
 
     const horizonPairs = Math.max(1, settings.ragClassifierHistory ?? 3);
     const allPairs     = buildProsePairs(messages);
@@ -58,17 +65,19 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
     const currentChatFile = ctx.getCurrentChatFile?.() ?? '(unknown)';
     const lastAnchorUuid  = validUuids.at(-1) ?? '(none)';
-    log('RagHook', `fetch anchors=${validUuids.length} topK=${topK} topKLb=${topKLb} threshold=${noiseFloor}`);
+    const plotLbName = state._plotLorebookName ?? null;
+    log('RagHook', `fetch anchors=${validUuids.length} topK=${topK} topKLb=${topKLb} topKPlot=${topKPlot} threshold=${noiseFloor}`);
     log('RagHook', `scope chatFile=${currentChatFile} lastAnchor=${lastAnchorUuid}`);
 
     const t0 = performance.now();
 
-    const [chunkBatches, lbHitsRaw] = await Promise.all([
+    const [chunkBatches, lbHitsRaw, plotHitsRaw] = await Promise.all([
         Promise.all([
             chatQuery.trim() && topK   > 0 ? querySyncChunks(validUuids, chatQuery, topK,   signal) : [],
             lbQuery.trim()   && topKLb > 0 ? querySyncChunks(validUuids, lbQuery,   topKLb, signal) : [],
         ]),
-        topKLb > 0 && chatQuery.trim() ? queryLorebookEntries(validUuids, chatQuery, topKLb, signal) : [],
+        topKLb  > 0 && chatQuery.trim() ? queryLorebookEntries(validUuids, chatQuery, topKLb,   signal)           : [],
+        topKPlot > 0 && chatQuery.trim() && plotLbName ? queryLorebookEntries(validUuids, chatQuery, topKPlot, signal, plotLbName) : [],
     ]);
 
     log('RagHook', `all paths resolved in ${(performance.now() - t0).toFixed(0)}ms`);
@@ -90,6 +99,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
             chunks.push(r);
         }
     }
+    log('RagHook', `score filter: ${allChunkRows.length} raw → ${chunks.length} above noiseFloor=${noiseFloor}`);
 
     const totalPairs = allPairs.length;
     if (totalPairs > 0) {
@@ -101,11 +111,28 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     }
     chunks.sort((a, b) => b.score - a.score);
     chunks = chunks.slice(0, topK);
+    if (chunks.length) {
+        const srcMap = {};
+        for (const c of chunks) for (const s of (c.sources ?? [])) srcMap[s] = (srcMap[s] || 0) + 1;
+        log('RagHook', `final chunks=${chunks.length} sources=${JSON.stringify(srcMap)} scores=${chunks.at(-1).score.toFixed(3)}–${chunks[0].score.toFixed(3)}`);
+    }
 
     const activeUids = new Set((ctx.worldInfoActivated ?? []).map(e => e.uid));
-    const toActivate = lbHitsRaw
+    const toActivate = [...lbHitsRaw, ...plotHitsRaw]
         .filter(h => h.score >= noiseFloor && !activeUids.has(h.entryUid))
         .map(h => ({ world: h.lorebookName, uid: h.entryUid }));
+
+    if (plotLbName && (plotHitsRaw.length > 0 || (plotFillerOn && plotMinArcs > 0))) {
+        try {
+            const semanticUids  = plotHitsRaw.map(h => h.entryUid);
+            const recencyUids   = await queryRecentPlotEntries(plotLbName, validUuids, semanticUids, plotRecencyCount, signal, plotMinArcs, plotFillerOn, plotFillerCards, plotFillerStrat, allPairs.length);
+            const activatedSet  = new Set(toActivate.map(a => a.uid));
+            for (const uid of recencyUids)
+                if (!activatedSet.has(uid) && !activeUids.has(uid))
+                    toActivate.push({ world: plotLbName, uid });
+            if (recencyUids.length) log('RagHook', `plot recency: +${recencyUids.length} entries`);
+        } catch (err) { error('RagHook', 'Plot recency failed:', err); }
+    }
 
     let injection = '';
     if (chunks.length) {
