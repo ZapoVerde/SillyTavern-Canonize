@@ -73,7 +73,7 @@ The Narrative Memory (RAG) system requires a server-side plugin to manage the em
 
 #### Part 3 — Verify
 
-7.  **Refresh Your Browser:** After ST restarts, reload your browser page. You will see a new book-shaped sync icon appear in your chat toolbar and a new configuration panel inside your extensions drawer. If you enable Narrative Memory (RAG) in the settings and the plugin is not installed, you will see a clear error rather than silent failure.
+7.  **Refresh Your Browser:** After ST restarts, reload your browser page. You will see a new book-shaped sync icon appear in your chat toolbar and a new configuration panel inside your extensions drawer. If the plugin is not installed or unreachable, RAG will be silently skipped rather than erroring.
 
 ---
 
@@ -160,8 +160,6 @@ Canonize supports multiple setting profiles (e.g., a "Low Cost" profile for chea
 #### 3. CNZ Timing Settings
 *   **Live Context Buffer:** The number of recent turn pairs (1 user + all AI replies = 1 pair) that are left uncompressed [3]. These are never summarized, allowing the AI to read your immediate back-and-forth in full detail. Default is `5`.
 *   **Pairs Between Updates:** The interval of new conversation pairs that must pass before a sync cycle is triggered. Also defines your synchronization window size. Default is `20`.
-*   **Auto-Sync:** If checked, the sync runs automatically in the background when the required number of pairs are reached.
-*   **Gap Snooze:** If you dismiss an automatic sync warning, the system will silence further notifications for this number of turns. Default is `5`.
 *   **Summary Horizon:** The amount of conversation history fed to the AI when updating your rolling Narrative summary. Default is `40`.
 *   **Lorebook Sync Start:** 
     *   *From sync point:* The AI only scans the newly added conversation block since the last save point.
@@ -172,14 +170,12 @@ Canonize supports multiple setting profiles (e.g., a "Low Cost" profile for chea
 *   **Edit Prompts:** Opens a prompt editor for your *Summary*, *Lorebook*, *People*, and *Targeted* prompts.
 
 #### 5. Narrative Memory (RAG) Settings
-*   **Enable Narrative Memory (RAG):** Turns on semantic vector storage. Older parts of your chat will be archived in the server database.
+RAG is always active when the server plugin is reachable. No enable toggle is required.
+
 *   **RAG Contents:**
     *   *Summary + Full Content:* Retrieves the AI's summarized header of an event plus the actual dialogue. Recommended.
     *   *Summary Only:* Retrieves only the brief past tense summary of the event.
     *   *Full Content Only:* Retrieves the raw dialogue text only.
-*   **Summary Source:**
-    *   *Defined Here:* Uses the custom classifier prompt below to generate semantic headers for each chunk.
-    *   *Qvink:* Reads summary headers from messages containing `qvink_memory` metadata if you migrate from that extension.
 *   **RAG Connection Profile:** The model profile used specifically for chunk classification.
 *   **Chunk Size (pairs):** How many turn-pairs are compressed into each RAG archive block. Default is `2`.
 *   **Chunk Overlap:** Adds overlapping turn-pairs between adjacent chunks to ensure transition scenes aren't cut in half.
