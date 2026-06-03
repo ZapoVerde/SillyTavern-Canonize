@@ -200,7 +200,8 @@ export async function querySyncChunks(avatarKey, validAnchorUuids, queryText, to
         .map(r => ({
             text: r.content, header: r.header, turnRange: r.turnRange,
             pairStart: r.pairStart, pairEnd: r.pairEnd, score: Number(r.score),
-            chatFile: r.chatFile ?? null, anchorUuid: r.anchorUuid, sources: ['vec'],
+            chatFile: r.chatFile ?? null, anchorUuid: r.anchorUuid,
+            sources: r.sources?.length ? r.sources : ['vec'],
         }));
 }
 

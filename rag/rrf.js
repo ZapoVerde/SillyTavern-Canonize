@@ -37,17 +37,18 @@ const MAX_RRF    = (NUM_LISTS / (K + 1)) * DUAL_BONUS; // ≈ 0.0531
  * @returns {Row[]}  Rows with `score` replaced by normalised RRF score.
  */
 export function rrf({ content: contentRows, header: headerRows, keyword: kwRows }, topK) {
-    const acc = new Map(); // content text → { rrfScore, inContent, inHeader, row }
+    const acc = new Map(); // content text → { rrfScore, inContent, inHeader, inKeyword, row }
 
     const add = (rows, listName) => {
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
             const key = row.content;
-            if (!acc.has(key)) acc.set(key, { rrfScore: 0, inContent: false, inHeader: false, row });
+            if (!acc.has(key)) acc.set(key, { rrfScore: 0, inContent: false, inHeader: false, inKeyword: false, row });
             const e   = acc.get(key);
             e.rrfScore += 1 / (K + i + 1);
             if (listName === 'content') e.inContent = true;
             if (listName === 'header')  e.inHeader  = true;
+            if (listName === 'keyword') e.inKeyword = true;
         }
     };
 
@@ -62,5 +63,13 @@ export function rrf({ content: contentRows, header: headerRows, keyword: kwRows 
     return [...acc.values()]
         .sort((a, b) => b.rrfScore - a.rrfScore)
         .slice(0, topK)
-        .map(e => ({ ...e.row, score: e.rrfScore / MAX_RRF }));
+        .map(e => ({
+            ...e.row,
+            score:   e.rrfScore / MAX_RRF,
+            sources: [
+                e.inContent ? 'content' : null,
+                e.inHeader  ? 'header'  : null,
+                e.inKeyword ? 'keyword' : null,
+            ].filter(Boolean),
+        }));
 }

@@ -24,6 +24,7 @@
 
 import { buildProsePairs, formatPairsAsTranscript, cleanForEmbedding } from '../core/transcript.js';
 import { querySyncChunks } from './file-store.js';
+import { findInflectionPoint } from './inflection-detection.js';
 import { queryLorebookEntries, queryRecentPlotEntries } from './file-store-lb.js';
 import { cnzAvatarKey } from './api.js';
 import { state } from '../state.js';
@@ -55,7 +56,11 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const plotFillerOn     = settings.ragPlotFillerEnabled  ?? true;
     const plotFillerCards  = settings.ragPlotFillerCards    ?? 1;
     const plotFillerStrat  = settings.ragPlotFillerStrategy ?? 'random';
-    const noiseFloor = settings.ragScoreThreshold   ?? 0.1;
+    const noiseFloor           = settings.ragScoreThreshold              ?? 0.1;
+    const inflectionEnabled    = settings.ragInflectionEnabled           ?? true;
+    const overfetchMultiplier  = settings.ragInflectionOverfetchMultiplier ?? 4;
+    const fetchK               = inflectionEnabled ? topK   * overfetchMultiplier : topK;
+    const fetchKLb             = inflectionEnabled ? topKLb * overfetchMultiplier : topKLb;
 
     const horizonPairs = Math.max(1, settings.ragClassifierHistory ?? 3);
     const allPairs     = buildProsePairs(messages);
@@ -72,15 +77,15 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const char      = ctx.characters?.[ctx.characterId];
     const avatarKey = char ? cnzAvatarKey(char.avatar) : null;
     const plotLbName = state._plotLorebookName ?? null;
-    log('RagHook', `fetch anchors=${validUuids.length} topK=${topK} topKLb=${topKLb} topKPlot=${topKPlot} threshold=${noiseFloor}`);
+    log('RagHook', `fetch anchors=${validUuids.length} topK=${topK} topKLb=${topKLb} topKPlot=${topKPlot} threshold=${noiseFloor} inflection=${inflectionEnabled} fetchK=${fetchK} fetchKLb=${fetchKLb}`);
     log('RagHook', `scope chatFile=${currentChatFile} lastAnchor=${lastAnchorUuid}`);
 
     const t0 = performance.now();
 
     const [chunkBatches, lbHitsRaw, plotHitsRaw] = await Promise.all([
         Promise.all([
-            chatQuery.trim() && topK   > 0 && avatarKey ? querySyncChunks(avatarKey, validUuids, chatQuery, topK,   signal) : [],
-            lbQuery.trim()   && topKLb > 0 && avatarKey ? querySyncChunks(avatarKey, validUuids, lbQuery,   topKLb, signal) : [],
+            chatQuery.trim() && topK   > 0 && avatarKey ? querySyncChunks(avatarKey, validUuids, chatQuery, fetchK,   signal) : [],
+            lbQuery.trim()   && topKLb > 0 && avatarKey ? querySyncChunks(avatarKey, validUuids, lbQuery,   fetchKLb, signal) : [],
         ]),
         topKLb  > 0 && chatQuery.trim() && avatarKey ? queryLorebookEntries(avatarKey, validUuids, chatQuery, topKLb,   signal)           : [],
         topKPlot > 0 && chatQuery.trim() && plotLbName && avatarKey ? queryLorebookEntries(avatarKey, validUuids, chatQuery, topKPlot, signal, plotLbName) : [],
@@ -96,27 +101,40 @@ export async function doRagFetch(ctx, settings, chain, signal) {
         log('RagHook', `lb anchorUuids: ${lbAnchors.join(', ')}`);
     }
 
-    let chunks = [];
-    const seen = new Set();
+    // Dedup by text across both query batches before any score analysis
+    const seen          = new Set();
+    const allCandidates = [];
     for (const batch of chunkBatches) {
         for (const r of batch) {
-            if (r.score < noiseFloor || seen.has(r.text)) continue;
-            seen.add(r.text);
-            chunks.push(r);
+            if (!seen.has(r.text)) {
+                seen.add(r.text);
+                allCandidates.push(r);
+            }
         }
     }
-    log('RagHook', `score filter: ${allChunkRows.length} raw → ${chunks.length} above noiseFloor=${noiseFloor}`);
+    log('RagHook', `dedup: ${allChunkRows.length} raw → ${allCandidates.length} unique`);
 
+    // Apply temporal decay before signal analysis so inflection sees decay-adjusted scores
     const totalPairs = allPairs.length;
     if (totalPairs > 0) {
-        for (const c of chunks) {
+        for (const c of allCandidates) {
             const age    = Math.max(0, totalPairs - (c.pairEnd ?? totalPairs));
             const factor = Math.max(0.70, 1.0 - 0.025 * Math.log(age + 1));
             c.score      = c.score * factor;
         }
+        log('RagHook', `temporal decay applied (totalPairs=${totalPairs})`);
     }
-    chunks.sort((a, b) => b.score - a.score);
-    chunks = chunks.slice(0, topK);
+    allCandidates.sort((a, b) => b.score - a.score);
+
+    // Filter: adaptive inflection detection or legacy noiseFloor
+    let chunks;
+    if (inflectionEnabled) {
+        chunks = findInflectionPoint(allCandidates, settings, { log }).filtered;
+    } else {
+        log('RagHook', `inflection disabled — legacy noiseFloor=${noiseFloor}`);
+        chunks = allCandidates.filter(c => c.score >= noiseFloor).slice(0, topK);
+        log('RagHook', `legacy filter: ${allCandidates.length} → ${chunks.length} above noiseFloor`);
+    }
     if (chunks.length) {
         const srcMap = {};
         for (const c of chunks) for (const s of (c.sources ?? [])) srcMap[s] = (srcMap[s] || 0) + 1;
