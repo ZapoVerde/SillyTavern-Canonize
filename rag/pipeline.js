@@ -34,7 +34,7 @@ import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
 import { buildProsePairs, formatPairsAsTranscript } from '../core/transcript.js';
 import { getSettings } from '../core/settings.js';
 import { cnzAvatarKey } from './api.js';
-import { insertSyncChunks } from './vec-store.js';
+import { insertSyncChunks } from './file-store.js';
 import { warn, error } from '../log.js';
 import { buildRagChunks } from './chunks.js';
 import { hydrateChunkHeadersFromChat } from './chat-labels.js';

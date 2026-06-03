@@ -10,7 +10,7 @@
  *
  * @api-declaration
  * buildSettingsHTML(settings, escapeHtml, profileNames, currentProfile,
- *                  verboseLogging, enableCnz, pluginLinked) → string
+ *                  verboseLogging, enableCnz) → string
  *
  * @contract
  *   assertions: { purity: pure, state_ownership: [], external_io: [] }
@@ -28,7 +28,6 @@ export function buildSettingsHTML(
     currentProfile = 'Default',
     verboseLogging = false,
     enableCnz      = true,
-    pluginLinked   = false,
 ) {
     const profileOptions = profileNames
         .map(n => `<option value="${escapeHtml(n)}"${n === currentProfile ? ' selected' : ''}>${escapeHtml(n)}</option>`)
@@ -54,7 +53,7 @@ export function buildSettingsHTML(
         ${buildSyncSectionHTML(settings, escapeHtml, profileOptions)}
         ${buildRagSectionHTML(settings, escapeHtml)}
         ${buildPlotSectionHTML(settings, escapeHtml)}
-        ${buildAdminSectionHTML(escapeHtml, verboseLogging, pluginLinked)}
+        ${buildAdminSectionHTML(escapeHtml, verboseLogging)}
       </div>
 
     </div>

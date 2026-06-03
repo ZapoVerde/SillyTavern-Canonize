@@ -22,7 +22,7 @@
 import { escapeHtml } from '../state.js';
 import { readDnaChain } from '../core/dna-chain.js';
 import { warn } from '../log.js';
-import { anchorStats } from '../rag/vec-store.js';
+import { anchorStats } from '../rag/file-store.js';
 
 function closeDnaChainInspector() {
     $('#cnz-li-overlay').addClass('cnz-hidden');

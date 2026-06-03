@@ -29,8 +29,6 @@ import { log, warn, setVerbose } from '../log.js';
 import { bindRagHandlers, updateRagAiControlsVisibility } from './handlers-rag.js';
 import { bindPlotHandlers } from './handlers-plot.js';
 import { bindCoreHandlers } from './handlers-core.js';
-import { getLastHealthResult } from '../rag/plugin-health.js';
-import { triggerSetupFromSettings } from '../core/plugin-setup-orchestrator.js';
 
 // ── Prompt Modal ──────────────────────────────────────────────────────────────
 
@@ -185,15 +183,12 @@ export function injectSettingsPanel() {
     const $parent = $('#extensions_settings');
     if ($parent.length === 0) { warn('Init', 'injectSettingsPanel: #extensions_settings not found in DOM!'); return; }
     const meta         = getMetaSettings();
-    const health       = getLastHealthResult();
-    const pluginLinked = health ? (health.reachable && !health.needsSymlink) : false;
     $parent.append(
-        buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName, meta.verboseLogging ?? false, meta.enableCnz ?? true, pluginLinked),
+        buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName, meta.verboseLogging ?? false, meta.enableCnz ?? true),
     );
     setVerbose(meta.verboseLogging ?? false);
     bindSettingsHandlers();
     refreshProfileDropdown();
     updateRagAiControlsVisibility();
-    $('#cnz-setup-symlink-btn').on('click', () => triggerSetupFromSettings());
     log('Init', 'injectSettingsPanel: Success.');
 }

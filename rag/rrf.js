@@ -1,7 +1,7 @@
 /**
- * @file plugins/cnz/rrf.js
- * @stamp {"utc":"2026-05-23T00:00:00.000Z"}
- * @architectural-role Pure — Reciprocal Rank Fusion over DB result lists
+ * @file data/default-user/extensions/canonize/rag/rrf.js
+ * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
+ * @architectural-role Pure — Reciprocal Rank Fusion over chunk result lists
  * @description
  * Merges content-embedding, header-embedding, and keyword result lists into a
  * single ranked list using Reciprocal Rank Fusion (k=60). Applies a dual-signal

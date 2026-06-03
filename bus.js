@@ -78,4 +78,5 @@ export const BUS_EVENTS = Object.freeze({
     MODAL_OPENED:           'MODAL_OPENED',            // { }
     CORRECTION_SUBMITTED:   'CORRECTION_SUBMITTED',    // { cycleId, corrections }
     DNA_WRITE_REQUESTED:    'DNA_WRITE_REQUESTED',     // { cycleId, payload }
+    EMBED_PROGRESS:         'EMBED_PROGRESS',          // { total: number, done: number }
 });

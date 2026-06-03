@@ -33,7 +33,7 @@
 
 import { log, warn } from '../log.js';
 import { getStringHash } from '../../../../utils.js';
-import { insertLorebookEntries } from '../rag/vec-store.js';
+import { insertLorebookEntries } from '../rag/file-store-lb.js';
 import { cnzAvatarKey } from '../rag/api.js';
 import { setDnaChain } from '../scheduler.js';
 import { readDnaChain, getLkgAnchor, buildAnchorPayload } from './dna-chain.js';

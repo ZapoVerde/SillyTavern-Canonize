@@ -17,12 +17,12 @@
  * @contract
  *   assertions:
  *     purity: mutates
- *     state_ownership: [_lorebookEditTimer, _plotEditTimer, _embedAbortCtrl]
- *     external_io: [ST eventSource, DOM, bus, scheduler, promptManager, embed SSE stream]
+ *     state_ownership: [_lorebookEditTimer, _plotEditTimer, _embedToast]
+ *     external_io: [ST eventSource, DOM, bus, scheduler, promptManager]
  */
 
 import { eventSource, event_types } from '../../../../script.js';
-import { setBusEnabled } from './bus.js';
+import { setBusEnabled, on, off, BUS_EVENTS } from './bus.js';
 import { startScheduler, stopScheduler, snooze } from './scheduler.js';
 import { state, CNZ_SUMMARY_ID, CNZ_RAG_ID } from './state.js';
 import { getSettings, getMetaSettings } from './core/settings.js';
@@ -41,13 +41,12 @@ import { invalidateAllJobs } from './cycleStore.js';
 import { log, error } from './log.js';
 import { getStringHash } from '../../../utils.js';
 import { cnzAvatarKey } from './rag/api.js';
-import { insertLorebookEntries } from './rag/vec-store.js';
+import { insertLorebookEntries } from './rag/file-store-lb.js';
 
 // ── Module state ──────────────────────────────────────────────────────────────
 
 let _lorebookEditTimer = null;
 let _plotEditTimer     = null;
-let _embedAbortCtrl    = null;
 
 // ── Named ST event handlers (required for eventSource.off) ───────────────────
 
@@ -162,52 +161,23 @@ async function _applyPlotLorebookEdits(name) {
     }
 }
 
-// ── Embed monitor ─────────────────────────────────────────────────────────────
+// ── Embed progress monitor ────────────────────────────────────────────────────
 
 const EMBED_THRESHOLD = 20;
+let _embedToast = null;
 
-async function _startEmbedMonitor(signal) {
-    let _toast = null;
-
-    function _update({ total, done }) {
-        if (total > EMBED_THRESHOLD) {
-            const msg = `CNZ: Embedding ${done}/${total}...`;
-            if (_toast?.is(':visible')) {
-                _toast.find('.toast-message').text(msg);
-            } else {
-                _toast = toastr.info(msg, '', { timeOut: 0, extendedTimeOut: 0 });
-            }
-        } else if (_toast) {
-            toastr.clear(_toast);
-            _toast = null;
+function _onEmbedProgress({ total, done }) {
+    if (total > EMBED_THRESHOLD) {
+        const msg = `CNZ: Embedding ${done}/${total}...`;
+        if (_embedToast?.is(':visible')) {
+            _embedToast.find('.toast-message').text(msg);
+        } else {
+            _embedToast = toastr.info(msg, '', { timeOut: 0, extendedTimeOut: 0 });
         }
+    } else if (_embedToast) {
+        toastr.clear(_embedToast);
+        _embedToast = null;
     }
-
-    try {
-        const { getRequestHeaders } = await import('../../../../script.js');
-        const res = await fetch('/api/plugins/cnz/embed-stream', {
-            headers: getRequestHeaders(),
-            signal,
-        });
-        if (!res.ok) return;
-
-        const reader  = res.body.getReader();
-        const decoder = new TextDecoder();
-        let   buf     = '';
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buf += decoder.decode(value, { stream: true });
-            const parts = buf.split('\n\n');
-            buf = parts.pop();
-            for (const part of parts) {
-                if (part.startsWith('data: ')) {
-                    try { _update(JSON.parse(part.slice(6))); } catch { /* malformed */ }
-                }
-            }
-        }
-    } catch { /* plugin not installed, stream closed, or aborted — exit silently */ }
 }
 
 // ── Mount / Unmount ───────────────────────────────────────────────────────────
@@ -258,8 +228,7 @@ export function mountCnz() {
         log('Lifecycle', 'Prompt stack: PromptManager unavailable — skipping provisioning.');
     }
 
-    _embedAbortCtrl = new AbortController();
-    _startEmbedMonitor(_embedAbortCtrl.signal);
+    on(BUS_EVENTS.EMBED_PROGRESS, _onEmbedProgress);
     log('Lifecycle', 'Embed monitor started.');
 
     log('Lifecycle', 'mountCnz: complete.');
@@ -292,13 +261,9 @@ export function unmountCnz() {
     _plotEditTimer     = null;
     log('Lifecycle', 'Lorebook and plot edit timers cleared.');
 
-    if (_embedAbortCtrl) {
-        _embedAbortCtrl.abort();
-        _embedAbortCtrl = null;
-        log('Lifecycle', 'Embed monitor aborted.');
-    } else {
-        log('Lifecycle', 'Embed monitor was not running.');
-    }
+    off(BUS_EVENTS.EMBED_PROGRESS, _onEmbedProgress);
+    if (_embedToast) { toastr.clear(_embedToast); _embedToast = null; }
+    log('Lifecycle', 'Embed monitor detached.');
 
     const pm = getCnzPromptManager();
     if (pm) {

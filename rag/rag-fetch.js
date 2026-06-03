@@ -17,11 +17,12 @@
  *   assertions:
  *     purity:          mutates
  *     state_ownership: [none]
- *     external_io:     [vec-store.js]
+ *     external_io:     [file-store.js, file-store-lb.js]
  */
 
 import { buildProsePairs, formatPairsAsTranscript, cleanForEmbedding } from '../core/transcript.js';
-import { querySyncChunks, queryLorebookEntries, queryRecentPlotEntries } from './vec-store.js';
+import { querySyncChunks } from './file-store.js';
+import { queryLorebookEntries, queryRecentPlotEntries } from './file-store-lb.js';
 import { state } from '../state.js';
 import { log, error } from '../log.js';
 import { DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';

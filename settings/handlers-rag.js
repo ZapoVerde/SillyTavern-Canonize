@@ -19,7 +19,7 @@
  */
 
 import { saveSettingsDebounced } from '../../../../../script.js';
-import { testEmbed, fetchAiStudioModels } from '../rag/vec-store.js';
+import { testEmbed, fetchAiStudioModels } from '../rag/embed-client.js';
 import { state } from '../state.js';
 import { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 import { getSettings } from './data.js';

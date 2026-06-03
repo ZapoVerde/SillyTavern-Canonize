@@ -16,7 +16,7 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: []
- *     external_io: [/api/characters/edit, /api/chats/saveChat, vec-store.js]
+ *     external_io: [/api/characters/edit, /api/chats/saveChat, file-store-lb.js]
  */
 
 import { getRequestHeaders } from '../../../../../script.js';
@@ -26,7 +26,7 @@ import { readDnaChain }      from '../core/dna-chain.js';
 import { writeCnzSummaryPrompt } from '../core/summary-prompt.js';
 import { isDraftDirty, stripProtectedBlock, stitchProtectedBlock } from '../lorebook/utils.js';
 import { lbSaveLorebook }    from '../lorebook/api.js';
-import { insertLorebookEntries } from '../rag/vec-store.js';
+import { insertLorebookEntries } from '../rag/file-store-lb.js';
 import { cnzAvatarKey }      from '../rag/api.js';
 import { warn, error }       from '../log.js';
 import { showReceiptsPanel, abortCommitWithError, renderReceipts } from './commit-ui.js';

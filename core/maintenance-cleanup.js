@@ -24,7 +24,8 @@
 import { callPopup } from '../../../../../script.js';
 import { state } from '../state.js';
 import { cnzAvatarKey, cnzPlotLbName } from '../rag/api.js';
-import { purgeCharacterChunks, purgeCharacterLbEntries } from '../rag/vec-store.js';
+import { purgeCharacterChunks } from '../rag/file-store.js';
+import { purgeCharacterLbEntries } from '../rag/file-store-lb.js';
 import { lbSaveLorebook } from '../lorebook/api.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
 import { error } from '../log.js';

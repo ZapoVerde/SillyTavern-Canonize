@@ -40,7 +40,8 @@ import { error, log } from '../log.js';
 import { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
 import { getSettings } from './settings.js';
 import { buildProsePairs, formatPairsAsTranscript } from './transcript.js';
-import { anchorChunkCount, insertSyncChunks, insertLorebookEntries } from '../rag/vec-store.js';
+import { anchorChunkCount, insertSyncChunks } from '../rag/file-store.js';
+import { insertLorebookEntries } from '../rag/file-store-lb.js';
 import { cnzAvatarKey, cnzPlotLbName } from '../rag/api.js';
 import { rebuildPlotLorebook } from '../lorebook/plot-lorebook.js';
 

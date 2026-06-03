@@ -28,9 +28,8 @@
 
 import { state }             from '../state.js';
 import { getSettings }       from '../core/settings.js';
-import { isPluginReachable } from './plugin-health.js';
 import { doRagFetch }        from './rag-fetch.js';
-import { insertLorebookEntries } from './vec-store.js';
+import { insertLorebookEntries } from './file-store-lb.js';
 import { cnzAvatarKey }      from './api.js';
 import { getStringHash }     from '../../../../utils.js';
 import { stripProtectedBlock } from '../lorebook/utils.js';
@@ -151,7 +150,6 @@ export function resetRagState() {
 
 export function prefetchRag() {
     const settings = getSettings();
-    if (!isPluginReachable()) return;
     const chain = state._dnaChain;
     if (!chain || chain.anchors.length === 0) return;
     const ctx      = SillyTavern.getContext();
@@ -184,10 +182,6 @@ export function prefetchRag() {
 export async function onGenerationStarted() {
     const ctx      = SillyTavern.getContext();
     const settings = getSettings();
-    if (!isPluginReachable()) {
-        clearCnzRagPrompt();
-        return;
-    }
     const chain = state._dnaChain;
     if (!chain || chain.anchors.length === 0) {
         clearCnzRagPrompt();
