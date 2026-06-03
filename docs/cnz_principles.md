@@ -13,11 +13,15 @@ If you find yourself writing "call X" or "wrap in Y", move that detail into code
 
 ---
 
-## 1. The Chat IS the Database
+## 1. The Chat is the Canonical Record
 
-Canonize manages **Narrative Continuity**. The chat file is the only database that matters.
+Canonize exists to build and maintain the **canonical record** of your story. That record lives in the chat file — not in any external database, lorebook, or vector store.
 
-We do not trust external files, databases, or global settings for the narrative state of a story branch. Every sync embeds a complete World State Snapshot directly into the hidden metadata of chat messages. If the data is not in the chat, it does not exist for CNZ. This means the chat can be copied, moved, or loaded on a different machine and every sync point will still be intact.
+All operational state — lorebook entries, RAG chunks, narrative summaries, vector collections — is **derived working state**: content extracted, summarized, and indexed from the chat at sync points. These systems exist for speed and retrieval, but they are reconstructible caches, not independent sources of truth. If they are lost or corrupted, they can be rebuilt from the chat alone. The reverse is not true.
+
+Because the canonical record travels with the story file, the chat is portable in a way no external system can be. Copy it to a new machine and every sync point is intact.
+
+To make this guarantee hold, every sync embeds a complete World State Snapshot directly into the hidden metadata of chat messages. CNZ never trusts external files or global settings for narrative state — if the data is not in the chat, it does not exist for CNZ.
 
 ---
 
