@@ -153,11 +153,6 @@ function getRagModeLabel() {
  * Called when the user enters Step 3 (RAG Workshop).
  */
 export function onEnterRagWorkshop() {
-    if (!getSettings().enableRag) {
-        $('#cnz-rag-mode-note').addClass('cnz-hidden');
-        $('#cnz-rag-disabled').removeClass('cnz-hidden');
-        return;
-    }
     $('#cnz-rag-disabled').addClass('cnz-hidden');
     $('#cnz-rag-mode-note').text(getRagModeLabel()).removeClass('cnz-hidden');
 

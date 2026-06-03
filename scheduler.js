@@ -205,8 +205,7 @@ function _logTurnStatus(state, settings) {
         : `no anchor | ${pairCount} pair(s) from start`;
 
     let syncStatus;
-    if (!settings.autoSync)              syncStatus = 'auto-sync off';
-    else if (syncInProgress)             syncStatus = 'sync in progress';
+    if (syncInProgress)                  syncStatus = 'sync in progress';
     else if (pairCount <= snoozeUntilCount) syncStatus = `snoozed until pair ${snoozeUntilCount}`;
     else if (gap < every)                syncStatus = `gap=${gap}/${every} — waiting`;
     else                                 syncStatus = `gap=${gap}/${every} — TRIGGERING`;

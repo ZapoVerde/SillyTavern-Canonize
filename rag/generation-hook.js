@@ -151,7 +151,7 @@ export function resetRagState() {
 
 export function prefetchRag() {
     const settings = getSettings();
-    if (!settings.enableRag || !isPluginReachable()) return;
+    if (!isPluginReachable()) return;
     const chain = state._dnaChain;
     if (!chain || chain.anchors.length === 0) return;
     const ctx      = SillyTavern.getContext();
@@ -184,7 +184,7 @@ export function prefetchRag() {
 export async function onGenerationStarted() {
     const ctx      = SillyTavern.getContext();
     const settings = getSettings();
-    if (!settings.enableRag || !isPluginReachable()) {
+    if (!isPluginReachable()) {
         clearCnzRagPrompt();
         return;
     }

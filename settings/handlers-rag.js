@@ -89,22 +89,8 @@ function _renderEmbedModelList(items, showingAll, withToggle = false) {
 
 export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
 
-    $('#cnz-set-enable-rag').on('change', function () {
-        getSettings().enableRag = $(this).prop('checked');
-        saveSettingsDebounced(); updateDirtyIndicator();
-        $('#cnz-rag-settings-body').toggleClass('cnz-disabled', !getSettings().enableRag);
-    });
-
     $('#cnz-set-rag-contents').on('change', function () {
         getSettings().ragContents = $(this).val();
-        saveSettingsDebounced(); updateDirtyIndicator();
-        const hasSummary = $(this).val() !== 'full';
-        $('#cnz-rag-summary-source-row').toggleClass('cnz-hidden', !hasSummary);
-        _updateRagAiControlsVisibility();
-    });
-
-    $('#cnz-set-rag-summary-source').on('change', function () {
-        getSettings().ragSummarySource = $(this).val();
         saveSettingsDebounced(); updateDirtyIndicator();
         _updateRagAiControlsVisibility();
     });
@@ -304,8 +290,6 @@ export function updateRagAiControlsVisibility() {
 }
 
 function _updateRagAiControlsVisibility() {
-    const s = getSettings();
-    const hasSummary    = (s.ragContents ?? 'summary+full') !== 'full';
-    const isDefinedHere = (s.ragSummarySource ?? 'defined') === 'defined';
-    $('#cnz-rag-ai-controls').toggleClass('cnz-disabled', !(hasSummary && isDefinedHere));
+    const hasSummary = (getSettings().ragContents ?? 'summary+full') !== 'full';
+    $('#cnz-rag-ai-controls').toggleClass('cnz-disabled', !hasSummary);
 }

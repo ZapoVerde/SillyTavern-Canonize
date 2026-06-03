@@ -55,9 +55,7 @@ export const CNZ_RAG_ID     = 'cnz_rag';
  */
 export const PROFILE_DEFAULTS = Object.freeze({
     chunkEveryN:              20,
-    gapSnoozeTurns:           5,
     hookseekerHorizon:        40,
-    autoSync:                 true,
     profileId:                null,
     // Summary / Lorebook
     enablePeopleSync:         true,
@@ -66,14 +64,10 @@ export const PROFILE_DEFAULTS = Object.freeze({
     lorebookSyncPrompt:       DEFAULT_LOREBOOK_SYNC_PROMPT,
     peopleSyncPrompt:         DEFAULT_PEOPLE_SYNC_PROMPT,
     hookseekerPrompt:         DEFAULT_HOOKSEEKER_PROMPT,
-    // Rolling trim
-    autoAdvanceMask:          false,
     // RAG
-    enableRag:                false,
     ragSeparator:             '%%%',
     ragChunkTemplate:         DEFAULT_RAG_CHUNK_TEMPLATE,
     ragContents:              'summary+full',
-    ragSummarySource:         'defined',
     ragProfileId:             null,
     ragMaxTokens:             100,
     ragChunkSize:             2,
@@ -88,13 +82,13 @@ export const PROFILE_DEFAULTS = Object.freeze({
     ragPlotFillerEnabled:     true,
     ragPlotFillerCards:       1,
     ragPlotFillerStrategy:    'random',
+    maxConcurrentCalls:       3,
     ragScoreThreshold:        0.25,
     ragInjectionTemplate:     DEFAULT_RAG_INJECTION_TEMPLATE,
     cnzSummaryTemplate:       DEFAULT_CNZ_SUMMARY_TEMPLATE,
     cnzPlotChunkTemplate:     DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE,
     ragEmbeddingSource:       'openrouter',
     ragEmbeddingModel:        '',
-    ragEmbeddingApiKey:       '',
     ragClassifierPrompt:      DEFAULT_RAG_CLASSIFIER_PROMPT,
     targetedUpdatePrompt:     DEFAULT_TARGETED_UPDATE_PROMPT,
     targetedNewPrompt:        DEFAULT_TARGETED_NEW_PROMPT,

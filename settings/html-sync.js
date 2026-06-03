@@ -44,16 +44,6 @@ export function buildSyncSectionHTML(s, escapeHtml, profileOptions) {
             <label for="cnz-set-chunk-every-n">Pairs between updates ${tip('How many new turn pairs trigger an auto-sync. Also sets the standard sync window size.')}</label>
             <input id="cnz-set-chunk-every-n" type="number" min="1" step="1" value="${escapeHtml(String(s.chunkEveryN ?? 20))}">
           </div>
-          <div class="cnz-settings-row">
-            <label class="cnz-checkbox-label">
-              <input id="cnz-set-auto-sync" type="checkbox" ${(s.autoSync ?? true) ? 'checked' : ''}>
-              <span>Auto-sync ${tip('Automatically starts a sync cycle after the configured number of new turn pairs.')}</span>
-            </label>
-          </div>
-          <div class="cnz-settings-inline-row">
-            <label for="cnz-set-gap-snooze">Gap snooze (pairs) ${tip('When a large gap is detected and you dismiss the offer, auto-sync will stay quiet for this many additional pairs.')}</label>
-            <input id="cnz-set-gap-snooze" type="number" min="1" step="1" value="${escapeHtml(String(s.gapSnoozeTurns ?? 5))}">
-          </div>
           <div class="cnz-settings-inline-row">
             <label for="cnz-set-hookseeker-horizon">Summary horizon (pairs) ${tip('How many of the most recent turn pairs are fed to the narrative hook / summary generator.')}</label>
             <input id="cnz-set-hookseeker-horizon" type="number" min="1" step="1" value="${escapeHtml(String(s.hookseekerHorizon ?? 40))}">
@@ -64,12 +54,6 @@ export function buildSyncSectionHTML(s, escapeHtml, profileOptions) {
               <option value="syncPoint"  ${(s.lorebookSyncStart ?? 'syncPoint') === 'syncPoint'  ? 'selected' : ''}>From sync point</option>
               <option value="latestTurn" ${(s.lorebookSyncStart ?? 'syncPoint') === 'latestTurn' ? 'selected' : ''}>From latest turn</option>
             </select>
-          </div>
-          <div class="cnz-settings-row">
-            <label class="cnz-checkbox-label">
-              <input id="cnz-set-auto-advance-mask" type="checkbox" ${(s.autoAdvanceMask ?? false) ? 'checked' : ''}>
-              <span>Auto-advance context mask ${tip('When enabled, the context mask follows the DNA chain head after each commit, hiding canonized turns from the main AI.')}</span>
-            </label>
           </div>
         </div>
       </div>

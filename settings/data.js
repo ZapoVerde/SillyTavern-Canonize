@@ -54,16 +54,13 @@ export function initSettings() {
             }
             delete root.factFinderPrompt;
         }
-        // ragSummaryOnly + useQvink → ragContents + ragSummarySource
-        if (root.ragSummaryOnly !== undefined || root.useQvink !== undefined) {
-            const wasSummaryOnly = root.ragSummaryOnly ?? false;
-            const wasQvink       = root.useQvink       ?? false;
-            if (wasSummaryOnly) root.ragContents = 'summary';
+        // ragSummaryOnly → ragContents
+        if (root.ragSummaryOnly !== undefined) {
+            if (root.ragSummaryOnly) root.ragContents = 'summary';
             else if (!root.ragContents) root.ragContents = 'summary+full';
-            if (wasQvink && (root.ragSummarySource ?? 'defined') === 'defined') root.ragSummarySource = 'qvink';
             delete root.ragSummaryOnly;
-            delete root.useQvink;
         }
+        if (root.useQvink !== undefined) delete root.useQvink;
 
         // syncFromTurn → liveContextBuffer (semantics inverted; discard old value, reset to default)
         if (root.syncFromTurn !== undefined) {
@@ -71,11 +68,7 @@ export function initSettings() {
             delete root.syncFromTurn;
             root.liveContextBuffer = 5;
         }
-        // pruneOnSync → autoAdvanceMask (boolean migrates directly)
-        if (root.pruneOnSync !== undefined) {
-            root.autoAdvanceMask = root.pruneOnSync;
-            delete root.pruneOnSync;
-        }
+        if (root.pruneOnSync !== undefined) delete root.pruneOnSync;
 
         // Harvest profile-config keys from the flat root into a legacy object.
         // Meta-state keys (lastLorebookSyncAt) are not in
@@ -110,8 +103,9 @@ export function initSettings() {
     if (root.symlinkOfferMade === undefined) root.symlinkOfferMade = false;
 
     // Clean up legacy keys no longer part of any profile.
-    delete root.activeState.enablePersonalyze;
+    const _obsoleteKeys = ['enablePersonalyze', 'enableRag', 'ragSummarySource', 'ragEmbeddingApiKey', 'autoAdvanceMask', 'autoSync', 'gapSnoozeTurns'];
+    for (const key of _obsoleteKeys) delete root.activeState[key];
     for (const profile of Object.values(root.profiles ?? {})) {
-        delete profile.enablePersonalyze;
+        for (const key of _obsoleteKeys) delete profile[key];
     }
 }
