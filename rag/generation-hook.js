@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/rag/generation-hook.js
- * @stamp {"utc":"2026-05-23T00:00:00.000Z"}
+ * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
  * @version 2.4.0
  * @architectural-role IO Wrapper
  * @description

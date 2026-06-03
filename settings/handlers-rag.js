@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/settings/handlers-rag.js
- * @stamp {"utc":"2026-05-31T00:00:00.000Z"}
+ * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
  * @version 1.0.0
  * @architectural-role IO Wrapper
  * @description

@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/healer.js
- * @stamp {"utc":"2026-05-22T00:00:00.000Z"}
+ * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
  * @version 2.1.0
  * @architectural-role Orchestrator
  * @description
@@ -90,7 +90,7 @@ async function _reconcilePlotLorebook(char, chain) {
 /**
  * Silently rebuilds the vector DB from cnz_chunk_header stamps already written
  * to chat messages, when RAG is enabled but the DB is empty for this character.
- * No-ops if the plugin is unreachable or no stamps are found.
+ * No-ops if no stamps are found.
  */
 async function _reconcileRagChunks(char, headAnchor) {
 

@@ -36,44 +36,17 @@ Instead of forcing the model to read exhaustive, chronological history, Canonize
 *   **Dynamic World Knowledge Retrieval:** The extension automatically extracts new facts, character descriptions, and locations as they are introduced in the story. It saves these details directly into standard SillyTavern lorebooks, ensuring they are only retrieved when relevant keywords are used in the active chat.
 *   **Archived Conversation Memory (RAG):** Older conversation blocks are sliced, summarized, and indexed in a searchable background database. When you send a message, the system searches this database for semantically relevant past events (such as an emotional conversation that happened 200 messages ago) and feeds those specific memories back to the AI just in time.
 *   **Timeline Recovery and Branch Guard:** If you decide to swipe to a different response, delete messages, or switch between different chats, the extension automatically detects the change. It rolls back your summary, lorebook state, and background memory to match that exact moment in time, preventing your database from being corrupted by abandoned plot paths.
-*   **Clean, Complete Deactivation:** If you decide to turn the extension off, a single master switch halts all background schedulers, disconnects active database streams, removes the control buttons from your user interface, and purges all custom prompts from the AI's execution list, leaving your chat environment entirely pristine.
+*   **Clean, Complete Deactivation:** If you decide to turn the extension off, a single master switch halts all background schedulers, removes the control buttons from your user interface, and purges all custom prompts from the AI's execution list, leaving your chat environment entirely pristine.
 
 ---
 
 ### How to Install
 
-Canonize has two parts: a browser extension and a server plugin. **Both must be installed.** The extension alone will not work.
-
-#### Part 1 — Install the Extension
+Canonize is a standard SillyTavern extension with no server plugin, no npm install, and no additional setup steps. The Narrative Memory (RAG) system routes embedding calls through SillyTavern's own built-in vector infrastructure, so no separate component is required.
 
 1.  **Open Extensions Menu:** Open your SillyTavern interface, click the Extensions icon (the puzzle piece), and select the option to install an extension from a URL.
 2.  **Provide the Link:** Paste the web address of this repository into the input field and click the install button.
-
-#### Part 2 — Install the Server Plugin (Required)
-
-The Narrative Memory (RAG) system requires a server-side plugin to manage the embedded vector database. This plugin ships inside the extension but **must be copied manually into SillyTavern's plugin directory.**
-
-3.  **Locate the plugin files:** After the extension installs, find the `plugin` subfolder inside the Canonize extension directory:
-    ```
-    [ST extensions folder]/SillyTavern-Canonize/plugin/
-    ```
-4.  **Copy the plugin to ST's plugin directory:** Copy the entire contents of that `plugin/` folder into a new folder named `cnz` inside your SillyTavern `plugins/` directory:
-    ```
-    [ST plugins folder]/cnz/
-    ```
-    When done, the folder should contain: `index.js`, `embed.js`, `routes.js`, `db.js`, `rrf.js`, and `package.json`.
-
-    **Docker users:** your ST plugins folder is the `st-plugins/` directory in your Canonize workspace (mounted as `/home/node/app/plugins` in the container). Create `st-plugins/cnz/` and copy the files there.
-
-5.  **Install plugin dependencies:** Inside the `cnz` plugin folder, run:
-    ```
-    npm install
-    ```
-6.  **Restart SillyTavern:** The plugin only loads at server startup. Restart ST completely (not just a browser refresh).
-
-#### Part 3 — Verify
-
-7.  **Refresh Your Browser:** After ST restarts, reload your browser page. You will see a new book-shaped sync icon appear in your chat toolbar and a new configuration panel inside your extensions drawer. If the plugin is not installed or unreachable, RAG will be silently skipped rather than erroring.
+3.  **Refresh Your Browser:** After installation, reload your browser page. You will see a new book-shaped sync icon appear in your chat toolbar and a new configuration panel inside your extensions drawer.
 
 ---
 
@@ -183,7 +156,6 @@ RAG is always active when the server plugin is reachable. No enable toggle is re
 *   **Embedding Source / Model:** Select the provider (OpenRouter, OpenAI, local Ollama, etc.) and model name used to calculate semantic search vectors.
 
 #### 6. Admin and Utilities
-*   **Setup Symlink / Plugin Linked:** Links the SillyTavern plugin folder to the extension's folder so updates happen automatically. 
 *   **Verbose Logging:** Outputs detailed background execution logs to your browser console.
 *   **Inspect Chain:** Opens the **DNA Chain Inspector** to view your save-state timeline.
 *   **Rebuild RAG:** Scans your chat history and re-indexes all historical chunks into the vector database. Useful if your local database was cleared or corrupted.

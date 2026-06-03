@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/rag/rag-fetch.js
- * @stamp {"utc":"2026-05-29T00:00:00.000Z"}
+ * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
  * @architectural-role IO Wrapper — RAG retrieval execution
  * @description
  * Executes all three RAG paths (chat-context chunks, lorebook-context chunks,
@@ -12,6 +12,8 @@
  *
  * @api-declaration
  * doRagFetch(ctx, settings, chain, signal) → Promise<RagResult|null>
+ * Derives avatarKey from ctx internally; passes it to querySyncChunks and
+ * queryLorebookEntries so each call targets the correct Vectra collection.
  *
  * @contract
  *   assertions:

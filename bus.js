@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/bus.js
- * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
  * @version 1.1.0
  * @architectural-role Stateful Owner
  * @description
