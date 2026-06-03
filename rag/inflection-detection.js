@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/rag/inflection-detection.js
- * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
+ * @stamp {"utc":"2026-06-03T21:15:00.000Z"}
  * @architectural-role Pure Functions — two-signal adaptive inflection detection for RAG result filtering
  * @description
  * Replaces the static noiseFloor gate with an adaptive boundary that finds where
@@ -37,7 +37,7 @@ const MIN_GUARANTEE    = 3;     // always return at least this many results
  * @returns {{ filtered: object[], metadata: object }}
  */
 export function findInflectionPoint(candidates, settings, { log: _log }) {
-    const minScore   = settings.ragInflectionMinScore          ?? 0.15;
+    const minScore   = settings.ragScoreThreshold              ?? 0.15;
     const maxResults = settings.ragInflectionMaxResults        ?? 7;
     const verbose    = settings.ragInflectionVerbose           ?? false;
 

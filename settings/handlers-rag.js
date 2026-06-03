@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/settings/handlers-rag.js
- * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2026-06-03T21:22:00.000Z"}
+ * @version 1.0.1
  * @architectural-role IO Wrapper
  * @description
  * Binds all RAG-related settings panel event handlers. Exported as a single
@@ -176,6 +176,11 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
         if (!isNaN(val)) { getSettings().ragScoreThreshold = Math.min(1, Math.max(0, val)); saveSettingsDebounced(); updateDirtyIndicator(); }
     });
 
+    $('#cnz-set-rag-max-results').on('input', function () {
+        const val = parseInt($(this).val(), 10);
+        if (!isNaN(val) && val >= 1) { getSettings().ragInflectionMaxResults = val; saveSettingsDebounced(); updateDirtyIndicator(); }
+    });
+
     $('#cnz-set-rag-retrieval-topk').on('input', function () {
         getSettings().ragRetrievalTopK = Math.max(0, parseInt($(this).val()) || 5);
         saveSettingsDebounced(); updateDirtyIndicator();
@@ -184,6 +189,15 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
     $('#cnz-set-rag-lb-retrieval-topk').on('input', function () {
         getSettings().ragLbRetrievalTopK = Math.max(0, parseInt($(this).val()) || 3);
         saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-set-inflection-verbose').on('change', function () {
+        getSettings().ragInflectionVerbose = $(this).prop('checked');
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
+    $('#cnz-inflection-explainer-trigger').on('click', function () {
+        $('#cnz-inflection-explainer-body').toggleClass('cnz-hidden');
     });
 
     $('#cnz-edit-injection-template').on('click', () =>

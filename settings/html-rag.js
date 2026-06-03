@@ -1,11 +1,11 @@
 /**
  * @file data/default-user/extensions/canonize/settings/html-rag.js
- * @stamp {"utc":"2026-05-31T00:00:00.000Z"}
+ * @stamp {"utc":"2026-06-03T21:18:00.000Z"}
  * @architectural-role Pure Functions
  * @description
  * Builds the HTML for the RAG area of the CNZ settings panel: two collapsible
  * sections — RAG Summarization (AI classification) and RAG Storage & Retrieval
- * (embedding + injection).
+ * (embedding + injection). Adaptive Inflection controls are exposed here.
  *
  * @api-declaration
  * buildRagSectionHTML(s, escapeHtml) → string
@@ -115,6 +115,15 @@ export function buildRagSectionHTML(s, escapeHtml) {
             </div>
             <div class="inline-drawer-content">
 
+              <!-- Interactive Adaptive Retrieval Explainer -->
+              <div id="cnz-inflection-explainer-trigger" style="cursor:pointer;color:var(--SmartThemeBlurTintColor, #5c85d6);margin-bottom:8px;font-size:0.82rem;display:flex;align-items:center;gap:6px;">
+                <i class="fa-solid fa-circle-info"></i>
+                <b style="text-decoration:underline">How does adaptive memory retrieval work?</b>
+              </div>
+              <div id="cnz-inflection-explainer-body" class="cnz-hidden" style="margin-bottom:12px;padding:8px 12px;border-left:2px solid var(--SmartThemeBlurTintColor, #5c85d6);background:rgba(255,255,255,0.015);font-size:0.82rem;line-height:1.45;color:var(--cnz-text-muted, #888);">
+                Instead of forcing a fixed number of past memories into your chat on every turn, Canonize analyzes the signal-to-noise ratio of your search results in real time. It retrieves a wide pool of candidate memories, measures the rate of quality decline (to find a score cliff), and checks if different search paths (vector vs. keyword) still agree. Based on this, it dynamically isolates and injects only the highest-relevance memories, cutting off the noise before it bloats your active context window.
+              </div>
+
               <div class="cnz-settings-inline-row">
                 <label for="cnz-set-embedding-source">Embedding Source ${tip('Embedding provider. API keys are read from ST\'s connection settings. URL-based providers (Ollama, vLLM, llama.cpp) use the server URLs already configured in ST\'s API settings.')}</label>
                 <select id="cnz-set-embedding-source" class="cnz-select cnz-settings-select-sm">${embedOptions}</select>
@@ -150,18 +159,31 @@ export function buildRagSectionHTML(s, escapeHtml) {
                   <span id="cnz-embed-test-result" style="font-size:0.82rem"></span>
                 </div>
               </div>
+
+              <!-- Unified Adaptive Inflection Controls -->
               <div class="cnz-settings-inline-row">
-                <label for="cnz-set-rag-score-threshold">Score Threshold ${tip('Minimum cosine similarity (0–1) for a chunk to be injected.')}</label>
+                <label for="cnz-set-rag-score-threshold">Absolute Quality Floor ${tip('Minimum cosine similarity (0–1) for a memory to be injected. Any candidate scoring below this is immediately discarded.')}</label>
                 <input id="cnz-set-rag-score-threshold" type="number" min="0" max="1" step="0.05" value="${escapeHtml(String(s.ragScoreThreshold ?? 0.25))}">
               </div>
               <div class="cnz-settings-inline-row">
-                <label for="cnz-set-rag-retrieval-topk">Chunks — chat context ${tip('How many chunks to retrieve using recent chat messages as the query.')}</label>
+                <label for="cnz-set-rag-max-results">Memory Ceiling (Max Chunks) ${tip('The hard limit on the total number of memories that can be injected on a single turn. This acts as a safety shield to protect your active context budget.')}</label>
+                <input id="cnz-set-rag-max-results" type="number" min="1" max="20" step="1" value="${escapeHtml(String(s.ragInflectionMaxResults ?? 7))}">
+              </div>
+              <div class="cnz-settings-inline-row">
+                <label for="cnz-set-rag-retrieval-topk">Base Search Pool — chat context ${tip('The baseline candidate count retrieved from the vector database using recent chat messages as the query. This pool gets multiplied under the hood to perform distribution analysis.')}</label>
                 <input id="cnz-set-rag-retrieval-topk" type="number" min="0" max="20" step="1" value="${escapeHtml(String(s.ragRetrievalTopK ?? 5))}">
               </div>
               <div class="cnz-settings-inline-row">
-                <label for="cnz-set-rag-lb-retrieval-topk">Chunks — lorebook context ${tip('How many chunks to retrieve using the currently active lorebook entries as the query.')}</label>
+                <label for="cnz-set-rag-lb-retrieval-topk">Base Search Pool — lorebook context ${tip('The baseline candidate count retrieved from the vector database using active lorebook entries as the query.')}</label>
                 <input id="cnz-set-rag-lb-retrieval-topk" type="number" min="0" max="20" step="1" value="${escapeHtml(String(s.ragLbRetrievalTopK ?? 3))}">
               </div>
+              <div class="cnz-settings-row">
+                <label class="cnz-checkbox-label">
+                  <input id="cnz-set-inflection-verbose" type="checkbox" ${s.ragInflectionVerbose ? 'checked' : ''}>
+                  <span>Verbose Inflection Logs ${tip('Outputs detailed mathematical calculations (including score gaps and path consensus data) directly to the browser console on every turn.')}</span>
+                </label>
+              </div>
+
               <div class="cnz-setting-row">
                 <label class="cnz-label">Injection Template ${tip('Wraps the retrieved chunks before injection. Use {{text}} where the chunks should appear.')}</label>
                 <button id="cnz-edit-injection-template" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
