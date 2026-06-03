@@ -18,7 +18,7 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: [state._lorebookData, state._draftLorebook]
- *     external_io: [callPopup, toastr, /api/plugins/cnz/*]
+ *     external_io: [callPopup, toastr, file-store.js, file-store-lb.js]
  */
 
 import { callPopup } from '../../../../../script.js';

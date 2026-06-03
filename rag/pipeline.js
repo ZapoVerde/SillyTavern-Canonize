@@ -25,7 +25,7 @@
  *     purity: mutates
  *     state_ownership: [state._ragChunks, state._stagedProsePairs,
  *                       state._stagedPairOffset, state._splitPairIdx]
- *     external_io: [generateRaw via cycleStore, /api/plugins/cnz/insert-chunks, bus]
+ *     external_io: [generateRaw via cycleStore, file-store.js, bus]
  */
 
 import { state } from '../state.js';

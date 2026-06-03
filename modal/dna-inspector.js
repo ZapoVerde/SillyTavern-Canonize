@@ -16,7 +16,7 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: [none]
- *     external_io: [DOM, /api/plugins/cnz/health]
+ *     external_io:     [DOM, file-store.js]
  */
 
 import { escapeHtml } from '../state.js';

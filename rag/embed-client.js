@@ -1,31 +1,30 @@
 /**
  * @file data/default-user/extensions/canonize/rag/embed-client.js
  * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
- * @architectural-role IO Wrapper — embedding generation via the CNZ plugin proxy
+ * @architectural-role IO Wrapper — vector store proxy via ST's built-in /api/vector/* endpoints
  * @description
- * Calls the minimal CNZ plugin's /embed endpoint to generate embeddings using
- * ST's own vector modules and secrets store. API keys never leave the server.
+ * Calls ST's own vector endpoints for all embedding and retrieval operations.
+ * ST's server handles API key auth via its secrets store — no key ever touches
+ * the browser. Pattern identical to Vistalyze's use of /api/sd/* endpoints.
  *
- * Owns progress tracking for large batch operations: emits EMBED_PROGRESS on
- * the CNZ bus after each batch call so lifecycle.js can show a toast.
- * Handles retry (up to MAX_RETRIES) with linear backoff.
- *
- * Also owns testEmbed() and fetchAiStudioModels(), migrated from vec-store.js.
+ * Collection naming: cnz_chunks_{avatarKey}, cnz_headers_{avatarKey}, cnz_lb_{avatarKey}
  *
  * @api-declaration
- * embedCfg()                              → EmbedCfg
- * embedText(cfg, text, signal?)            → Promise<number[]>
- * embedBatch(cfg, texts)                  → Promise<number[][]>
- * testEmbed(cfg)                          → Promise<{ ok, dim, nonZero, ms }>
- * fetchAiStudioModels()                   → Promise<{ models: {id,displayName}[] }>
+ * embedCfg()                                         → EmbedCfg
+ * insertItems(collectionId, items, cfg)               → Promise<void>
+ * queryItems(collectionId, searchText, topK, cfg, signal?) → Promise<QueryResult>
+ * listHashes(collectionId, cfg)                       → Promise<number[]>
+ * deleteItems(collectionId, hashes, cfg)              → Promise<void>
+ * purgeCollection(collectionId)                       → Promise<void>
+ * testEmbed(cfg)                                      → Promise<{ ok, ms }>
  *
  * @contract
  *   assertions:
  *     purity:          mutates
- *     state_ownership: [_total, _done]
- *     external_io:     [POST /api/plugins/cnz/embed,
- *                       POST /api/plugins/cnz/test-embed,
- *                       GET  /api/plugins/cnz/aistudio-models,
+ *     state_ownership: [none]
+ *     external_io:     [POST /api/vector/insert, POST /api/vector/query,
+ *                       POST /api/vector/list,   POST /api/vector/delete,
+ *                       POST /api/vector/purge,
  *                       textgenerationwebui_settings, oai_settings]
  */
 
@@ -33,13 +32,9 @@ import { getRequestHeaders }                           from '../../../../../scri
 import { textgen_types, textgenerationwebui_settings } from '../../../../textgen-settings.js';
 import { oai_settings }                                from '../../../../openai.js';
 import { getSettings }                                 from '../core/settings.js';
-import { emit, BUS_EVENTS }                            from '../bus.js';
 import { log }                                         from '../log.js';
 
-const BASE        = '/api/plugins/cnz';
-const BATCH_SIZE  = 5;
-const MAX_RETRIES = 3;
-const RETRY_MS    = 1000;
+const BASE = '/api/vector';
 
 const URL_SOURCES = {
     ollama:   textgen_types.OLLAMA,
@@ -47,14 +42,11 @@ const URL_SOURCES = {
     llamacpp: textgen_types.LLAMACPP,
 };
 
-let _total = 0;
-let _done  = 0;
-
 // ── Embed config ──────────────────────────────────────────────────────────────
 
 /**
- * Builds the embedding config from current CNZ settings.
- * Matches the shape the plugin's embed-proxy expects.
+ * Builds the params block included in every /api/vector/* request body.
+ * ST's server reads source/model/apiUrl and looks up the API key itself.
  */
 export function embedCfg() {
     const s      = getSettings();
@@ -66,8 +58,7 @@ export function embedCfg() {
 
     if (source === 'workers_ai') {
         const accountId = (oai_settings.workers_ai_account_id ?? '').trim();
-        if (accountId)
-            cfg.urlOverride = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/v1`;
+        if (accountId) cfg.workers_ai_account_id = accountId;
     }
 
     log('EmbedClient', `cfg source=${cfg.source} model=${cfg.model || '(unset)'}`);
@@ -76,7 +67,7 @@ export function embedCfg() {
 
 // ── Loggeryze reporting ───────────────────────────────────────────────────────
 
-function _reportUsage(textLength, model) {
+export function reportEmbedUsage(textLength, model) {
     if (!model) return;
     window.loggeryze?.reportBgUsage({
         prompt_tokens:     Math.ceil(textLength / 4),
@@ -96,89 +87,78 @@ async function _post(path, body, signal) {
         signal,
     });
     if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(`CNZ embed ${path}: ${err.error ?? res.statusText}`);
+        const text = await res.text().catch(() => res.statusText);
+        throw new Error(`CNZ vec-api ${path}: ${text}`);
     }
-    return res.json();
-}
-
-async function _get(path, params = {}) {
-    const qs  = new URLSearchParams(params).toString();
-    const url = qs ? `${BASE}${path}?${qs}` : `${BASE}${path}`;
-    const res = await fetch(url, { headers: getRequestHeaders() });
-    if (!res.ok) throw new Error(`CNZ embed GET ${path}: ${res.statusText}`);
-    return res.json();
-}
-
-// ── Core embed with retry ─────────────────────────────────────────────────────
-
-async function _embedWithRetry(cfg, texts, signal) {
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        try {
-            const { embeddings } = await _post('/embed', { texts, ...cfg }, signal);
-            return embeddings;
-        } catch (err) {
-            if (attempt >= MAX_RETRIES) throw err;
-            log('EmbedClient', `attempt ${attempt}/${MAX_RETRIES} failed — retrying in ${RETRY_MS * attempt}ms: ${err.message}`);
-            await new Promise(r => setTimeout(r, RETRY_MS * attempt));
-        }
-    }
+    const ct = res.headers.get('content-type') ?? '';
+    return ct.includes('application/json') ? res.json() : null;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Embeds a single text string. Used for generation-time queries.
- * @param {object} cfg   From embedCfg()
- * @param {string}      text
+ * Embeds and stores items in a Vectra collection. ST handles the embedding call.
+ * @param {string}   collectionId
+ * @param {{ hash: number, text: string, index?: number }[]} items
+ * @param {object}   cfg   From embedCfg()
  * @param {AbortSignal} [signal]
+ */
+export async function insertItems(collectionId, items, cfg, signal) {
+    await _post('/insert', { collectionId, items, ...cfg }, signal);
+}
+
+/**
+ * Queries a Vectra collection by semantic similarity.
+ * Returns items in descending score order — position is the rank for RRF.
+ * @param {string}   collectionId
+ * @param {string}   searchText
+ * @param {number}   topK
+ * @param {object}   cfg   From embedCfg()
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<{ metadata: {hash:number, text:string}[], hashes: number[] }>}
+ */
+export async function queryItems(collectionId, searchText, topK, cfg, signal) {
+    return _post('/query', { collectionId, searchText, topK, threshold: 0, ...cfg }, signal);
+}
+
+/**
+ * Returns all hashes stored in a collection for a given source.
+ * @param {string} collectionId
+ * @param {object} cfg
  * @returns {Promise<number[]>}
  */
-export async function embedText(cfg, text, signal) {
-    const [embedding] = await _embedWithRetry(cfg, [text], signal);
-    _reportUsage(text.length, cfg.model);
-    return embedding;
+export async function listHashes(collectionId, cfg) {
+    return _post('/list', { collectionId, ...cfg });
 }
 
 /**
- * Embeds an array of strings in serial BATCH_SIZE chunks.
- * Emits EMBED_PROGRESS on the bus after each batch.
- * @param {object}   cfg   From embedCfg()
- * @param {string[]} texts
- * @returns {Promise<number[][]>}
+ * Deletes specific items from a collection by hash.
+ * @param {string}   collectionId
+ * @param {number[]} hashes
+ * @param {object}   cfg
  */
-export async function embedBatch(cfg, texts) {
-    if (!texts.length) return [];
-
-    _total += texts.length;
-    emit(BUS_EVENTS.EMBED_PROGRESS, { total: _total, done: _done });
-
-    const results = [];
-    for (let i = 0; i < texts.length; i += BATCH_SIZE) {
-        const batch      = texts.slice(i, i + BATCH_SIZE);
-        const embeddings = await _embedWithRetry(cfg, batch);
-        results.push(...embeddings);
-        _done += batch.length;
-        emit(BUS_EVENTS.EMBED_PROGRESS, { total: _total, done: _done });
-    }
-
-    _reportUsage(texts.reduce((s, t) => s + t.length, 0), cfg.model);
-
-    if (_done >= _total) { _total = 0; _done = 0; }
-    return results;
+export async function deleteItems(collectionId, hashes, cfg) {
+    await _post('/delete', { collectionId, hashes, ...cfg });
 }
 
 /**
- * Sends a test string through the embedding pipeline and returns diagnostics.
+ * Deletes an entire collection across all sources. Used for character purge.
+ * @param {string} collectionId
+ */
+export async function purgeCollection(collectionId) {
+    await _post('/purge', { collectionId });
+}
+
+/**
+ * Inserts a sentinel item, measures round-trip time, then purges the test collection.
  * @param {object} cfg   From embedCfg()
+ * @returns {Promise<{ ok: boolean, ms: number }>}
  */
 export async function testEmbed(cfg) {
-    return _post('/test-embed', cfg);
-}
-
-/**
- * Fetches the list of available Google AI Studio embedding models.
- */
-export async function fetchAiStudioModels() {
-    return _get('/aistudio-models');
+    const collectionId = `cnz_test_${Date.now()}`;
+    const t0 = Date.now();
+    await insertItems(collectionId, [{ hash: -1, text: 'The quick brown fox jumps over the lazy dog.', index: 0 }], cfg);
+    const ms = Date.now() - t0;
+    await purgeCollection(collectionId).catch(() => {});
+    return { ok: true, ms };
 }

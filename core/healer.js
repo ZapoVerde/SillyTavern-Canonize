@@ -27,7 +27,7 @@
  *     state_ownership: [state._dnaChain, state._lorebookName]
  *     external_io: [callPopup, toastr, lorebook via healer-restore.js,
  *                   healer-restore.js, scheduler.setDnaChain,
- *                   /api/plugins/cnz/health, /api/plugins/cnz/insert-chunks]
+ *                   file-store.js, file-store-lb.js]
  */
 
 import { callPopup } from '../../../../../script.js';

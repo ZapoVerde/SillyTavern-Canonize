@@ -3,14 +3,21 @@
  * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
  * @architectural-role IO Wrapper — lorebook entry and plot filler file operations
  * @description
- * Lorebook and plot filler operations for the file-based RAG store. Accesses
- * the shared lb and plot cache maps exported by file-store.js. Chunk operations
- * live in file-store.js; this module is strictly the lb/plot half.
+ * Lorebook and plot filler operations for the file-based RAG store. Embedding and
+ * semantic search delegate to ST's /api/vector/* endpoints via embed-client.js.
+ * JSON files store only metadata (no embedding vectors).
+ *
+ * Vectra collection per character:
+ *   cnz_lb_{avatarKey} — lorebook entry content embeddings
+ *
+ * JSON files per character:
+ *   cnz_lb_{avatarKey}.json   — [{hash, anchorUuid, lorebookName, entryUid, entryKeys, content}]
+ *   cnz_plot_{avatarKey}.json — plot filler history
  *
  * @api-declaration
- * getLb(avatarKey)               → Promise<object>   (exported for file-store.js)
+ * getLb(avatarKey)               → Promise<object>
  * insertLorebookEntries(avatarKey, anchorUuid, lorebookName, entries)
- * queryLorebookEntries(validAnchorUuids, queryText, topK, signal, lorebookName)
+ * queryLorebookEntries(avatarKey, validAnchorUuids, queryText, topK, signal, lorebookName)
  * queryRecentPlotEntries(lorebookName, validAnchorUuids, semanticUids, recencyCount,
  *                        signal, minArcs, fillerEnabled, fillerCards, fillerStrategy, currentTurn)
  * purgeCharacterLbEntries(avatarKey)
@@ -20,21 +27,25 @@
  *   assertions:
  *     purity:          mutates
  *     state_ownership: [lbCache, plotCache — shared with file-store.js]
- *     external_io:     [GET /user/files/cnz_lb_*.json, GET /user/files/cnz_plot_*.json,
- *                       POST /api/files/upload, embed-client.js, cosine.js]
+ *     external_io:     [GET /user/files/cnz_lb_*.json, POST /api/files/upload,
+ *                       embed-client.js (/api/vector/*)]
  */
 
-import { getStringHash }                    from '../../../../utils.js';
-import { embedCfg, embedText, embedBatch }  from './embed-client.js';
-import { encodeEmbedding, linearScanLb }    from './cosine.js';
-import { lbCache, plotCache, readFile, writeFile } from './file-store.js';
-import { log }                              from '../log.js';
+import { getStringHash }                              from '../../../../utils.js';
+import { embedCfg, insertItems, queryItems,
+         deleteItems, purgeCollection,
+         reportEmbedUsage }                           from './embed-client.js';
+import { lbCache, plotCache, readFile, writeFile }   from './file-store.js';
+import { emit, BUS_EVENTS }                           from '../bus.js';
+import { log }                                        from '../log.js';
+
+const _colLb = ak => `cnz_lb_${ak}`;
 
 // ── Cache helpers ─────────────────────────────────────────────────────────────
 
 export async function getLb(avatarKey) {
     if (lbCache.has(avatarKey)) return lbCache.get(avatarKey);
-    const data = await readFile(`cnz_lb_${avatarKey}.json`) ?? { version: 1, entries: [] };
+    const data = await readFile(`cnz_lb_${avatarKey}.json`) ?? { version: 2, entries: [] };
     lbCache.set(avatarKey, data);
     return data;
 }
@@ -61,43 +72,57 @@ async function _setPlot(avatarKey, data) {
 export async function insertLorebookEntries(avatarKey, anchorUuid, lorebookName, entries) {
     if (!entries.length) return { inserted: 0 };
 
-    const cfg  = embedCfg();
-    const data = await getLb(avatarKey);
-    const existingHashes = new Set(data.entries.filter(e => e.anchorUuid === anchorUuid).map(e => e.hash));
-    const toEmbed = entries.filter(e => !existingHashes.has(getStringHash(e.content)));
-    if (!toEmbed.length) return { inserted: 0 };
+    const data       = await getLb(avatarKey);
+    const seenHashes = new Set(data.entries.map(e => e.hash));
+    const toInsert   = entries.filter(e => !seenHashes.has(getStringHash(e.content)));
+    if (!toInsert.length) return { inserted: 0 };
 
-    const embeddings = await embedBatch(cfg, toEmbed.map(e => e.content));
-    for (let i = 0; i < toEmbed.length; i++) {
-        const e = toEmbed[i];
+    const cfg   = embedCfg();
+    const items = toInsert.map(e => ({ hash: getStringHash(e.content), text: e.content, index: e.uid }));
+    const totalChars = toInsert.reduce((s, e) => s + e.content.length, 0);
+
+    emit(BUS_EVENTS.EMBED_PROGRESS, { total: toInsert.length, done: 0 });
+    await insertItems(_colLb(avatarKey), items, cfg);
+    emit(BUS_EVENTS.EMBED_PROGRESS, { total: toInsert.length, done: toInsert.length });
+    reportEmbedUsage(totalChars, cfg.model);
+
+    for (const e of toInsert) {
         data.entries.push({
             hash: getStringHash(e.content), anchorUuid, lorebookName,
             entryUid: e.uid, entryKeys: e.keys ?? [], content: e.content,
-            embedding: encodeEmbedding(new Float32Array(embeddings[i])),
         });
     }
     await _setLb(avatarKey, data);
-    log('FileStoreLb', `insertLorebookEntries: +${toEmbed.length} for anchor ${anchorUuid.slice(0, 8)}`);
-    return { inserted: toEmbed.length };
+    log('FileStoreLb', `insertLorebookEntries: +${toInsert.length} for anchor ${anchorUuid.slice(0, 8)}`);
+    return { inserted: toInsert.length };
 }
 
-export async function queryLorebookEntries(validAnchorUuids, queryText, topK = 3, signal, lorebookName = null) {
+export async function queryLorebookEntries(avatarKey, validAnchorUuids, queryText, topK = 3, signal, lorebookName = null) {
     if (!queryText?.trim() || !validAnchorUuids.length) return [];
 
-    const allEntries = [...lbCache.values()].flatMap(d => d.entries);
-    const cfg        = embedCfg();
-    const queryVec   = new Float32Array(await embedText(cfg, queryText, signal));
+    const data    = await getLb(avatarKey);
+    const hashMap = new Map(data.entries.map(e => [e.hash, e]));
+    const cfg     = embedCfg();
 
-    const semRows = linearScanLb(allEntries, queryVec, validAnchorUuids, topK * 2, lorebookName);
-    const seen    = new Map(semRows.map(r => [r.entryUid, r]));
+    const result  = await queryItems(_colLb(avatarKey), queryText, topK * 2, cfg, signal);
+    const seen    = new Map();
+
+    for (const m of (result?.metadata ?? [])) {
+        const meta = hashMap.get(Number(m.hash));
+        if (!meta || !validAnchorUuids.includes(meta.anchorUuid)) continue;
+        if (lorebookName && meta.lorebookName !== lorebookName) continue;
+        seen.set(meta.entryUid, { lorebookName: meta.lorebookName, entryUid: meta.entryUid,
+                                  anchorUuid: meta.anchorUuid, score: 0.95 });
+    }
 
     const tokens = queryText.toLowerCase().split(/\s+/).filter(t => t.length >= 3);
-    for (const e of allEntries) {
+    for (const e of data.entries) {
         if (!validAnchorUuids.includes(e.anchorUuid)) continue;
         if (lorebookName && e.lorebookName !== lorebookName) continue;
         if (seen.has(e.entryUid)) continue;
         if (tokens.some(t => e.content.toLowerCase().includes(t)))
-            seen.set(e.entryUid, { lorebookName: e.lorebookName, entryUid: e.entryUid, anchorUuid: e.anchorUuid, score: 0.85 });
+            seen.set(e.entryUid, { lorebookName: e.lorebookName, entryUid: e.entryUid,
+                                   anchorUuid: e.anchorUuid, score: 0.85 });
     }
 
     return [...seen.values()].slice(0, topK);
@@ -108,8 +133,8 @@ export async function queryLorebookEntries(validAnchorUuids, queryText, topK = 3
 export async function queryRecentPlotEntries(lorebookName, validAnchorUuids, semanticUids = [], recencyCount = 3, signal, minArcs = 0, fillerEnabled = false, fillerCards = 1, fillerStrategy = 'random', currentTurn = 0) {
     if (!lorebookName || !validAnchorUuids.length) return [];
 
-    const pool = [...lbCache.values()].flatMap(d => d.entries)
-        .filter(e => e.lorebookName === lorebookName && validAnchorUuids.includes(e.anchorUuid));
+    const allLb  = [...lbCache.values()].flatMap(d => d.entries);
+    const pool   = allLb.filter(e => e.lorebookName === lorebookName && validAnchorUuids.includes(e.anchorUuid));
 
     const getTagsForUids = uids => {
         const rows = pool.filter(e => uids.includes(e.entryUid));
@@ -175,16 +200,20 @@ export async function queryRecentPlotEntries(lorebookName, validAnchorUuids, sem
 // ── Purge ─────────────────────────────────────────────────────────────────────
 
 export async function purgeCharacterLbEntries(avatarKey) {
+    await purgeCollection(_colLb(avatarKey));
     lbCache.delete(avatarKey);
     plotCache.delete(avatarKey);
-    await writeFile(`cnz_lb_${avatarKey}.json`, { version: 1, entries: [] });
-    await writeFile(`cnz_plot_${avatarKey}.json`, { version: 1, fillerHistory: {} });
+    await writeFile(`cnz_lb_${avatarKey}.json`,   { version: 2, entries: [] });
+    await writeFile(`cnz_plot_${avatarKey}.json`,  { version: 1, fillerHistory: {} });
 }
 
 export async function purgeAnchorLbEntries(anchorUuid) {
     for (const [ak, data] of lbCache) {
-        const before  = data.entries.length;
-        data.entries  = data.entries.filter(e => e.anchorUuid !== anchorUuid);
-        if (data.entries.length !== before) await _setLb(ak, data);
+        const toDelete = data.entries.filter(e => e.anchorUuid === anchorUuid);
+        if (!toDelete.length) continue;
+        const hashes   = toDelete.map(e => e.hash);
+        await deleteItems(_colLb(ak), hashes, embedCfg());
+        data.entries = data.entries.filter(e => e.anchorUuid !== anchorUuid);
+        await _setLb(ak, data);
     }
 }

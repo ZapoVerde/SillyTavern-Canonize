@@ -1,51 +1,57 @@
 /**
  * @file data/default-user/extensions/canonize/rag/file-store.js
  * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
- * @architectural-role IO Wrapper — JSON file IO, chunk operations, shared cache helpers
+ * @architectural-role IO Wrapper — chunk metadata file IO, Vectra-backed semantic search
  * @description
- * Owns the ST file API calls, the in-memory cache maps, and all chunk-level
- * RAG operations. Lorebook and plot operations live in file-store-lb.js, which
- * accesses shared state through the exported cache accessors below.
+ * Owns chunk metadata JSON files and all chunk-level RAG operations.
+ * Embedding and semantic search are delegated to ST's /api/vector/* endpoints
+ * via embed-client.js. The JSON files store only metadata (no embedding vectors).
+ * Lorebook and plot operations live in file-store-lb.js.
  *
- * Files per character:
- *   cnz_chunks_{avatarKey}.json — RAG chunks with Base64-encoded embeddings + FTS index
- *   cnz_lb_{avatarKey}.json     — lorebook entries (owned by file-store-lb.js)
- *   cnz_plot_{avatarKey}.json   — plot filler history (owned by file-store-lb.js)
+ * Vectra collections per character:
+ *   cnz_chunks_{avatarKey}  — chunk content embeddings
+ *   cnz_headers_{avatarKey} — chunk header embeddings (header lane of RRF)
+ *
+ * JSON file per character:
+ *   cnz_chunks_{avatarKey}.json — [{hash, anchorUuid, chatFile, pairStart,
+ *                                    pairEnd, header, turnRange, content}]
+ *                                 plus serialised FTS index
  *
  * @api-declaration
- * readFile(name)                     → Promise<object|null>
- * writeFile(name, obj)               → Promise<void>
- * getChunks(avatarKey)               → Promise<object>
- * setChunks(avatarKey, data)         → Promise<void>
+ * readFile(name)              → Promise<object|null>
+ * writeFile(name, obj)        → Promise<void>
+ * getChunks(avatarKey)        → Promise<ChunkStore>
+ * setChunks(avatarKey, store) → Promise<void>
  * insertSyncChunks(avatarKey, anchorUuid, chatFile, chunks, pairOffset)
- * querySyncChunks(validAnchorUuids, queryText, topK, signal)
+ * querySyncChunks(avatarKey, validAnchorUuids, queryText, topK, signal)
  * purgeAnchorChunks(anchorUuid)
  * purgeCharacterChunks(avatarKey)
  * anchorChunkCount(avatarKey, anchorUuid)
  * anchorStats(anchorUuid)
  * warmCache(avatarKey)
- * chunkCache                         (Map — read-only for file-store-lb.js)
- * lbCache                            (Map — owned by file-store-lb.js)
- * plotCache                          (Map — owned by file-store-lb.js)
+ * chunkCache  — Map, exported for file-store-lb.js
+ * lbCache     — Map, exported for file-store-lb.js
+ * plotCache   — Map, exported for file-store-lb.js
  *
  * @contract
  *   assertions:
  *     purity:          mutates
  *     state_ownership: [chunkCache, lbCache, plotCache]
  *     external_io:     [GET /user/files/cnz_chunks_*.json, POST /api/files/upload,
- *                       embed-client.js, cosine.js, fts.js, rrf.js]
+ *                       embed-client.js (/api/vector/*), fts.js, rrf.js]
  */
 
 import { getRequestHeaders }  from '../../../../../script.js';
 import { getStringHash }      from '../../../../utils.js';
-import { embedCfg, embedText, embedBatch } from './embed-client.js';
-import { encodeEmbedding, linearScan, linearScanHeader } from './cosine.js';
+import { embedCfg, insertItems, queryItems, deleteItems,
+         purgeCollection, reportEmbedUsage } from './embed-client.js';
 import { buildFtsIndex, addChunkToIndex, queryFts,
          serialiseFtsIndex, deserialiseFtsIndex } from './fts.js';
 import { rrf }  from './rrf.js';
+import { emit, BUS_EVENTS } from '../bus.js';
 import { log }  from '../log.js';
 
-// ── Shared cache maps (exported for file-store-lb.js) ────────────────────────
+// ── Shared caches (exported for file-store-lb.js) ─────────────────────────────
 
 export const chunkCache = new Map();
 export const lbCache    = new Map();
@@ -54,8 +60,8 @@ export const plotCache  = new Map();
 // ── File IO ───────────────────────────────────────────────────────────────────
 
 function _encode(obj) {
-    const bytes  = new TextEncoder().encode(JSON.stringify(obj));
-    const parts  = [];
+    const bytes = new TextEncoder().encode(JSON.stringify(obj));
+    const parts = [];
     for (let i = 0; i < bytes.length; i += 0x8000)
         parts.push(String.fromCharCode(...bytes.subarray(i, i + 0x8000)));
     return btoa(parts.join(''));
@@ -77,11 +83,11 @@ export async function writeFile(name, obj) {
     if (!res.ok) throw new Error(`CNZ file-store write ${name}: ${res.statusText}`);
 }
 
-// ── Chunk cache helpers ───────────────────────────────────────────────────────
+// ── Chunk cache ───────────────────────────────────────────────────────────────
 
 export async function getChunks(avatarKey) {
     if (chunkCache.has(avatarKey)) return chunkCache.get(avatarKey);
-    const data = await readFile(`cnz_chunks_${avatarKey}.json`) ?? { version: 1, chunks: [], ftsIndex: null };
+    const data = await readFile(`cnz_chunks_${avatarKey}.json`) ?? { version: 2, chunks: [], ftsIndex: null };
     chunkCache.set(avatarKey, data);
     return data;
 }
@@ -91,12 +97,17 @@ export async function setChunks(avatarKey, data) {
     await writeFile(`cnz_chunks_${avatarKey}.json`, data);
 }
 
-function _getOrBuildFtsIndex(data) {
+function _getFtsIndex(data) {
     if (data._ftsIndex) return data._ftsIndex;
     const idx = data.ftsIndex ? deserialiseFtsIndex(data.ftsIndex) : buildFtsIndex(data.chunks);
     data._ftsIndex = idx;
     return idx;
 }
+
+// ── Collection names ──────────────────────────────────────────────────────────
+
+const _colChunks  = ak => `cnz_chunks_${ak}`;
+const _colHeaders = ak => `cnz_headers_${ak}`;
 
 // ── Chunk operations ──────────────────────────────────────────────────────────
 
@@ -104,61 +115,86 @@ export async function insertSyncChunks(avatarKey, anchorUuid, chatFile, chunks, 
     const settled = chunks.filter(c => c.status === 'complete' || c.status === 'manual');
     if (!settled.length) return { inserted: 0 };
 
-    const cfg  = embedCfg();
-    const data = await getChunks(avatarKey);
-    const existingHashes = new Set(data.chunks.filter(c => c.anchorUuid === anchorUuid).map(c => c.hash));
-    const toEmbed = settled.filter(c => !existingHashes.has(getStringHash(c.content)));
-    if (!toEmbed.length) return { inserted: 0 };
+    const data        = await getChunks(avatarKey);
+    const seenHashes  = new Set(data.chunks.map(c => c.hash));
+    const toInsert    = settled.filter(c => !seenHashes.has(getStringHash(c.content)));
+    if (!toInsert.length) return { inserted: 0 };
 
-    const headerItems = toEmbed.filter(c => c.header);
-    const [contentEmbs, headerEmbs] = await Promise.all([
-        embedBatch(cfg, toEmbed.map(c => c.content)),
-        headerItems.length ? embedBatch(cfg, headerItems.map(c => c.header)) : Promise.resolve([]),
-    ]);
+    const cfg         = embedCfg();
+    const ftsIdx      = _getFtsIndex(data);
 
-    const ftsIdx     = _getOrBuildFtsIndex(data);
-    let   headerIdx  = 0;
-    const headerMap  = new Map(headerItems.map((c, i) => [c.content, i]));
+    const contentItems = toInsert.map((c, i) => ({
+        hash:  getStringHash(c.content),
+        text:  c.content,
+        index: pairOffset + c.pairStart,
+    }));
+    const headerItems = toInsert
+        .filter(c => c.header)
+        .map(c => ({ hash: getStringHash(c.content), text: c.header, index: pairOffset + c.pairStart }));
 
-    for (let i = 0; i < toEmbed.length; i++) {
-        const c = toEmbed[i];
-        const hIdx = c.header ? headerMap.get(c.content) ?? headerIdx++ : -1;
+    const totalChars = toInsert.reduce((s, c) => s + c.content.length, 0);
+    emit(BUS_EVENTS.EMBED_PROGRESS, { total: toInsert.length, done: 0 });
+
+    await insertItems(_colChunks(avatarKey), contentItems, cfg);
+    if (headerItems.length) await insertItems(_colHeaders(avatarKey), headerItems, cfg);
+
+    emit(BUS_EVENTS.EMBED_PROGRESS, { total: toInsert.length, done: toInsert.length });
+    reportEmbedUsage(totalChars, cfg.model);
+
+    for (const c of toInsert) {
         const record = {
-            hash: getStringHash(c.content), anchorUuid, chatFile: chatFile ?? null,
-            pairStart: pairOffset + c.pairStart, pairEnd: pairOffset + c.pairEnd,
-            header: c.header ?? null, turnRange: c.turnRange ?? null, content: c.content,
-            embedding:       encodeEmbedding(new Float32Array(contentEmbs[i])),
-            headerEmbedding: c.header ? encodeEmbedding(new Float32Array(headerEmbs[hIdx])) : null,
+            hash:       getStringHash(c.content),
+            anchorUuid,
+            chatFile:   chatFile ?? null,
+            pairStart:  pairOffset + c.pairStart,
+            pairEnd:    pairOffset + c.pairEnd,
+            header:     c.header ?? null,
+            turnRange:  c.turnRange ?? null,
+            content:    c.content,
         };
         addChunkToIndex(ftsIdx, record, data.chunks.length);
         data.chunks.push(record);
     }
 
-    data.ftsIndex = serialiseFtsIndex(ftsIdx);
+    data.ftsIndex  = serialiseFtsIndex(ftsIdx);
     data._ftsIndex = ftsIdx;
     await setChunks(avatarKey, data);
-    log('FileStore', `insertSyncChunks: +${toEmbed.length} for anchor ${anchorUuid.slice(0, 8)}`);
-    return { inserted: toEmbed.length };
+    log('FileStore', `insertSyncChunks: +${toInsert.length} for anchor ${anchorUuid.slice(0, 8)}`);
+    return { inserted: toInsert.length };
 }
 
-export async function querySyncChunks(validAnchorUuids, queryText, topK = 5, signal) {
+export async function querySyncChunks(avatarKey, validAnchorUuids, queryText, topK = 5, signal) {
     if (!queryText?.trim() || !validAnchorUuids.length) return [];
 
-    const allChunks = [...chunkCache.values()].flatMap(d => d.chunks);
-    const cfg       = embedCfg();
-    const queryVec  = new Float32Array(await embedText(cfg, queryText, signal));
-    const pool      = topK * 2;
+    const data    = await getChunks(avatarKey);
+    const hashMap = new Map(data.chunks.map(c => [c.hash, c]));
+    const cfg     = embedCfg();
+    const pool    = topK * 2;
 
-    const contentRows = linearScan(allChunks, queryVec, validAnchorUuids, pool);
-    const headerRows  = linearScanHeader(allChunks, queryVec, validAnchorUuids, pool);
+    const toRow = (m) => {
+        const meta = hashMap.get(Number(m.hash));
+        if (!meta || !validAnchorUuids.includes(meta.anchorUuid)) return null;
+        return { content: meta.content, header: meta.header ?? null, turnRange: meta.turnRange ?? null,
+                 pairStart: meta.pairStart, pairEnd: meta.pairEnd,
+                 chatFile: meta.chatFile ?? null, anchorUuid: meta.anchorUuid, score: 1 };
+    };
 
-    let kwRows = [];
-    for (const data of chunkCache.values()) {
-        const idx = _getOrBuildFtsIndex(data);
-        kwRows.push(...queryFts(idx, data.chunks, queryText, validAnchorUuids, pool));
-    }
-    kwRows.sort((a, b) => b.score - a.score);
-    kwRows = kwRows.slice(0, pool);
+    const [contentResult, headerResult] = await Promise.all([
+        queryItems(_colChunks(avatarKey),  queryText, pool, cfg, signal),
+        queryItems(_colHeaders(avatarKey), queryText, pool, cfg, signal),
+    ]);
+
+    const contentRows = (contentResult?.metadata ?? []).map(toRow).filter(Boolean);
+    const headerRows  = (headerResult?.metadata  ?? []).map(m => {
+        const meta = hashMap.get(Number(m.hash));
+        if (!meta || !validAnchorUuids.includes(meta.anchorUuid)) return null;
+        return { content: meta.content, header: m.text, turnRange: meta.turnRange ?? null,
+                 pairStart: meta.pairStart, pairEnd: meta.pairEnd,
+                 chatFile: meta.chatFile ?? null, anchorUuid: meta.anchorUuid, score: 1 };
+    }).filter(Boolean);
+
+    const ftsIdx  = _getFtsIndex(data);
+    const kwRows  = queryFts(ftsIdx, data.chunks, queryText, validAnchorUuids, pool);
 
     return rrf({ content: contentRows, header: headerRows, keyword: kwRows }, topK)
         .map(r => ({
@@ -170,32 +206,35 @@ export async function querySyncChunks(validAnchorUuids, queryText, topK = 5, sig
 
 export async function purgeAnchorChunks(anchorUuid) {
     for (const [ak, data] of chunkCache) {
-        const before = data.chunks.length;
-        data.chunks  = data.chunks.filter(c => c.anchorUuid !== anchorUuid);
-        if (data.chunks.length !== before) {
-            const idx = buildFtsIndex(data.chunks);
-            data.ftsIndex = serialiseFtsIndex(idx);
-            data._ftsIndex = idx;
-            await setChunks(ak, data);
-        }
+        const toDelete = data.chunks.filter(c => c.anchorUuid === anchorUuid);
+        if (!toDelete.length) continue;
+        const hashes   = toDelete.map(c => c.hash);
+        const cfg      = embedCfg();
+        await deleteItems(_colChunks(ak),  hashes, cfg);
+        await deleteItems(_colHeaders(ak), hashes, cfg);
+        data.chunks    = data.chunks.filter(c => c.anchorUuid !== anchorUuid);
+        const idx      = buildFtsIndex(data.chunks);
+        data.ftsIndex  = serialiseFtsIndex(idx);
+        data._ftsIndex = idx;
+        await setChunks(ak, data);
     }
     const { purgeAnchorLbEntries } = await import('./file-store-lb.js');
     await purgeAnchorLbEntries(anchorUuid);
 }
 
 export async function purgeCharacterChunks(avatarKey) {
+    await purgeCollection(_colChunks(avatarKey));
+    await purgeCollection(_colHeaders(avatarKey));
     chunkCache.delete(avatarKey);
-    await writeFile(`cnz_chunks_${avatarKey}.json`, { version: 1, chunks: [], ftsIndex: null });
+    await writeFile(`cnz_chunks_${avatarKey}.json`, { version: 2, chunks: [], ftsIndex: null });
 }
 
 export async function anchorChunkCount(avatarKey, anchorUuid) {
     const result = {};
     if (avatarKey) {
         const cd = await getChunks(avatarKey);
-        const ld = lbCache.get(avatarKey) ?? await (async () => {
-            const { getLb } = await import('./file-store-lb.js');
-            return getLb(avatarKey);
-        })();
+        const { getLb } = await import('./file-store-lb.js');
+        const ld = await getLb(avatarKey);
         result.chunksForCharacter    = cd.chunks.length;
         result.lbEntriesForCharacter = ld.entries.length;
     }

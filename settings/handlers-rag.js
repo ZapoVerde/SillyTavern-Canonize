@@ -19,7 +19,7 @@
  */
 
 import { saveSettingsDebounced } from '../../../../../script.js';
-import { testEmbed, fetchAiStudioModels } from '../rag/embed-client.js';
+import { testEmbed, embedCfg } from '../rag/embed-client.js';
 import { state } from '../state.js';
 import { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 import { getSettings } from './data.js';
@@ -201,10 +201,9 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
         $result.removeAttr('style').removeClass('cnz-error-inline').text('');
         log('EmbedTest', `source=${s.ragEmbeddingSource ?? 'openrouter'} model=${s.ragEmbeddingModel || '(unset)'}`);
         try {
-            const { dim, nonZero, ms } = await testEmbed();
-            const allZero = nonZero === 0 ? ' — ALL ZEROS' : '';
-            log('EmbedTest', `OK dim=${dim} nonZero=${nonZero} ms=${ms}${allZero}`);
-            $result.css('color', 'var(--cnz-btn-success-fg)').text(`OK — ${dim}-dim in ${ms}ms${nonZero === 0 ? ' ⚠ all zeros' : ''}`);
+            const { ok, ms } = await testEmbed(embedCfg());
+            log('EmbedTest', `OK ms=${ms}`);
+            $result.css('color', 'var(--cnz-btn-success-fg)').text(`OK — ${ms}ms`);
         } catch (err) {
             error('EmbedTest', err.message);
             $result.addClass('cnz-error-inline').text(err.message);
@@ -222,19 +221,12 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
         if (source === 'mistral') { _renderEmbedModelList(MISTRAL_EMBED_MODELS, false); return; }
         if (source === 'voyageai') { _renderEmbedModelList(VOYAGE_EMBED_MODELS, false); return; }
         if (source === 'aistudio' || source === 'palm') {
-            const $btn = $(this);
-            const orig = $btn.html();
-            $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i>');
-            try {
-                const { models } = await fetchAiStudioModels();
-                const items = models.map(m => ({ id: m.id, label: m.displayName ? `${m.id} — ${m.displayName}` : m.id }));
-                _renderEmbedModelList(items, false);
-            } catch (err) {
-                error('Settings', 'AI Studio model list fetch failed:', err);
-                toastr.error(`Could not fetch AI Studio models: ${err?.message || err}`);
-            } finally {
-                $btn.prop('disabled', false).html(orig);
-            }
+            _renderEmbedModelList([
+                { id: 'text-embedding-005',              label: 'text-embedding-005' },
+                { id: 'text-embedding-004',              label: 'text-embedding-004' },
+                { id: 'text-multilingual-embedding-002', label: 'text-multilingual-embedding-002' },
+                { id: 'gemini-embedding-exp-03-07',      label: 'gemini-embedding-exp-03-07' },
+            ], false);
             return;
         }
         if (source !== 'openrouter') {

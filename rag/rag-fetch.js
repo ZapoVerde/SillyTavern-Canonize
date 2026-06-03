@@ -23,6 +23,7 @@
 import { buildProsePairs, formatPairsAsTranscript, cleanForEmbedding } from '../core/transcript.js';
 import { querySyncChunks } from './file-store.js';
 import { queryLorebookEntries, queryRecentPlotEntries } from './file-store-lb.js';
+import { cnzAvatarKey } from './api.js';
 import { state } from '../state.js';
 import { log, error } from '../log.js';
 import { DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
@@ -66,6 +67,8 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
     const currentChatFile = ctx.getCurrentChatFile?.() ?? '(unknown)';
     const lastAnchorUuid  = validUuids.at(-1) ?? '(none)';
+    const char      = ctx.characters?.[ctx.characterId];
+    const avatarKey = char ? cnzAvatarKey(char.avatar) : null;
     const plotLbName = state._plotLorebookName ?? null;
     log('RagHook', `fetch anchors=${validUuids.length} topK=${topK} topKLb=${topKLb} topKPlot=${topKPlot} threshold=${noiseFloor}`);
     log('RagHook', `scope chatFile=${currentChatFile} lastAnchor=${lastAnchorUuid}`);
@@ -74,11 +77,11 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
     const [chunkBatches, lbHitsRaw, plotHitsRaw] = await Promise.all([
         Promise.all([
-            chatQuery.trim() && topK   > 0 ? querySyncChunks(validUuids, chatQuery, topK,   signal) : [],
-            lbQuery.trim()   && topKLb > 0 ? querySyncChunks(validUuids, lbQuery,   topKLb, signal) : [],
+            chatQuery.trim() && topK   > 0 && avatarKey ? querySyncChunks(avatarKey, validUuids, chatQuery, topK,   signal) : [],
+            lbQuery.trim()   && topKLb > 0 && avatarKey ? querySyncChunks(avatarKey, validUuids, lbQuery,   topKLb, signal) : [],
         ]),
-        topKLb  > 0 && chatQuery.trim() ? queryLorebookEntries(validUuids, chatQuery, topKLb,   signal)           : [],
-        topKPlot > 0 && chatQuery.trim() && plotLbName ? queryLorebookEntries(validUuids, chatQuery, topKPlot, signal, plotLbName) : [],
+        topKLb  > 0 && chatQuery.trim() && avatarKey ? queryLorebookEntries(avatarKey, validUuids, chatQuery, topKLb,   signal)           : [],
+        topKPlot > 0 && chatQuery.trim() && plotLbName && avatarKey ? queryLorebookEntries(avatarKey, validUuids, chatQuery, topKPlot, signal, plotLbName) : [],
     ]);
 
     log('RagHook', `all paths resolved in ${(performance.now() - t0).toFixed(0)}ms`);

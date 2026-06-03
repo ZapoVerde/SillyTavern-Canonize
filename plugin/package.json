@@ -1,7 +1,0 @@
-{
-    "name": "cnz-plugin",
-    "version": "4.0.0",
-    "description": "CNZ embed proxy — routes embedding calls through ST's own vector modules. No database, no npm install.",
-    "type": "module",
-    "main": "index.js"
-}
