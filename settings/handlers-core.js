@@ -52,10 +52,6 @@ export function bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refres
         getSettings().chunkEveryN = Math.max(1, parseInt($(this).val()) || 20);
         saveSettingsDebounced(); updateDirtyIndicator();
     });
-    $('#cnz-set-gap-snooze').on('input', function () {
-        getSettings().gapSnoozeTurns = Math.max(1, parseInt($(this).val()) || 5);
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
     $('#cnz-set-hookseeker-horizon').on('input', function () {
         getSettings().hookseekerHorizon = Math.max(1, parseInt($(this).val()) || 40);
         saveSettingsDebounced(); updateDirtyIndicator();
@@ -64,16 +60,8 @@ export function bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refres
         getSettings().lorebookSyncStart = $(this).val();
         saveSettingsDebounced(); updateDirtyIndicator();
     });
-    $('#cnz-set-auto-advance-mask').on('change', function () {
-        getSettings().autoAdvanceMask = $(this).prop('checked');
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
     $('#cnz-set-enable-people-sync').on('change', function () {
         getSettings().enablePeopleSync = $(this).prop('checked');
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-    $('#cnz-set-auto-sync').on('change', function () {
-        getSettings().autoSync = $(this).prop('checked');
         saveSettingsDebounced(); updateDirtyIndicator();
     });
     $('#cnz-edit-summary-prompt').on('click', () =>

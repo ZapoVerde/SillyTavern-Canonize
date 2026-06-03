@@ -272,7 +272,7 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
     })();
 
     const ragPromise = (async () => {
-        if (!settings.enableRag || !isPluginReachable()) { log('Rag', 'Lane 3: skipped (disabled)'); return true; }
+        if (!isPluginReachable()) { log('Rag', 'Lane 3: skipped (plugin unreachable)'); return true; }
         log('Rag', 'Lane 3: starting');
         try {
             await runRagPipeline(anchorUuid);

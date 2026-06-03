@@ -126,7 +126,7 @@ export const Recipes = {
             const inputSets = [];
 
             for (const chunk of ragChunks) {
-                if (chunk.status === 'complete') continue;  // skip qvink-prebuilt chunks
+                if (chunk.status === 'complete') continue;
 
                 const pairStart   = chunk.pairStart ?? chunk.chunkIndex;
                 const pairEnd     = chunk.pairEnd   ?? (pairStart + 1);
@@ -206,7 +206,6 @@ export const Triggers = {
         condition:  (state, settings) => {
             const { context, messages, pairCount, dnaChain, snoozeUntilCount, syncInProgress } = state;
             if (!context || context.groupId || context.characterId == null) return null;
-            if (!settings.autoSync) return null;
             if (syncInProgress) return null;
             const every = settings.chunkEveryN ?? 20;
             if (every <= 0 || pairCount <= 0) return null;

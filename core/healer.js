@@ -53,10 +53,9 @@ export { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
  * Walks the full DNA chain to rebuild the plot lorebook file and ensure all
  * plot entries are vectorized. Safe to call when the file already exists —
  * the lorebook write is idempotent and insertLorebookEntries uses upsert.
- * Gated on RAG being enabled; no-op if the chain carries no plot entries.
+ * No-op if the chain carries no plot entries.
  */
 async function _reconcilePlotLorebook(char, chain) {
-    if (!getSettings().enableRag) return;
     const anchors = chain?.anchors ?? [];
     const anchorChunks = anchors
         .map(ref => ({ uuid: ref.anchor.uuid, entries: ref.anchor.plotEntries ?? [] }))
@@ -90,10 +89,9 @@ async function _reconcilePlotLorebook(char, chain) {
 /**
  * Silently rebuilds the vector DB from cnz_chunk_header stamps already written
  * to chat messages, when RAG is enabled but the DB is empty for this character.
- * No-ops if RAG is disabled, the plugin is unreachable, or no stamps are found.
+ * No-ops if the plugin is unreachable or no stamps are found.
  */
 async function _reconcileRagChunks(char, headAnchor) {
-    if (!getSettings().enableRag) return;
 
     try {
         const avatarKey = cnzAvatarKey(char.avatar);

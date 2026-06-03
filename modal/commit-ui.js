@@ -68,7 +68,7 @@ export function countDraftChanges() {
 export function populateRagPanel() {
     const context = SillyTavern.getContext();
     const char    = context.characters[context.characterId];
-    if (!char || !getSettings().enableRag) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
+    if (!char) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
     const settled = state._ragChunks.filter(c => c.status === 'complete' || c.status === 'manual');
     if (!settled.length) { $('#cnz-step4-rag').addClass('cnz-hidden'); return; }
     const label = `${settled.length} chunk${settled.length !== 1 ? 's' : ''} indexed in vector DB`;

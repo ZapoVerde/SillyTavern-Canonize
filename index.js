@@ -113,11 +113,10 @@ async function init() {
                 const remaining = trailingBoundary - newPrior;
                 if (remaining < every) return;
 
-                const snoozePairs = getSettings().gapSnoozeTurns ?? 5;
                 toastr.warning(
                     `CNZ: ${remaining} uncaptured pair(s). ` +
                     `<a href="#" class="cnz-gap-sync-all">Sync all</a> &nbsp; ` +
-                    `<a href="#" class="cnz-gap-snooze">Snooze ${snoozePairs} pairs</a>`,
+                    `<a href="#" class="cnz-gap-snooze">Skip this turn</a>`,
                     '',
                     { timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false },
                 );
@@ -126,20 +125,6 @@ async function init() {
 
         globalThis.cnzMaskMessages = async function(chat, _contextSize, _abort, type) {
             if (!getMetaSettings().enableCnz) return;
-            if (getSettings().autoAdvanceMask) {
-                const IGNORE = SillyTavern.getContext().symbols.ignore;
-                let anchorIdx = -1;
-                for (let i = chat.length - 2; i >= 0; i--) {
-                    if (chat[i]?.extra?.cnz?.type === 'anchor') { anchorIdx = i; break; }
-                }
-                if (anchorIdx >= 0) {
-                    for (let i = 0; i <= anchorIdx; i++) {
-                        chat[i] = structuredClone(chat[i]);
-                        chat[i].extra ??= {};
-                        chat[i].extra[IGNORE] = true;
-                    }
-                }
-            }
             if (type !== 'quiet') {
                 await onGenerationStarted().catch(err => error('RagHook', err));
             }

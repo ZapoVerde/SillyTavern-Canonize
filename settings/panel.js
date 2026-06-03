@@ -104,18 +104,10 @@ function refreshSettingsUI() {
 
     $('#cnz-set-live-context-buffer').val(s.liveContextBuffer ?? 5);
     $('#cnz-set-chunk-every-n').val(s.chunkEveryN ?? 20);
-    $('#cnz-set-gap-snooze').val(s.gapSnoozeTurns ?? 5);
     $('#cnz-set-hookseeker-horizon').val(s.hookseekerHorizon ?? 40);
     $('#cnz-set-lorebook-sync-start').val(s.lorebookSyncStart ?? 'syncPoint');
-    $('#cnz-set-auto-advance-mask').prop('checked', s.autoAdvanceMask ?? false);
 
-    $('#cnz-set-enable-rag').prop('checked', s.enableRag ?? false);
-    $('#cnz-rag-settings-body').toggleClass('cnz-disabled', !(s.enableRag ?? false));
     $('#cnz-set-rag-contents').val(s.ragContents ?? 'summary+full');
-
-    const hasSummary = (s.ragContents ?? 'summary+full') !== 'full';
-    $('#cnz-rag-summary-source-row').toggleClass('cnz-hidden', !hasSummary);
-    $('#cnz-set-rag-summary-source').val(s.ragSummarySource ?? 'defined');
     $('#cnz-set-rag-max-tokens').val(s.ragMaxTokens ?? 100);
     $('#cnz-set-rag-chunk-size').val(s.ragChunkSize ?? 2);
     $('#cnz-set-rag-chunk-overlap').val(s.ragChunkOverlap ?? 0);

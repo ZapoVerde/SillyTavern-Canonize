@@ -138,7 +138,7 @@ async function _applyPlotLorebookEdits(name) {
         await SillyTavern.getContext().saveChat();
         log('LbWatch', `Chat saved — ${changed.length} plot entry/entries locked into DNA chain`);
 
-        if (getSettings().enableRag) {
+        {
             const ctx  = SillyTavern.getContext();
             const char = ctx.characters[ctx.characterId];
             if (!char) { log('LbWatch', `No character selected — skipping re-vector`); return; }
@@ -156,8 +156,6 @@ async function _applyPlotLorebookEdits(name) {
                 } catch (err) { error('PlotLb', `Re-vector failed (${uuid}):`, err); }
             }
             log('LbWatch', `Re-vector complete`);
-        } else {
-            log('LbWatch', `RAG disabled — skipping re-vector`);
         }
     } catch (err) {
         error('PlotLb', 'Plot lorebook edit handler failed:', err);
@@ -241,7 +239,7 @@ export function mountCnz() {
         const ctx       = SillyTavern.getContext();
         const messages  = ctx?.chat ?? [];
         const pairCount = messages.filter(m => !m.is_system && m.is_user).length;
-        snooze(getSettings().gapSnoozeTurns ?? 5, pairCount);
+        snooze(1, pairCount);
     });
     log('Lifecycle', 'Bound DOM: .cnz-review-link, .cnz-orphan-review, .cnz-orphan-dismiss, .cnz-gap-sync-all, .cnz-gap-snooze.');
 

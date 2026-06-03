@@ -3,10 +3,9 @@
  * @stamp {"utc":"2026-05-31T00:00:00.000Z"}
  * @architectural-role Pure Functions
  * @description
- * Builds the HTML for the RAG area of the CNZ settings panel: an exposed
- * enable toggle followed by two collapsible sections — RAG Summarization
- * (AI classification) and RAG Storage & Retrieval (embedding + injection).
- * Both collapsibles share a wrapper div that carries the disabled state.
+ * Builds the HTML for the RAG area of the CNZ settings panel: two collapsible
+ * sections — RAG Summarization (AI classification) and RAG Storage & Retrieval
+ * (embedding + injection).
  *
  * @api-declaration
  * buildRagSectionHTML(s, escapeHtml) → string
@@ -18,10 +17,7 @@
 export function buildRagSectionHTML(s, escapeHtml) {
     const tip           = (text) => `<span class="cnz-info-icon" title="${escapeHtml(text)}">&#9432;</span>`;
     const ragContents   = s.ragContents         ?? 'summary+full';
-    const ragSumSrc     = s.ragSummarySource    ?? 'defined';
-    const enableRag     = s.enableRag           ?? false;
     const hasSummary    = ragContents !== 'full';
-    const isDefinedHere = ragSumSrc === 'defined';
     const embedSource   = s.ragEmbeddingSource  ?? 'openrouter';
 
     // Sources that need a dedicated key not accessible from the main ST connections panel.
@@ -51,16 +47,7 @@ export function buildRagSectionHTML(s, escapeHtml) {
     ].map(([v, l]) => `<option value="${v}" ${embedSource === v ? 'selected' : ''}>${l}</option>`).join('');
 
     return `
-        <!-- ── RAG enable toggle (always visible) ── -->
-        <div class="cnz-settings-row">
-          <label class="cnz-checkbox-label">
-            <input id="cnz-set-enable-rag" type="checkbox" ${enableRag ? 'checked' : ''}>
-            <span>Enable Narrative Memory (RAG) ${tip('When enabled, each sync classifies memory chunks and indexes them in the CNZ SQLite vector DB for semantic retrieval at generation time.')}</span>
-          </label>
-        </div>
-
-        <!-- ── Shared wrapper — carries cnz-disabled when RAG is off ── -->
-        <div id="cnz-rag-settings-body" class="${enableRag ? '' : 'cnz-disabled'}">
+        <div id="cnz-rag-settings-body">
 
           <!-- RAG Summarization (collapsible) -->
           <div class="inline-drawer">
@@ -78,15 +65,7 @@ export function buildRagSectionHTML(s, escapeHtml) {
                   <option value="full"         ${ragContents === 'full'         ? 'selected' : ''}>Full Content Only</option>
                 </select>
               </div>
-              <div id="cnz-rag-summary-source-row" class="cnz-settings-inline-row ${hasSummary ? '' : 'cnz-hidden'}">
-                <label for="cnz-set-rag-summary-source">Summary Source ${tip('"Defined Here": AI classifier prompt generates semantic headers per chunk. "Qvink": reads headers from qvink_memory metadata.')}</label>
-                <select id="cnz-set-rag-summary-source" class="cnz-select cnz-settings-select-sm">
-                  <option value="defined" ${isDefinedHere  ? 'selected' : ''}>Defined Here</option>
-                  <option value="qvink"   ${!isDefinedHere ? 'selected' : ''}>Qvink</option>
-                </select>
-              </div>
-
-              <div id="cnz-rag-ai-controls" class="cnz-settings-subgroup ${(hasSummary && isDefinedHere) ? '' : 'cnz-disabled'}">
+              <div id="cnz-rag-ai-controls" class="cnz-settings-subgroup ${hasSummary ? '' : 'cnz-disabled'}">
                 <div class="cnz-settings-row">
                   <label for="cnz-set-rag-profile">RAG Connection Profile ${tip('AI connection used for chunk classification calls.')}</label>
                   <select id="cnz-set-rag-profile" class="text_pole"></select>

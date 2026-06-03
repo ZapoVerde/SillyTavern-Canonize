@@ -56,12 +56,11 @@ export function buildRagDocument(ragChunks, settings, charName) {
 
 /**
  * Builds the state._ragChunks state array from the staged prose pairs.
- * Qvink mode: forced 1-pair windows, headers from qvink_memory metadata.
- * Defined mode: ragChunkSize-pair sliding windows, headers from AI classifier.
+ * Sliding ragChunkSize-pair windows; headers classified by AI on first sync.
  * Pure function — all inputs passed explicitly.
  * @param {Array}  pairs
  * @param {number} [pairOffset=0]
- * @param {object} settings  Active profile settings (ragSummarySource, ragChunkSize, ragChunkOverlap).
+ * @param {object} settings  Active profile settings (ragChunkSize, ragChunkOverlap).
  * @returns {Array}
  */
 export function buildRagChunks(pairs, pairOffset = 0, settings) {
@@ -69,9 +68,8 @@ export function buildRagChunks(pairs, pairOffset = 0, settings) {
     // that confuse the classifier with a stimulus and no reply.
     pairs = pairs.filter(p => p.messages.length > 0);
     const chunks    = [];
-    const useQvink  = (settings.ragSummarySource ?? 'defined') === 'qvink';
-    const chunkSize = useQvink ? 1 : Math.max(1, settings.ragChunkSize ?? 2);
-    const overlap   = useQvink ? 0 : Math.max(0, settings.ragChunkOverlap ?? 0);
+    const chunkSize = Math.max(1, settings.ragChunkSize ?? 2);
+    const overlap   = Math.max(0, settings.ragChunkOverlap ?? 0);
 
     if (overlap === 0) {
         // Non-overlapping: advance by chunkSize each step
@@ -81,18 +79,14 @@ export function buildRagChunks(pairs, pairOffset = 0, settings) {
             const turnB     = pairOffset + Math.min(i + chunkSize, pairs.length);
             const turnRange = turnA === turnB ? `Turn ${turnA}` : `Turns ${turnA}–${turnB}`;
 
-            const content = formatPairsAsTranscript(window);
-
-            const qvinkText = useQvink ? (pairs[i].messages[0]?.extra?.qvink_memory?.memory || null) : null;
-
             chunks.push({
                 chunkIndex: chunks.length,
                 pairStart:  i,
                 pairEnd:    Math.min(i + chunkSize, pairs.length),
                 turnRange,
-                content,
-                header:  qvinkText || turnRange,
-                status:  (useQvink && qvinkText) ? 'complete' : 'pending',
+                content:    formatPairsAsTranscript(window),
+                header:     turnRange,
+                status:     'pending',
             });
         }
     } else {
