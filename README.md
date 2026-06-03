@@ -141,6 +141,7 @@ Canonize supports multiple setting profiles (e.g., a "Low Cost" profile for chea
 #### 4. Connections & Prompts
 *   **Summary Connection Profile:** Select a specific Connection Manager profile to run background summarization and lorebook syncs. This allows you to offload background tasks to a cheaper model, leaving your main chat model unburdened. Leaving this blank defaults to your currently selected chat model.
 *   **Edit Prompts:** Opens a prompt editor for your *Summary*, *Lorebook*, *People*, and *Targeted* prompts.
+*   **Reset All Prompts to Default:** Discards all custom prompt text and restores the built-in defaults for every prompt in this section.
 
 #### 5. Narrative Memory (RAG) Settings
 RAG is always active when the server plugin is reachable. No enable toggle is required.

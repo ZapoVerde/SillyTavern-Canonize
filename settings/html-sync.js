@@ -95,6 +95,9 @@ export function buildSyncSectionHTML(s, escapeHtml, profileOptions) {
             <label class="cnz-label">Targeted New Entry Prompt</label>
             <button id="cnz-edit-targeted-new-prompt" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Edit…</button>
           </div>
+          <div class="cnz-settings-row">
+            <button id="cnz-reset-all-prompts" class="cnz-btn cnz-btn-danger cnz-btn-sm">Reset All Prompts to Default</button>
+          </div>
         </div>
       </div>`;
 }
