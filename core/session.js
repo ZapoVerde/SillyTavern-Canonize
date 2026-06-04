@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/session.js
- * @stamp {"utc":"2026-06-04T15:25:00.000Z"}
- * @version 1.1.0
+ * @stamp {"utc":"2026-06-04T16:00:00.000Z"}
+ * @version 1.2.0
  * @architectural-role Orchestrator
  * @description
  * Session lifecycle management. Owns state reset on character switch and the
@@ -19,6 +19,7 @@
  *     external_io: [ST context, healer, scheduler, DNA chain]
  */
 
+import { getCurrentChatId } from '../../../../../script.js';
 import { log, error } from '../log.js';
 import { invalidateAllJobs } from '../cycleStore.js';
 import { resetScheduler, setDnaChain } from '../scheduler.js';
@@ -62,7 +63,7 @@ export function onChatChanged() {
     }
 
     const char         = context.characters[context.characterId];
-    const chatFileName = context.chatId ?? context.getCurrentChatId?.() ?? char?.chat ?? null;
+    const chatFileName = context.chatId ?? getCurrentChatId() ?? char?.chat ?? null;
 
     if (!char || char.avatar !== state._lastKnownAvatar) {
         state._lastKnownAvatar = char?.avatar ?? null;
@@ -72,7 +73,7 @@ export function onChatChanged() {
         setDnaChain(state._dnaChain);
         syncCnzSummaryOnCharacterSwitch(char, state._dnaChain);
         if (char) {
-            runHealer(char, char.chat).catch(err =>
+            runHealer(char, chatFileName).catch(err =>
                 error('Sync', 'onChatChanged: healer failed:', err),
             );
             checkOrphans().catch(err =>

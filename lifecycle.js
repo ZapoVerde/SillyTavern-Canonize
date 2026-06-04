@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/lifecycle.js
- * @stamp {"utc":"2026-06-04T15:47:00.000Z"}
- * @version 1.2.0
+ * @stamp {"utc":"2026-06-04T16:10:00.000Z"}
+ * @version 1.2.1
  * @architectural-role Orchestrator
  * @description
  * Mount/unmount lifecycle for the CNZ extension. Binds and unbinds all dynamic
@@ -230,6 +230,9 @@ export function mountCnz() {
 
     on(BUS_EVENTS.EMBED_PROGRESS, _onEmbedProgress);
     log('Lifecycle', 'Embed monitor started.');
+
+    // Run onChatChanged immediately to catch up if a chat is already loaded on boot
+    onChatChanged();
 
     log('Lifecycle', 'mountCnz: complete.');
 }

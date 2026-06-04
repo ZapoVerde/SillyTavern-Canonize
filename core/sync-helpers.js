@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/sync-helpers.js
- * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
- * @version 1.1.0
+ * @stamp {"utc":"2026-06-04T16:20:00.000Z"}
+ * @version 1.1.1
  * @architectural-role Orchestrator
  * @description
  * Private helpers for the sync pipeline. Handles lorebook update processing,
@@ -34,7 +34,7 @@
 import { log, warn } from '../log.js';
 import { getStringHash } from '../../../../utils.js';
 import { insertLorebookEntries } from '../rag/file-store-lb.js';
-import { cnzChatKey } from '../rag/api.js';
+import { cnzGetActiveChatKey } from '../rag/api.js';
 import { setDnaChain } from '../scheduler.js';
 import { readDnaChain, getLkgAnchor, buildAnchorPayload } from './dna-chain.js';
 import { writeDnaAnchor, writeDnaLinks } from './dna-writer.js';
@@ -138,7 +138,7 @@ export async function saveLorebookToDisk(anchorUuid, allSuggestions) {
         const char = ctx.characters[ctx.characterId];
         if (char) {
             try {
-                const _chatKey = cnzChatKey(ctx.getCurrentChatFile?.() ?? '');
+                const _chatKey = cnzGetActiveChatKey();
                 if (_chatKey) await insertLorebookEntries(_chatKey, anchorUuid, state._lorebookName, changed);
                 const hashStr = Object.values(state._draftLorebook.entries ?? {})
                     .sort((a, b) => a.uid - b.uid)
@@ -233,7 +233,7 @@ export async function appendAndIndexPlotEntries(entries, anchorUuid, _avatarFile
     const written = await appendPlotEntries(plotLbName, entries);
     if (!written.length) return [];
     try {
-        const _chatKey = cnzChatKey(SillyTavern.getContext().getCurrentChatFile?.() ?? '');
+        const _chatKey = cnzGetActiveChatKey();
         if (_chatKey) await insertLorebookEntries(_chatKey, anchorUuid, plotLbName, written);
     } catch (err) {
         warn('PlotLb', 'RAG indexing of plot entries failed:', err);

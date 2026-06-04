@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/healer.js
- * @stamp {"utc":"2026-06-04T15:28:00.000Z"}
- * @version 2.2.0
+ * @stamp {"utc":"2026-06-04T16:15:00.000Z"}
+ * @version 2.2.1
  * @architectural-role Orchestrator
  * @description
  * Branch detection and state restoration. Walks the DNA chain to find the
@@ -30,7 +30,7 @@
  *                   file-store.js, file-store-lb.js]
  */
 
-import { callPopup } from '../../../../../script.js';
+import { callPopup, getCurrentChatId } from '../../../../../script.js';
 import { state } from '../state.js';
 import { readDnaChain, findLkgAnchorByPosition, buildNodeFileFromAnchor, buildAnchorChunkMap } from './dna-chain.js';
 import { setDnaChain } from '../scheduler.js';
@@ -123,7 +123,7 @@ async function _reconcileRagChunks(char, headAnchor, chatKey) {
     try {
         const ctx        = SillyTavern.getContext();
         const allPairs   = buildProsePairs(ctx.chat ?? []);
-        const chatFile   = ctx.chatId ?? ctx.getCurrentChatId?.() ?? ctx.characters?.[ctx.characterId]?.chat ?? null;
+        const chatFile   = ctx.chatId ?? getCurrentChatId() ?? ctx.characters?.[ctx.characterId]?.chat ?? null;
         const validUuids = new Set(state._dnaChain.anchors.map(r => r.anchor.uuid));
 
         // ── 1. Purge anchors in store but not in chain ────────────────────────

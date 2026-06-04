@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/api.js
- * @stamp {"utc":"2026-06-04T15:23:00.000Z"}
- * @version 1.2.0
+ * @stamp {"utc":"2026-06-04T16:05:00.000Z"}
+ * @version 1.2.1
  * @architectural-role IO Wrapper
  * @description
  * Thin HTTP wrapper around the ST Data Bank file endpoints plus character
@@ -20,7 +20,7 @@
  *     external_io: [/api/files/upload, /api/files/delete]
  */
 
-import { getRequestHeaders, saveSettingsDebounced } from '../../../../../script.js';
+import { getRequestHeaders, saveSettingsDebounced, getCurrentChatId } from '../../../../../script.js';
 import { extension_settings } from '../../../../extensions.js';
 import { getMetaSettings } from '../core/settings.js';
 
@@ -124,7 +124,7 @@ export function cnzChatKey(chatFilename) {
 export function cnzGetActiveChatKey() {
     const ctx = SillyTavern.getContext();
     if (!ctx) return null;
-    const rawId = ctx.chatId ?? ctx.getCurrentChatId?.() ?? ctx.characters?.[ctx.characterId]?.chat ?? null;
+    const rawId = ctx.chatId ?? getCurrentChatId() ?? ctx.characters?.[ctx.characterId]?.chat ?? null;
     return cnzChatKey(rawId);
 }
 
