@@ -166,6 +166,14 @@ export function buildRagSectionHTML(s, escapeHtml) {
                 <label for="cnz-set-rag-signal-strength">Signal Strength ${tip('Minimum score spread required before the distribution is trusted. If max and min scores are too close together, there is no meaningful signal and only the minimum results are returned. Lower = more permissive. Higher = stricter.')}</label>
                 <input id="cnz-set-rag-signal-strength" type="number" min="0" max="1" step="0.01" value="${escapeHtml(String(s.ragSignalStrength ?? 0.35))}">
               </div>
+              <div class="cnz-settings-inline-row">
+                <label for="cnz-set-rag-cutoff-mode">Cutoff Mode ${tip('Score threshold used when filtering candidates. Mean keeps everything above the average. Higher modes (mean + std dev) are stricter — fewer results, higher confidence.')}</label>
+                <select id="cnz-set-rag-cutoff-mode" class="cnz-select cnz-settings-select-sm">
+                  <option value="mean"     ${ (s.ragCutoffMode ?? 'mean') === 'mean'     ? 'selected' : ''}>Mean</option>
+                  <option value="mean+1sd" ${ (s.ragCutoffMode ?? 'mean') === 'mean+1sd' ? 'selected' : ''}>Mean + 1 std dev</option>
+                  <option value="mean+2sd" ${ (s.ragCutoffMode ?? 'mean') === 'mean+2sd' ? 'selected' : ''}>Mean + 2 std dev</option>
+                </select>
+              </div>
               <div class="cnz-settings-inline-row" style="align-items:baseline;gap:8px;">
                 <label style="flex:1">Chat context ${tip('Results from searching the narrative memory store using recent conversation turns as the query.')}</label>
                 <label style="font-size:0.8rem;color:var(--cnz-text-muted,#888)">Min</label>
@@ -183,11 +191,8 @@ export function buildRagSectionHTML(s, escapeHtml) {
               <div class="cnz-settings-row">
                 <label class="cnz-checkbox-label">
                   <input type="checkbox" id="cnz-set-lb-rag-only" ${(s.lbRagOnly ?? false) ? 'checked' : ''}>
-                  <span>Bypass WI keyword activation ${tip('When on, CNZ strips keyword triggers from its managed lorebook entries so ST\'s scanner never fires them. Only RAG decides which entries inject — they still land in World Info (before) via force-activation. Apply to existing entries below; future syncs respect this automatically.')}</span>
+                  <span>Bypass WI keyword activation ${tip('Detaches the lorebook from the character so ST\'s keyword scanner never sees it. RAG-matched entries inject directly into a dedicated CNZ World Info prompt slot. Toggle off to re-attach and use the WI pipeline with Structurize formatting.')}</span>
                 </label>
-              </div>
-              <div class="cnz-setting-row">
-                <button id="cnz-lb-rag-only-apply" class="cnz-btn cnz-btn-secondary cnz-btn-sm">Apply to existing entries</button>
               </div>
 
               <div class="cnz-setting-row">

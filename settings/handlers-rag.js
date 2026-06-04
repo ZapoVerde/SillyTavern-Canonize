@@ -23,7 +23,7 @@ import { state } from '../state.js';
 import { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 import { getSettings } from './data.js';
 import { bindEmbedHandlers } from './handlers-rag-embed.js';
-import { lbGetLorebook, lbSaveLorebook, lbSetCharacterLorebook } from '../lorebook/api.js';
+import { lbSetCharacterLorebook } from '../lorebook/api.js';
 import { clearCnzLbPrompt } from '../core/summary-prompt.js';
 import { log, error } from '../log.js';
 
@@ -99,6 +99,11 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
         if (!isNaN(val)) { getSettings().ragSignalStrength = Math.min(1, Math.max(0, val)); saveSettingsDebounced(); updateDirtyIndicator(); }
     });
 
+    $('#cnz-set-rag-cutoff-mode').on('change', function () {
+        getSettings().ragCutoffMode = $(this).val();
+        saveSettingsDebounced(); updateDirtyIndicator();
+    });
+
     $('#cnz-set-rag-chat-min').on('input', function () {
         const val = parseInt($(this).val(), 10);
         if (!isNaN(val) && val >= 0) { getSettings().ragChatMin = val; saveSettingsDebounced(); updateDirtyIndicator(); }
@@ -137,41 +142,6 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
         }
 
         if (!bypass) clearCnzLbPrompt();
-    });
-
-    $('#cnz-lb-rag-only-apply').on('click', async function () {
-        const ctx  = SillyTavern.getContext();
-        const name = state._lorebookName
-            || state._dnaChain?.lkg?.anchor?.lorebook?.name
-            || ctx.characters?.[ctx.characterId]?.data?.extensions?.world;
-        if (!name) { toastr.warning('No CNZ lorebook found — run a sync first.'); return; }
-
-        const $btn = $(this);
-        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i>');
-        try {
-            const raw   = state._draftLorebook ?? state._lorebookData ?? await lbGetLorebook(name);
-            const clone = structuredClone(raw);
-            let count = 0;
-            for (const entry of Object.values(clone.entries ?? {})) {
-                if (!entry.disable && (entry.key?.length || entry.constant || !entry.preventRecursion)) {
-                    entry.key             = [];
-                    entry.constant        = false;
-                    entry.preventRecursion = true;
-                    count++;
-                }
-            }
-            await lbSaveLorebook(name, clone);
-            if (state._lorebookData) state._lorebookData = structuredClone(clone);
-            if (state._draftLorebook) state._draftLorebook = structuredClone(clone);
-            state._lastIndexedLorebookHash = null;
-            log('Settings', `LB RAG-only: stripped keys from ${count} entries`);
-            toastr.success(`Stripped keys from ${count} entries. ST keyword activation disabled.`);
-        } catch (err) {
-            error('Settings', 'LB RAG-only apply failed:', err);
-            toastr.error(`Failed: ${err?.message || err}`);
-        } finally {
-            $btn.prop('disabled', false).text('Apply to existing entries');
-        }
     });
 
     // ── Templates and prompt editors ─────────────────────────────────────────
