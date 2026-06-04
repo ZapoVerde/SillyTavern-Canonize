@@ -43,7 +43,6 @@ import { embedCfg, reportEmbedUsage } from '../rag/embed-client.js';
 import { embedBatch } from '../rag/embed-direct.js';
 import { encodeVec } from '../rag/vec-math.js';
 import { insertSyncChunks, listAnchorUuids, deleteAnchor } from '../rag/file-store.js';
-import { insertLorebookEntries } from '../rag/file-store-lb.js';
 import { cnzChatKey, cnzPlotLbName } from '../rag/api.js';
 import { getAnchor, getLbVecMap, loadChatStore, flushChatStore, invalidateVecCache } from '../rag/chat-store.js';
 import { rebuildPlotLorebook } from '../lorebook/plot-lorebook.js';
@@ -124,7 +123,7 @@ async function _reconcileRagChunks(char, headAnchor, chatKey) {
     try {
         const ctx        = SillyTavern.getContext();
         const allPairs   = buildProsePairs(ctx.chat ?? []);
-        const chatFile   = ctx.getCurrentChatFile?.() ?? null;
+        const chatFile   = ctx.characters?.[ctx.characterId]?.chat ?? null;
         const validUuids = new Set(state._dnaChain.anchors.map(r => r.anchor.uuid));
 
         // ── 1. Purge anchors in store but not in chain ────────────────────────
@@ -137,7 +136,6 @@ async function _reconcileRagChunks(char, headAnchor, chatKey) {
         }
 
         // ── 2. Rebuild any anchor with missing chunks or vec gaps ─────────────
-        // Assign stamps to anchors using ragHeader pairEnd boundaries.
         const boundaries = state._dnaChain.anchors
             .map(({ anchor }) => ({
                 uuid:       anchor.uuid,
@@ -181,19 +179,48 @@ async function _reconcileRagChunks(char, headAnchor, chatKey) {
             toastr.info(`CNZ: Auto-indexed ${rebuilt} chunks from chat history.`);
         }
 
-        // ── 3. Lorebook entries for head anchor ───────────────────────────────
-        const lbSnapshot = headAnchor.lorebook ?? {};
-        const lbName     = lbSnapshot.name ?? char?.data?.extensions?.world ?? char?.name;
-        const entries    = Object.values(lbSnapshot.entries ?? {})
-            .filter(e => e.disable !== true && e.content?.trim())
-            .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
-        if (entries.length && lbName) {
-            const { inserted } = await insertLorebookEntries(chatKey, headAnchor.uuid, lbName, entries);
-            if (inserted > 0) {
-                log('Healer', `RAG reconcile: indexed ${inserted} lorebook entries`);
-                toastr.info(`CNZ: Auto-indexed ${inserted} lorebook entries.`);
+        // ── 3. Lorebook entries — full check across all anchors ───────────────
+        // Collect every lb entry missing a vector, then embed in one batch.
+        const store      = await loadChatStore(chatKey);
+        const toEmbedLb  = [];
+
+        for (const { anchor } of state._dnaChain.anchors) {
+            if (!validUuids.has(anchor.uuid)) continue;
+            const lbSnapshot = anchor.lorebook ?? {};
+            const lbName     = lbSnapshot.name ?? char?.data?.extensions?.world ?? char?.name;
+            if (!lbName) continue;
+            const entries = Object.values(lbSnapshot.entries ?? {})
+                .filter(e => e.disable !== true && e.content?.trim());
+            if (!entries.length) continue;
+
+            const anchorData = store.anchors[anchor.uuid] ??
+                { chunks: [], vecChunks: { content: {}, header: {} }, lbEntries: [], vecLb: { content: {} }, plotHistory: {} };
+            store.anchors[anchor.uuid] = anchorData;
+            const vecMap     = await getLbVecMap(chatKey, anchor.uuid);
+            const seenHashes = new Set(anchorData.lbEntries.filter(e => vecMap.has(e.hash)).map(e => e.hash));
+
+            for (const e of entries) {
+                const hash = getStringHash(e.content);
+                if (!seenHashes.has(hash))
+                    toEmbedLb.push({ uuid: anchor.uuid, lbName, hash, uid: e.uid, content: e.content, keys: e.key ?? [] });
             }
         }
+
+        if (toEmbedLb.length) {
+            const cfg  = embedCfg();
+            const vecs = await embedBatch(toEmbedLb.map(t => t.content), cfg, false);
+            reportEmbedUsage(toEmbedLb.reduce((s, t) => s + t.content.length, 0), cfg.model);
+            for (const [i, t] of toEmbedLb.entries()) {
+                const anchorData = store.anchors[t.uuid];
+                anchorData.lbEntries.push({ hash: t.hash, anchorUuid: t.uuid, lorebookName: t.lbName, entryUid: t.uid, entryKeys: t.keys, content: t.content });
+                anchorData.vecLb.content[t.hash] = encodeVec(vecs[i]);
+                invalidateVecCache(chatKey, t.uuid);
+            }
+            flushChatStore(chatKey, store);
+            log('Healer', `RAG reconcile: indexed ${toEmbedLb.length} lorebook entries across all anchors`);
+            toastr.info(`CNZ: Auto-indexed ${toEmbedLb.length} lorebook entries.`);
+        }
+
     } catch (err) {
         error('Healer', 'RAG reconcile failed:', err);
     }
