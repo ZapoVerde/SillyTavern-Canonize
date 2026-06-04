@@ -30,7 +30,7 @@ import { state }             from '../state.js';
 import { getSettings }       from '../core/settings.js';
 import { doRagFetch }        from './rag-fetch.js';
 import { insertLorebookEntries } from './file-store-lb.js';
-import { cnzAvatarKey }      from './api.js';
+import { cnzChatKey }        from './api.js';
 import { getStringHash }     from '../../../../utils.js';
 import { stripProtectedBlock } from '../lorebook/utils.js';
 import { log, error }        from '../log.js';
@@ -213,7 +213,9 @@ export async function onGenerationStarted() {
                         .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
                     try {
                         window.loggeryze?.time('CNZ JIT re-index [blocking]');
-                        await insertLorebookEntries(cnzAvatarKey(char?.avatar ?? ''), lkgUuid, state._lorebookName, entries);
+                        const _chatFile = SillyTavern.getContext().getCurrentChatFile?.() ?? null;
+                        const _chatKey  = cnzChatKey(_chatFile);
+                        if (_chatKey) await insertLorebookEntries(_chatKey, lkgUuid, state._lorebookName, entries);
                         window.loggeryze?.timeEnd('CNZ JIT re-index [blocking]');
                         state._lastIndexedLorebookHash = currentHash;
                     } catch (err) {

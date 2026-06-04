@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/maintenance.js
- * @stamp {"utc":"2026-05-29T00:00:00.000Z"}
- * @version 2.1.0
+ * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @version 2.1.1
  * @architectural-role Orchestrator
  * @description
  * User-initiated RAG rebuild (concurrent worker pool) triggered from the
@@ -15,8 +15,9 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: [state._stagedProsePairs, state._stagedPairOffset,
- *                       state._splitPairIdx, state._ragChunks]
- *     external_io: [callPopup, toastr, file-store.js, file-store-lb.js]
+ *                       state._splitPairIdx, state._ragChunks,
+ *                       state._lorebookName, state._lorebookData, state._draftLorebook]
+ *     external_io: [callPopup, toastr, file-store.js, file-store-lb.js, lorebook/api.js]
  */
 
 import { callPopup } from '../../../../../script.js';
@@ -25,10 +26,11 @@ import { readDnaChain } from './dna-chain.js';
 import { buildProsePairs, formatPairsAsTranscript } from './transcript.js';
 import { buildRagChunks } from '../rag/chunks.js';
 import { waitForRagChunks } from '../rag/pipeline.js';
-import { cnzAvatarKey, cnzPlotLbName } from '../rag/api.js';
+import { cnzChatKey, cnzDefaultLbName, cnzPlotLbName } from '../rag/api.js';
 import { insertSyncChunks, anchorChunkCount } from '../rag/file-store.js';
 import { insertLorebookEntries } from '../rag/file-store-lb.js';
 import { rebuildPlotLorebook } from '../lorebook/plot-lorebook.js';
+import { lbEnsureLorebook } from '../lorebook/api.js';
 import { getSettings } from './settings.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
 import { error, log } from '../log.js';
@@ -129,8 +131,9 @@ export async function rebuildRag() {
         }
 
         // ── 2. Assign chunks to anchor groups ─────────────────────────────────
-        const avatarKey = cnzAvatarKey(char.avatar);
         const chatFile  = ctx.getCurrentChatFile?.() ?? null;
+        const chatKey   = cnzChatKey(chatFile);
+        if (!chatKey) { toastr.error('CNZ: Cannot rebuild — no chat file active.'); return; }
         const total     = combinedChunks.length;
 
         const boundaries = chain.anchors
@@ -176,7 +179,7 @@ export async function rebuildRag() {
                 for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
                     _upd(`CNZ: Rebuilding — ${inserted} / ${total} chunks${round > 0 ? ` (round ${round + 1}/${MAX_ROUNDS})` : ''}`);
                     try {
-                        await insertSyncChunks(avatarKey, uuid, chatFile, chunks, 0);
+                        await insertSyncChunks(chatKey, uuid, chatFile, chunks, 0);
                         inserted += chunks.length;
                         succeeded = true;
                         break;
@@ -184,7 +187,7 @@ export async function rebuildRag() {
                         // Ping /health to verify — the tunnel may have dropped the
                         // response even though the server committed the insert.
                         try {
-                            const { chunksForAnchor } = await anchorChunkCount(avatarKey, uuid);
+                            const { chunksForAnchor } = await anchorChunkCount(chatKey, uuid);
                             if ((chunksForAnchor ?? 0) > 0) { inserted += chunks.length; succeeded = true; break; }
                         } catch { /* plugin unreachable — treat as genuine failure */ }
                         if (!warnedOnce) {
@@ -216,10 +219,16 @@ export async function rebuildRag() {
 
         // ── 4. Rebuild lorebook vectors ───────────────────────────────────────
         if (!state._draftLorebook) {
-            log('Maintenance', 'rebuildRag: no lorebook loaded — skipping lb rebuild');
-        } else {
-            const lbEntries = Object.values(state._draftLorebook.entries);
-            await insertLorebookEntries(avatarKey, chain.lkg.uuid, state._lorebookName, lbEntries);
+            const lbName = state._lorebookName || cnzDefaultLbName(char.avatar);
+            state._lorebookName  = lbName;
+            const freshLorebook  = await lbEnsureLorebook(lbName);
+            state._lorebookData  = freshLorebook;
+            state._draftLorebook = structuredClone(freshLorebook);
+            log('Maintenance', `rebuildRag: lorebook lazy-loaded: "${lbName}" (${Object.keys(freshLorebook.entries ?? {}).length} entries)`);
+        }
+        const lbEntries = Object.values(state._draftLorebook.entries);
+        if (lbEntries.length > 0) {
+            await insertLorebookEntries(chatKey, chain.lkg.uuid, state._lorebookName, lbEntries);
         }
 
         // ── 5. Rebuild plot lorebook file and re-index plot entry vectors ─────
@@ -232,7 +241,7 @@ export async function rebuildRag() {
             state._plotLorebookName = plotLbName;
             await rebuildPlotLorebook(plotLbName, anchorChunks);
             for (const { uuid, entries } of anchorChunks) {
-                await insertLorebookEntries(avatarKey, uuid, plotLbName, entries);
+                await insertLorebookEntries(chatKey, uuid, plotLbName, entries);
             }
             log('Maintenance', `rebuildRag: plot lorebook rebuilt (${anchorChunks.reduce((n, c) => n + c.entries.length, 0)} entries)`);
         }

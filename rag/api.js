@@ -1,16 +1,17 @@
 /**
  * @file data/default-user/extensions/canonize/rag/api.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
+ * @stamp {"utc":"2026-06-04T02:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role IO Wrapper
  * @description
  * Thin HTTP wrapper around the ST Data Bank file endpoints plus character
  * attachment registration. Covers file upload, file delete, character attachment
- * list/register, and the filename generation utilities (cnzFileName, cnzAvatarKey).
+ * list/register, and the filename generation utilities (cnzFileName, cnzAvatarKey,
+ * cnzChatKey).
  *
  * @api-declaration
  * uploadRagFile, cnzDeleteFile, registerCharacterAttachment,
- * getCharacterAttachments, cnzFileName, cnzAvatarKey, cnzDefaultLbName
+ * getCharacterAttachments, cnzFileName, cnzAvatarKey, cnzChatKey, cnzDefaultLbName
  *
  * @contract
  *   assertions:
@@ -101,6 +102,18 @@ export function getCharacterAttachments(avatarKey) {
  */
 export function cnzAvatarKey(avatarFilename) {
     return avatarFilename.replace(/[^a-zA-Z0-9_\-]/g, '_');
+}
+
+/**
+ * Converts an ST chat filename to a safe CNZ chat key used as the per-chat
+ * RAG store file key. Same sanitization as cnzAvatarKey.
+ * e.g. "Hero - 2026-06-04@03:39:18.jsonl" → "Hero_-_2026-06-04_03_39_18_jsonl"
+ * @param {string} chatFilename  Raw chat filename from ctx.getCurrentChatFile().
+ * @returns {string|null}
+ */
+export function cnzChatKey(chatFilename) {
+    if (!chatFilename) return null;
+    return chatFilename.replace(/[^a-zA-Z0-9_\-]/g, '_');
 }
 
 /**

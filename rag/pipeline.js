@@ -33,7 +33,7 @@ import { on, off, BUS_EVENTS } from '../bus.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
 import { buildProsePairs, formatPairsAsTranscript } from '../core/transcript.js';
 import { getSettings } from '../core/settings.js';
-import { cnzAvatarKey } from './api.js';
+import { cnzChatKey } from './api.js';
 import { insertSyncChunks } from './file-store.js';
 import { warn, error } from '../log.js';
 import { buildRagChunks } from './chunks.js';
@@ -159,5 +159,7 @@ export async function runRagPipeline(anchorUuid = null) {
     if (!settled.length || !anchorUuid) return;
 
     const chatFile = SillyTavern.getContext().getCurrentChatFile?.() ?? null;
-    await insertSyncChunks(cnzAvatarKey(char.avatar), anchorUuid, chatFile, state._ragChunks, state._stagedPairOffset);
+    const chatKey  = cnzChatKey(chatFile);
+    if (!chatKey) return;
+    await insertSyncChunks(chatKey, anchorUuid, chatFile, state._ragChunks, state._stagedPairOffset);
 }

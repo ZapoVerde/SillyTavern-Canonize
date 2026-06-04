@@ -23,6 +23,7 @@ import { escapeHtml } from '../state.js';
 import { readDnaChain } from '../core/dna-chain.js';
 import { warn } from '../log.js';
 import { anchorStats } from '../rag/file-store.js';
+import { cnzChatKey } from '../rag/api.js';
 
 function closeDnaChainInspector() {
     $('#cnz-li-overlay').addClass('cnz-hidden');
@@ -65,8 +66,9 @@ export async function openDnaChainInspector() {
     if (chain.anchors.length === 0) {
         $body.append('<div class="cnz-li-rag-row"><span class="cnz-li-rag-name cnz-li-status-muted">No syncs committed yet.</span></div>');
     } else {
+        const chatKey   = cnzChatKey(ctx.getCurrentChatFile?.() ?? '');
         const statsList = await Promise.all(
-            chain.anchors.map(({ anchor }) => anchorStats(anchor.uuid).catch(err => {
+            chain.anchors.map(({ anchor }) => anchorStats(chatKey, anchor.uuid).catch(err => {
                 warn('DnaInspector', 'DB stats failed for', anchor.uuid, err);
                 return null;
             }))
