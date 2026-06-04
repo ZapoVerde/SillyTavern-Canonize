@@ -213,7 +213,8 @@ export async function onGenerationStarted() {
                         .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
                     try {
                         window.loggeryze?.time('CNZ JIT re-index [blocking]');
-                        const _chatFile = SillyTavern.getContext().getCurrentChatFile?.() ?? null;
+                        const _ctx      = SillyTavern.getContext();
+                        const _chatFile = _ctx.characters?.[_ctx.characterId]?.chat ?? null;
                         const _chatKey  = cnzChatKey(_chatFile);
                         if (_chatKey) await insertLorebookEntries(_chatKey, lkgUuid, state._lorebookName, entries);
                         window.loggeryze?.timeEnd('CNZ JIT re-index [blocking]');

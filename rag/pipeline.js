@@ -158,7 +158,8 @@ export async function runRagPipeline(anchorUuid = null) {
     const settled = state._ragChunks.filter(c => c.status === 'complete' || c.status === 'manual');
     if (!settled.length || !anchorUuid) return;
 
-    const chatFile = SillyTavern.getContext().getCurrentChatFile?.() ?? null;
+    const ctx2     = SillyTavern.getContext();
+    const chatFile = ctx2.characters?.[ctx2.characterId]?.chat ?? null;
     const chatKey  = cnzChatKey(chatFile);
     if (!chatKey) return;
     await insertSyncChunks(chatKey, anchorUuid, chatFile, state._ragChunks, state._stagedPairOffset);

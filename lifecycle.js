@@ -40,7 +40,7 @@ import { runCnzSync } from './core/sync.js';
 import { invalidateAllJobs } from './cycleStore.js';
 import { log, error } from './log.js';
 import { getStringHash } from '../../../utils.js';
-import { cnzAvatarKey } from './rag/api.js';
+import { cnzChatKey } from './rag/api.js';
 import { insertLorebookEntries } from './rag/file-store-lb.js';
 
 // ── Module state ──────────────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ async function _applyPlotLorebookEdits(name) {
             const ctx  = SillyTavern.getContext();
             const char = ctx.characters[ctx.characterId];
             if (!char) { log('LbWatch', `No character selected — skipping re-vector`); return; }
-            const ak       = cnzAvatarKey(char.avatar);
+            const ck       = cnzChatKey(ctx.characters?.[ctx.characterId]?.chat ?? '');
             const byAnchor = new Map();
             for (const { uid, de, ref } of changed) {
                 if (!byAnchor.has(ref.anchor.uuid)) byAnchor.set(ref.anchor.uuid, []);
@@ -150,7 +150,7 @@ async function _applyPlotLorebookEdits(name) {
             log('LbWatch', `Re-vectoring across ${byAnchor.size} anchor(s)`);
             for (const [uuid, entries] of byAnchor) {
                 try {
-                    await insertLorebookEntries(ak, uuid, name, entries);
+                    if (ck) await insertLorebookEntries(ck, uuid, name, entries);
                     log('LbWatch', `Re-vectored ${entries.length} entries for anchor ${uuid.slice(0, 8)}`);
                 } catch (err) { error('PlotLb', `Re-vector failed (${uuid}):`, err); }
             }
