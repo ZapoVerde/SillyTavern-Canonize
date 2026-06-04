@@ -135,9 +135,10 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
             const clone = structuredClone(lb);
             let count = 0;
             for (const entry of Object.values(clone.entries ?? {})) {
-                if (!entry.disable && (entry.key?.length || entry.constant)) {
-                    entry.key      = [];
-                    entry.constant = false;
+                if (!entry.disable && (entry.key?.length || entry.constant || !entry.preventRecursion)) {
+                    entry.key             = [];
+                    entry.constant        = false;
+                    entry.preventRecursion = true;
                     count++;
                 }
             }

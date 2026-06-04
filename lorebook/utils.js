@@ -189,7 +189,7 @@ export function makeLbDraftEntry(uid, name, keys, content) {
         disable:                   false,
         ignoreBudget:              false,
         excludeRecursion:          false,
-        preventRecursion:          false,
+        preventRecursion:          true,
         matchPersonaDescription:   false,
         matchCharacterDescription: false,
         matchCharacterPersonality: false,
