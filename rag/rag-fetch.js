@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/rag-fetch.js
- * @stamp {"utc":"2026-06-04T15:43:00.000Z"}
- * @version 1.2.0
+ * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @version 1.3.0
  * @architectural-role IO Wrapper — RAG retrieval execution
  * @description
  * Executes all three RAG channels (chat chunks, LB entries, plot LB entries)
@@ -80,9 +80,13 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
     // ── Run all three channels in parallel ────────────────────────────────────
 
+    // General LB: query head anchor only — it holds the current lorebook state.
+    // Plot LB: append-only, entries are spread across all anchors, so all UUIDs are needed.
+    const headUuid = validUuids[validUuids.length - 1];
+
     const [chatRaw, lbRaw, plotRaw] = await Promise.all([
         querySyncChunks(chatKey, validUuids, chatQuery, signal),
-        queryLorebookEntries(chatKey, validUuids, chatQuery, signal),
+        queryLorebookEntries(chatKey, [headUuid], chatQuery, signal),
         plotLbName ? queryLorebookEntries(chatKey, validUuids, chatQuery, signal, plotLbName) : [],
     ]);
 
@@ -116,7 +120,8 @@ export async function doRagFetch(ctx, settings, chain, signal) {
         const minS = raw.at(-1)?.score ?? 0;
         const mu   = raw.reduce((s, c) => s + c.score, 0) / raw.length;
         const str  = maxS > 0 ? ((maxS - minS) / maxS).toFixed(3) : '0.000';
-        log('RagFetch', `${name}: ${raw.length} raw | max=${maxS.toFixed(3)} min=${minS.toFixed(3)} μ=${mu.toFixed(3)} strength=${str} → ${result.length} injected`);
+        const injectedScores = result.length ? ` (${result.map(c => c.score.toFixed(2)).join(', ')})` : '';
+        log('RagFetch', `${name}: ${raw.length} raw | max=${maxS.toFixed(3)} min=${minS.toFixed(3)} μ=${mu.toFixed(3)} strength=${str} → ${result.length} injected${injectedScores}`);
         healthRows.push({
             character: chatKey, channel: name, provider: cfg.source, model: cfg.model,
             candidates: raw.length, maxScore: maxS, minScore: minS, meanScore: mu,
@@ -157,7 +162,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     if (chunks.length) {
         const charName  = ctx.name2 ?? ctx.name ?? '';
         const chunkTmpl = settings.ragChunkTemplate || DEFAULT_RAG_CHUNK_TEMPLATE;
-        const body = chunks.map(r => {
+        const body = chunks.slice().sort((a, b) => (a.pairEnd ?? 0) - (b.pairEnd ?? 0)).map(r => {
             const content = r.header ? `[${r.header}]\n${r.text}` : r.text;
             return chunkTmpl
                 .replace(/\{\{text\}\}/g,      content)

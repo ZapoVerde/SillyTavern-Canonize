@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/healer.js
- * @stamp {"utc":"2026-06-04T16:50:00.000Z"}
- * @version 2.2.2
+ * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @version 2.2.3
  * @architectural-role Orchestrator
  * @description
  * Branch detection and state restoration. Walks the DNA chain to find the
@@ -258,6 +258,18 @@ async function maybePromptLorebookCleanup(char) {
     await runNewChatCleanup(char);
 }
 
+// ─── Chat Summary ─────────────────────────────────────────────────────────────
+
+function _logChatSummary(messages, chain) {
+    const anchorCount = chain.anchors.length;
+    const chunkCount  = messages.filter(m => m?.extra?.cnz_chunk_header).length;
+    const plotCount   = chain.anchors.reduce((n, r) => n + (r.anchor.plotEntries?.length ?? 0), 0);
+    const lkgIdx      = chain.lkgMsgIdx ?? -1;
+    const tail        = lkgIdx >= 0 ? messages.slice(lkgIdx + 1) : messages;
+    const uncommitted = tail.filter(m => !m.is_system && m.is_user).length;
+    log('Healer', `Chat: ${anchorCount} anchor(s) | ${chunkCount} chunk header(s) | ${plotCount} plot entr(ies) | ${uncommitted} uncommitted pair(s) since last anchor`);
+}
+
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
 /**
@@ -278,6 +290,7 @@ export async function runHealer(char, chatFileName) {
 
     state._dnaChain = readDnaChain(messages);
     setDnaChain(state._dnaChain);
+    _logChatSummary(messages, state._dnaChain);
 
     if (state._dnaChain.anchors.length === 0) {
         await maybePromptLorebookCleanup(char);

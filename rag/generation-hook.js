@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/generation-hook.js
- * @stamp {"utc":"2026-06-04T15:40:00.000Z"}
- * @version 2.5.0
+ * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @version 2.5.1
  * @architectural-role IO Wrapper
  * @description
  * Prefetch-optimised RAG retrieval lifecycle. Owns the prefetch promise,
@@ -29,7 +29,7 @@
 import { state }             from '../state.js';
 import { getSettings }       from '../core/settings.js';
 import { doRagFetch }        from './rag-fetch.js';
-import { insertLorebookEntries } from './file-store-lb.js';
+import { insertLorebookEntries, purgeStaleLorebookEntries } from './file-store-lb.js';
 import { cnzChatKey, cnzGetActiveChatKey } from './api.js';
 import { getStringHash }     from '../../../../utils.js';
 import { stripProtectedBlock } from '../lorebook/utils.js';
@@ -214,7 +214,10 @@ export async function onGenerationStarted() {
                     try {
                         window.loggeryze?.time('CNZ JIT re-index [blocking]');
                         const _chatKey  = cnzGetActiveChatKey();
-                        if (_chatKey) await insertLorebookEntries(_chatKey, lkgUuid, state._lorebookName, entries);
+                        if (_chatKey) {
+                            await purgeStaleLorebookEntries(_chatKey, lkgUuid, entries);
+                            await insertLorebookEntries(_chatKey, lkgUuid, state._lorebookName, entries);
+                        }
                         window.loggeryze?.timeEnd('CNZ JIT re-index [blocking]');
                         state._lastIndexedLorebookHash = currentHash;
                     } catch (err) {
@@ -334,7 +337,8 @@ export async function onGenerationStarted() {
         try {
             if (plotActivate.length) {
                 const lb      = await lbGetLorebook(plotLbName);
-                const entries = plotActivate.map(a => lb.entries?.[String(a.uid)]).filter(Boolean);
+                const entries = plotActivate.map(a => lb.entries?.[String(a.uid)]).filter(Boolean)
+                    .sort((a, b) => a.uid - b.uid);
                 appendCnzPlotArcs(entries.length ? _formatPlotArcs(entries, settings.cnzPlotChunkTemplate) : '');
                 if (entries.length) log('RagHook', `Plot arcs injected: ${plotActivate.length} entries`);
             } else {

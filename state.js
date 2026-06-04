@@ -94,6 +94,7 @@ export const PROFILE_DEFAULTS = Object.freeze({
     cnzPlotChunkTemplate:     DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE,
     ragEmbeddingSource:       'openrouter',
     ragEmbeddingModel:        '',
+    lbRagOnly:                false,
     ragClassifierPrompt:      DEFAULT_RAG_CLASSIFIER_PROMPT,
     targetedUpdatePrompt:     DEFAULT_TARGETED_UPDATE_PROMPT,
     targetedNewPrompt:        DEFAULT_TARGETED_NEW_PROMPT,

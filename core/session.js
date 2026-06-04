@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/session.js
- * @stamp {"utc":"2026-06-04T16:30:00.000Z"}
- * @version 1.2.2
+ * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @version 1.2.3
  * @architectural-role Orchestrator
  * @description
  * Session lifecycle management. Owns state reset on character switch and the
@@ -26,7 +26,7 @@ import { resetScheduler, setDnaChain } from '../scheduler.js';
 import { readDnaChain } from './dna-chain.js';
 import { syncCnzSummaryOnCharacterSwitch } from './summary-prompt.js';
 import { runHealer } from './healer.js';
-import { clearChunkChatLabels } from '../rag/chat-labels.js';
+import { clearChunkChatLabels, renderChunkLabelsFromChat } from '../rag/chat-labels.js';
 import { resetRagState } from '../rag/generation-hook.js';
 import { checkOrphans } from './orphans.js';
 import { state } from '../state.js';
@@ -87,6 +87,7 @@ export function onChatChanged() {
         checkOrphans().catch(err =>
             error('Sync', 'checkOrphans failed:', err),
         );
+        renderChunkLabelsFromChat();
         return;
     }
 
@@ -95,4 +96,5 @@ export function onChatChanged() {
             error('Sync', 'runHealer uncaught error:', err),
         );
     }
+    renderChunkLabelsFromChat();
 }

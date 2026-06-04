@@ -32,6 +32,7 @@
  */
 
 import { log, warn } from '../log.js';
+import { getSettings } from '../settings/data.js';
 import { getStringHash } from '../../../../utils.js';
 import { insertLorebookEntries } from '../rag/file-store-lb.js';
 import { cnzGetActiveChatKey } from '../rag/api.js';
@@ -82,17 +83,19 @@ export function applyLorebookToDraft(rawText, defaultMeceTag) {
         const origNarrative = origEntry ? stripProtectedBlock(origEntry.content ?? '') : '';
         const narrative     = stitchMeceTag(s._aiSnapshot.content.trim(), origNarrative, defaultMeceTag);
 
+        const effectiveKeys = getSettings().lbRagOnly ? [] : s._aiSnapshot.keys;
+
         if (s.linkedUid !== null) {
             const entry = state._draftLorebook?.entries?.[String(s.linkedUid)];
             if (entry) {
                 entry.comment = s.name;
-                entry.key     = s._aiSnapshot.keys;
+                entry.key     = effectiveKeys;
                 entry.content = narrative;
             }
         } else {
             const uid = nextLorebookUid();
             state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(
-                uid, s.name, s._aiSnapshot.keys, narrative,
+                uid, s.name, effectiveKeys, narrative,
             );
             s.linkedUid = uid;
         }

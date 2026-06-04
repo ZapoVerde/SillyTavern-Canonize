@@ -180,6 +180,13 @@ export function buildRagSectionHTML(s, escapeHtml) {
                 <label style="font-size:0.8rem;color:var(--cnz-text-muted,#888)">Max</label>
                 <input id="cnz-set-rag-lb-max" type="number" min="1" max="20" step="1" style="width:52px" value="${escapeHtml(String(s.ragLbMax ?? 4))}">
               </div>
+              <div class="cnz-settings-row" style="margin-top:6px">
+                <label class="cnz-label checkbox_label" style="align-items:flex-start;gap:6px">
+                  <input type="checkbox" id="cnz-set-lb-rag-only" ${(s.lbRagOnly ?? false) ? 'checked' : ''}>
+                  <span>LB RAG-only ${tip('Strips WI keyword triggers from CNZ-managed lorebook entries so only RAG controls which entries inject. Entries still land in World Info (before) via force-activation. Apply below to update existing entries immediately — future syncs respect this setting automatically.')}</span>
+                </label>
+                <button id="cnz-lb-rag-only-apply" class="cnz-btn cnz-btn-secondary cnz-btn-sm" style="margin-top:4px">Apply to existing entries</button>
+              </div>
 
               <div class="cnz-setting-row">
                 <label class="cnz-label">Injection Template ${tip('Wraps the retrieved chunks before injection. Use {{text}} where the chunks should appear.')}</label>

@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/file-store-lb.js
- * @stamp {"utc":"2026-06-04T02:00:00.000Z"}
- * @version 3.0.0
+ * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @version 3.2.0
  * @architectural-role IO Wrapper — lorebook entry and plot filler operations
  * @description
  * Lorebook entry and plot filler insert, query, and purge operations against the
@@ -11,6 +11,7 @@
  *
  * @api-declaration
  * insertLorebookEntries(chatKey, anchorUuid, lorebookName, entries) → Promise<{inserted}>
+ * purgeStaleLorebookEntries(chatKey, anchorUuid, currentEntries) → Promise<void>
  * queryLorebookEntries(chatKey, validAnchorUuids, queryText, signal, lorebookName?)
  *   → Promise<Result[]>
  * queryRecentPlotEntries(chatKey, lorebookName, validAnchorUuids, semanticUids,
@@ -39,6 +40,15 @@ import {
 
 const _empty = () => ({ chunks: [], vecChunks: { content: {}, header: {} }, lbEntries: [], vecLb: { content: {} }, plotHistory: {} });
 
+// Builds the text used for embedding: title, optional alias line, then content.
+// Hash remains content-only (for stale detection); only the embed vector is enriched.
+function _buildLbEmbedText(e) {
+    const parts = [e.comment ?? ''];
+    if (e.keys?.length) parts.push(`(${e.keys.join(', ')})`);
+    parts.push(e.content);
+    return parts.filter(Boolean).join('\n');
+}
+
 // ── Insert ────────────────────────────────────────────────────────────────────
 
 export async function insertLorebookEntries(chatKey, anchorUuid, lorebookName, entries) {
@@ -51,17 +61,17 @@ export async function insertLorebookEntries(chatKey, anchorUuid, lorebookName, e
     if (!toInsert.length) return { inserted: 0 };
 
     const cfg        = embedCfg();
-    const totalChars = toInsert.reduce((s, e) => s + e.content.length, 0);
+    const totalChars = toInsert.reduce((s, e) => s + _buildLbEmbedText(e).length, 0);
     emit(BUS_EVENTS.EMBED_PROGRESS, { total: toInsert.length, done: 0 });
 
-    const vecs = await embedBatch(toInsert.map(e => e.content), cfg, false);
+    const vecs = await embedBatch(toInsert.map(e => _buildLbEmbedText(e)), cfg, false);
 
     emit(BUS_EVENTS.EMBED_PROGRESS, { total: toInsert.length, done: toInsert.length });
     reportEmbedUsage(totalChars, cfg.model);
 
     for (const [i, e] of toInsert.entries()) {
         const hash = getStringHash(e.content);
-        anchor.lbEntries.push({ hash, anchorUuid, lorebookName, entryUid: e.uid, entryKeys: e.keys ?? [], content: e.content });
+        anchor.lbEntries.push({ hash, anchorUuid, lorebookName, entryUid: e.uid, entryKeys: e.keys ?? [], comment: e.comment ?? '', content: e.content });
         anchor.vecLb.content[hash] = encodeVec(vecs[i]);
     }
 
@@ -69,6 +79,37 @@ export async function insertLorebookEntries(chatKey, anchorUuid, lorebookName, e
     await saveAnchor(chatKey, anchorUuid, anchor);
     log('FileStoreLb', `insertLorebookEntries: +${toInsert.length} for anchor ${anchorUuid.slice(0, 8)}`);
     return { inserted: toInsert.length };
+}
+
+// ── Stale purge ───────────────────────────────────────────────────────────────
+
+/**
+ * Removes lb entries from a single anchor whose entryUid is absent from
+ * currentEntries or whose content has changed (different hash). Used by the
+ * JIT re-index path so superseded versions don't accumulate in the head anchor.
+ * @param {string}   chatKey        Active chat key.
+ * @param {string}   anchorUuid     Anchor to clean (always the head anchor).
+ * @param {object[]} currentEntries Array of { uid, content } from the live lorebook.
+ */
+export async function purgeStaleLorebookEntries(chatKey, anchorUuid, currentEntries) {
+    const anchor = await getAnchor(chatKey, anchorUuid);
+    if (!anchor?.lbEntries?.length) return;
+
+    const currentByUid = new Map(currentEntries.map(e => [e.uid, getStringHash(e.content)]));
+    const keep         = anchor.lbEntries.filter(e =>
+        currentByUid.get(e.entryUid) === e.hash,
+    );
+    if (keep.length === anchor.lbEntries.length) return;
+
+    const purgedCount = anchor.lbEntries.length - keep.length;
+    const keepHashes  = new Set(keep.map(e => e.hash));
+    for (const hash of Object.keys(anchor.vecLb?.content ?? {})) {
+        if (!keepHashes.has(hash)) delete anchor.vecLb.content[hash];
+    }
+    anchor.lbEntries = keep;
+    invalidateVecCache(chatKey, anchorUuid);
+    await saveAnchor(chatKey, anchorUuid, anchor);
+    log('FileStoreLb', `purgeStaleLorebookEntries: removed ${purgedCount} stale entries from anchor ${anchorUuid.slice(0, 8)}`);
 }
 
 // ── Query ─────────────────────────────────────────────────────────────────────
