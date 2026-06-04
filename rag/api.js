@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/api.js
- * @stamp {"utc":"2026-06-04T16:45:00.000Z"}
- * @version 1.2.4
+ * @stamp {"utc":"2026-06-04T16:55:00.000Z"}
+ * @version 1.2.5
  * @architectural-role IO Wrapper
  * @description
  * Thin HTTP wrapper around the ST Data Bank file endpoints plus character
@@ -114,7 +114,8 @@ export function cnzAvatarKey(avatarFilename) {
  */
 export function cnzChatKey(chatFilename) {
     if (!chatFilename || chatFilename === 'null' || chatFilename === 'undefined') return null;
-    return chatFilename.replace(/[^a-zA-Z0-9_\-]/g, '_');
+    const cleanName = chatFilename.replace(/\.jsonl?$/i, '');
+    return cleanName.replace(/[^a-zA-Z0-9_\-]/g, '_');
 }
 
 /**
