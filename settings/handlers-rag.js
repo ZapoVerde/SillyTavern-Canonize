@@ -23,7 +23,7 @@ import { state } from '../state.js';
 import { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 import { getSettings } from './data.js';
 import { bindEmbedHandlers } from './handlers-rag-embed.js';
-import { lbSaveLorebook } from '../lorebook/api.js';
+import { lbGetLorebook, lbSaveLorebook } from '../lorebook/api.js';
 import { log, error } from '../log.js';
 
 export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
@@ -125,14 +125,17 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
     });
 
     $('#cnz-lb-rag-only-apply').on('click', async function () {
-        const lb = state._draftLorebook ?? state._lorebookData;
-        const name = state._lorebookName;
-        if (!lb || !name) { toastr.warning('No lorebook loaded — run a sync first.'); return; }
+        const ctx  = SillyTavern.getContext();
+        const name = state._lorebookName
+            || state._dnaChain?.lkg?.anchor?.lorebook?.name
+            || ctx.characters?.[ctx.characterId]?.data?.extensions?.world;
+        if (!name) { toastr.warning('No CNZ lorebook found — run a sync first.'); return; }
 
         const $btn = $(this);
         $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i>');
         try {
-            const clone = structuredClone(lb);
+            const raw   = state._draftLorebook ?? state._lorebookData ?? await lbGetLorebook(name);
+            const clone = structuredClone(raw);
             let count = 0;
             for (const entry of Object.values(clone.entries ?? {})) {
                 if (!entry.disable && (entry.key?.length || entry.constant || !entry.preventRecursion)) {
