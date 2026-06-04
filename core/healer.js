@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/healer.js
- * @stamp {"utc":"2026-06-04T16:15:00.000Z"}
- * @version 2.2.1
+ * @stamp {"utc":"2026-06-04T16:50:00.000Z"}
+ * @version 2.2.2
  * @architectural-role Orchestrator
  * @description
  * Branch detection and state restoration. Walks the DNA chain to find the
@@ -35,7 +35,7 @@ import { state } from '../state.js';
 import { readDnaChain, findLkgAnchorByPosition, buildNodeFileFromAnchor, buildAnchorChunkMap } from './dna-chain.js';
 import { setDnaChain } from '../scheduler.js';
 import { lbGetLorebook } from '../lorebook/api.js';
-import { error, log } from '../log.js';
+import { error, log, warn } from '../log.js';
 import { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
 import { buildProsePairs } from './transcript.js';
 import { getStringHash } from '../../../../utils.js';
@@ -76,7 +76,7 @@ export async function reconcilePlotLorebook(char, chain, chatKey) {
         return;
     }
 
-    if (!chatKey) return;
+    if (!chatKey || chatKey === 'null' || chatKey === 'undefined') return;
 
     // ── Batch: collect all entries needing vectors across all anchors ──────────
     const store    = await loadChatStore(chatKey);
@@ -119,7 +119,7 @@ export async function reconcilePlotLorebook(char, chain, chatKey) {
  * No-ops if no stamps are found.
  */
 async function _reconcileRagChunks(char, headAnchor, chatKey) {
-    if (!chatKey) return;
+    if (!chatKey || chatKey === 'null' || chatKey === 'undefined') return;
     try {
         const ctx        = SillyTavern.getContext();
         const allPairs   = buildProsePairs(ctx.chat ?? []);
@@ -291,6 +291,12 @@ export async function runHealer(char, chatFileName) {
         state._lorebookName     = headRef.anchor.lorebook?.name || char?.data?.extensions?.world || char?.name || '';
         state._plotLorebookName = headRef.anchor.plotLorebookName ?? cnzPlotLbName(char.avatar);
         const activeChatKey     = cnzChatKey(chatFileName) ?? cnzGetActiveChatKey();
+
+        if (!activeChatKey || activeChatKey === 'null' || activeChatKey === 'undefined') {
+            warn('Healer', 'runHealer: activeChatKey resolved to null/empty — skipping reconciliation');
+            return;
+        }
+
         await reconcileWorldState(char, headRef.anchor, activeChatKey);
         return;
     }
