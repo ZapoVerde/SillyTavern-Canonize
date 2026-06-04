@@ -23,7 +23,8 @@ import { state } from '../state.js';
 import { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 import { getSettings } from './data.js';
 import { bindEmbedHandlers } from './handlers-rag-embed.js';
-import { lbGetLorebook, lbSaveLorebook } from '../lorebook/api.js';
+import { lbGetLorebook, lbSaveLorebook, lbSetCharacterLorebook } from '../lorebook/api.js';
+import { clearCnzLbPrompt } from '../core/summary-prompt.js';
 import { log, error } from '../log.js';
 
 export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
@@ -119,9 +120,23 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
     });
 
     // ── LB RAG-only mode ──────────────────────────────────────────────────────
-    $('#cnz-set-lb-rag-only').on('change', function () {
-        getSettings().lbRagOnly = $(this).prop('checked');
+    $('#cnz-set-lb-rag-only').on('change', async function () {
+        const bypass = $(this).prop('checked');
+        getSettings().lbRagOnly = bypass;
         saveSettingsDebounced(); updateDirtyIndicator();
+
+        const lbName = state._lorebookName
+            || state._dnaChain?.lkg?.anchor?.lorebook?.name;
+        if (lbName) {
+            try {
+                await lbSetCharacterLorebook(bypass ? '' : lbName);
+                log('Settings', `LB bypass=${bypass}: lorebook ${bypass ? 'detached' : 'reattached'}`);
+            } catch (err) {
+                error('Settings', 'Failed to update character lorebook attachment:', err);
+            }
+        }
+
+        if (!bypass) clearCnzLbPrompt();
     });
 
     $('#cnz-lb-rag-only-apply').on('click', async function () {

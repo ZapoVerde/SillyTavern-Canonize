@@ -323,7 +323,8 @@ export async function onGenerationStarted() {
     const lbActivate   = plotLbName ? result.toActivate.filter(a => a.world !== plotLbName) : result.toActivate;
     const plotActivate = plotLbName ? result.toActivate.filter(a => a.world === plotLbName) : [];
 
-    if (lbActivate.length) {
+    if (settings.lbRagOnly ?? false) {
+        // ── Direct injection path (lorebook detached from character) ──────────
         const lbEntries = lbActivate
             .map(a => state._draftLorebook?.entries?.[String(a.uid)])
             .filter(Boolean);
@@ -340,7 +341,23 @@ export async function onGenerationStarted() {
             clearCnzLbPrompt();
         }
     } else {
+        // ── WI pipeline path (lorebook attached, Structurize formats entries) ─
         clearCnzLbPrompt();
+        if (lbActivate.length) {
+            const lbEnriched = lbActivate.map(a => {
+                const entry = state._draftLorebook?.entries?.[String(a.uid)];
+                return entry ? { ...entry, world: a.world } : a;
+            });
+            log('RagHook', `Semantic LB activation: ${lbEnriched.length} entries`);
+            try {
+                window.loggeryze?.time('CNZ LB activate [blocking]');
+                await eventSource.emit(event_types.WORLDINFO_FORCE_ACTIVATE, lbEnriched);
+                window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
+            } catch (err) {
+                window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
+                error('RagHook', 'LB WI activation failed:', err);
+            }
+        }
     }
 
     if (plotLbName) {

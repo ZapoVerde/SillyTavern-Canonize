@@ -9,7 +9,7 @@
  * function corresponds to exactly one server endpoint or operation.
  *
  * @api-declaration
- * lbListLorebooks, lbGetLorebook, lbSaveLorebook, lbEnsureLorebook
+ * lbListLorebooks, lbGetLorebook, lbSaveLorebook, lbEnsureLorebook, lbSetCharacterLorebook
  *
  * @contract
  *   assertions:
@@ -51,6 +51,27 @@ export async function lbSaveLorebook(name, data, { silent = false } = {}) {
     });
     if (!res.ok) throw new Error(`Lorebook save failed (HTTP ${res.status})`);
     if (!silent) await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
+}
+
+/**
+ * Sets or clears the active character's attached lorebook (data.extensions.world).
+ * Pass a lorebook name to attach, or '' to detach entirely.
+ * Updates the in-memory character object so the change is immediately visible to
+ * ST's WI scanner without a page reload.
+ */
+export async function lbSetCharacterLorebook(name) {
+    const ctx  = SillyTavern.getContext();
+    const char = ctx.characters?.[ctx.characterId];
+    if (!char) throw new Error('No active character');
+    const res = await fetch('/api/characters/merge-attributes', {
+        method:  'POST',
+        headers: getRequestHeaders(),
+        body:    JSON.stringify({ avatar: char.avatar, data: { extensions: { world: name } } }),
+    });
+    if (!res.ok) throw new Error(`Character world update failed (HTTP ${res.status})`);
+    if (!char.data) char.data = {};
+    if (!char.data.extensions) char.data.extensions = {};
+    char.data.extensions.world = name;
 }
 
 /**

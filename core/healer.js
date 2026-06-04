@@ -46,6 +46,8 @@ import { insertSyncChunks, listAnchorUuids, deleteAnchor } from '../rag/file-sto
 import { cnzChatKey, cnzPlotLbName, cnzGetActiveChatKey } from '../rag/api.js';
 import { getAnchor, getLbVecMap, loadChatStore, flushChatStore, invalidateVecCache } from '../rag/chat-store.js';
 import { rebuildPlotLorebook } from '../lorebook/plot-lorebook.js';
+import { lbSetCharacterLorebook } from '../lorebook/api.js';
+import { getSettings } from './settings.js';
 
 // Re-export restore ops — callers that import from healer.js keep working.
 export { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
@@ -303,6 +305,17 @@ export async function runHealer(char, chatFileName) {
     if (messages[headRef.msgIdx]?.extra?.cnz?.uuid === headRef.anchor.uuid) {
         state._lorebookName     = headRef.anchor.lorebook?.name || char?.data?.extensions?.world || char?.name || '';
         state._plotLorebookName = headRef.anchor.plotLorebookName ?? cnzPlotLbName(char.avatar);
+
+        // Sync lorebook attachment to match bypass setting.
+        if (state._lorebookName) {
+            const bypass = getSettings().lbRagOnly ?? false;
+            const current = char?.data?.extensions?.world ?? '';
+            const want    = bypass ? '' : state._lorebookName;
+            if (current !== want) {
+                lbSetCharacterLorebook(want).catch(err =>
+                    warn('Healer', 'Could not sync lorebook attachment:', err));
+            }
+        }
         const activeChatKey     = cnzChatKey(chatFileName) ?? cnzGetActiveChatKey();
 
         if (!activeChatKey || activeChatKey === 'null' || activeChatKey === 'undefined') {
