@@ -32,12 +32,12 @@
 
 import { callPopup } from '../../../../../script.js';
 import { state } from '../state.js';
-import { readDnaChain, findLkgAnchorByPosition, buildNodeFileFromAnchor } from './dna-chain.js';
+import { readDnaChain, findLkgAnchorByPosition, buildNodeFileFromAnchor, buildAnchorChunkMap } from './dna-chain.js';
 import { setDnaChain } from '../scheduler.js';
 import { lbGetLorebook } from '../lorebook/api.js';
 import { error, log } from '../log.js';
 import { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
-import { buildProsePairs, formatPairsAsTranscript } from './transcript.js';
+import { buildProsePairs } from './transcript.js';
 import { getStringHash } from '../../../../utils.js';
 import { embedCfg, reportEmbedUsage } from '../rag/embed-client.js';
 import { embedBatch } from '../rag/embed-direct.js';
@@ -58,7 +58,7 @@ export { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
  * the lorebook write is idempotent and insertLorebookEntries uses upsert.
  * No-op if the chain carries no plot entries.
  */
-async function _reconcilePlotLorebook(char, chain, chatKey) {
+export async function reconcilePlotLorebook(char, chain, chatKey) {
     const anchors = chain?.anchors ?? [];
     const anchorChunks = anchors
         .map(ref => ({ uuid: ref.anchor.uuid, entries: ref.anchor.plotEntries ?? [] }))
@@ -135,42 +135,18 @@ async function _reconcileRagChunks(char, headAnchor, chatKey) {
             }
         }
 
-        // ── 2. Rebuild any anchor with missing chunks or vec gaps ─────────────
-        const boundaries = state._dnaChain.anchors
-            .map(({ anchor }) => ({
-                uuid:       anchor.uuid,
-                maxPairEnd: (anchor.ragHeaders ?? []).reduce((m, rh) => Math.max(m, rh.pairEnd ?? 0), 0),
-            }))
-            .filter(b => b.maxPairEnd > 0)
-            .sort((a, b) => a.maxPairEnd - b.maxPairEnd);
-
-        const byAnchor = new Map();
-        let prevEnd    = 0;
-        for (let i = 0; i < allPairs.length; i++) {
-            const pair    = allPairs[i];
-            const lastMsg = pair?.messages?.[pair.messages.length - 1];
-            if (!lastMsg?.extra?.cnz_chunk_header) continue;
-            const content = formatPairsAsTranscript(allPairs.slice(prevEnd, i + 1));
-            let uuid = headAnchor.uuid;
-            for (const b of boundaries) { if (prevEnd < b.maxPairEnd) { uuid = b.uuid; break; } }
-            if (!byAnchor.has(uuid)) byAnchor.set(uuid, []);
-            byAnchor.get(uuid).push({
-                chunkIndex: byAnchor.get(uuid).length,
-                header:     lastMsg.extra.cnz_chunk_header,
-                turnRange:  lastMsg.extra.cnz_turn_label?.replace(/^\*+\s*Memory:\s*/i, '') ?? `Pairs ${prevEnd + 1}–${i + 1}`,
-                content, pairStart: prevEnd, pairEnd: i + 1, status: 'complete',
-            });
-            prevEnd = i + 1;
-        }
+        // ── 2. Rebuild any anchor where expected chunk hashes are missing or unvectored
+        // Full hash comparison: derive content from stamps → hash → check vs store+vecs.
+        const byAnchor = buildAnchorChunkMap(state._dnaChain, allPairs, headAnchor.uuid);
 
         let rebuilt = 0;
         for (const [uuid, chunks] of byAnchor) {
             if (!validUuids.has(uuid)) continue;
-            const anchor  = await getAnchor(chatKey, uuid);
-            const vecKeys = new Set(Object.keys(anchor?.vecChunks?.content ?? {}));
-            const hasGaps = !anchor || anchor.chunks.some(c => !vecKeys.has(String(c.hash)));
-            const isEmpty = !anchor || anchor.chunks.length === 0;
-            if (!isEmpty && !hasGaps) continue;
+            const anchor         = await getAnchor(chatKey, uuid);
+            const vecKeys        = new Set(Object.keys(anchor?.vecChunks?.content ?? {}));
+            const storedWithVec  = new Set((anchor?.chunks ?? []).filter(c => vecKeys.has(String(c.hash))).map(c => String(c.hash)));
+            const expectedHashes = chunks.map(c => String(getStringHash(c.content)));
+            if (expectedHashes.length > 0 && expectedHashes.every(h => storedWithVec.has(h))) continue;
             const { inserted } = await insertSyncChunks(chatKey, uuid, chatFile, chunks, 0);
             rebuilt += inserted;
         }
@@ -260,7 +236,7 @@ async function reconcileWorldState(char, headAnchor, chatKey) {
     }
 
     await _reconcileRagChunks(char, headAnchor, chatKey);
-    await _reconcilePlotLorebook(char, state._dnaChain, chatKey);
+    await reconcilePlotLorebook(char, state._dnaChain, chatKey);
 }
 
 // ─── New Chat Guard ───────────────────────────────────────────────────────────

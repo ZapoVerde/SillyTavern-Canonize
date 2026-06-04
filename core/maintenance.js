@@ -22,14 +22,14 @@
 
 import { callPopup } from '../../../../../script.js';
 import { state } from '../state.js';
-import { readDnaChain } from './dna-chain.js';
-import { buildProsePairs, formatPairsAsTranscript } from './transcript.js';
+import { readDnaChain, buildAnchorBoundaries, buildAnchorChunkMap } from './dna-chain.js';
+import { buildProsePairs } from './transcript.js';
 import { buildRagChunks } from '../rag/chunks.js';
 import { waitForRagChunks } from '../rag/pipeline.js';
-import { cnzChatKey, cnzDefaultLbName, cnzPlotLbName } from '../rag/api.js';
+import { cnzChatKey, cnzDefaultLbName } from '../rag/api.js';
 import { insertSyncChunks, anchorChunkCount } from '../rag/file-store.js';
 import { insertLorebookEntries } from '../rag/file-store-lb.js';
-import { rebuildPlotLorebook } from '../lorebook/plot-lorebook.js';
+import { reconcilePlotLorebook } from './healer.js';
 import { lbEnsureLorebook } from '../lorebook/api.js';
 import { getSettings } from './settings.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
@@ -85,7 +85,12 @@ export async function rebuildRag() {
         const allPairs    = buildProsePairs(messages);
         const ragSettings = getSettings();
 
-        let combinedChunks;
+        // ── 1b. Assign chunks to anchor groups ────────────────────────────────
+        const chatFile = char?.chat ?? null;
+        const chatKey  = cnzChatKey(chatFile);
+        if (!chatKey) { toastr.error('CNZ: Cannot rebuild — no chat file active.'); return; }
+
+        let byAnchor, total;
         if (deepReclassify) {
             state._stagedProsePairs = allPairs;
             state._stagedPairOffset = 0;
@@ -101,57 +106,21 @@ export async function rebuildRag() {
                 scenario_hooks:   chain.lkg.hooks ?? '',
             }, ragSettings);
             await waitForRagChunks(300_000);
-            combinedChunks = state._ragChunks.filter(c => c.status === 'complete');
+            const classified  = state._ragChunks.filter(c => c.status === 'complete');
+            if (!classified.length) { toastr.warning('CNZ: No classified chunks found in chain — run a sync first.'); return; }
+            total      = classified.length;
+            byAnchor   = new Map();
+            const boundaries = buildAnchorBoundaries(chain);
+            for (const chunk of classified) {
+                let uuid = chain.lkg.uuid;
+                for (const b of boundaries) { if (chunk.pairStart < b.maxPairEnd) { uuid = b.uuid; break; } }
+                if (!byAnchor.has(uuid)) byAnchor.set(uuid, []);
+                byAnchor.get(uuid).push(chunk);
+            }
         } else {
-            combinedChunks = [];
-            let prevPairEnd = 0;
-            for (let i = 0; i < allPairs.length; i++) {
-                const pair    = allPairs[i];
-                const lastMsg = pair?.messages?.[pair.messages.length - 1];
-                if (!lastMsg?.extra?.cnz_chunk_header) continue;
-                const pairStart = prevPairEnd;
-                const pairEnd   = i + 1;
-                const content   = formatPairsAsTranscript(allPairs.slice(pairStart, pairEnd));
-                combinedChunks.push({
-                    chunkIndex: combinedChunks.length,
-                    header:     lastMsg.extra.cnz_chunk_header,
-                    turnRange:  lastMsg.extra.cnz_turn_label?.replace(/^\*+\s*Memory:\s*/i, '') ?? `Pairs ${pairStart + 1}–${pairEnd}`,
-                    content,
-                    pairStart,
-                    pairEnd,
-                    status:     'complete',
-                });
-                prevPairEnd = pairEnd;
-            }
-        }
-
-        if (combinedChunks.length === 0) {
-            toastr.warning('CNZ: No classified chunks found in chain — run a sync first.');
-            return;
-        }
-
-        // ── 2. Assign chunks to anchor groups ─────────────────────────────────
-        const chatFile  = char?.chat ?? null;
-        const chatKey   = cnzChatKey(chatFile);
-        if (!chatKey) { toastr.error('CNZ: Cannot rebuild — no chat file active.'); return; }
-        const total     = combinedChunks.length;
-
-        const boundaries = chain.anchors
-            .map(({ anchor }) => ({
-                uuid:       anchor.uuid,
-                maxPairEnd: (anchor.ragHeaders ?? []).reduce((m, rh) => Math.max(m, rh.pairEnd ?? 0), 0),
-            }))
-            .filter(b => b.maxPairEnd > 0)
-            .sort((a, b) => a.maxPairEnd - b.maxPairEnd);
-
-        const byAnchor = new Map();
-        for (const chunk of combinedChunks) {
-            let uuid = chain.lkg.uuid;
-            for (const b of boundaries) {
-                if (chunk.pairStart < b.maxPairEnd) { uuid = b.uuid; break; }
-            }
-            if (!byAnchor.has(uuid)) byAnchor.set(uuid, []);
-            byAnchor.get(uuid).push(chunk);
+            byAnchor = buildAnchorChunkMap(chain, allPairs, chain.lkg.uuid);
+            total    = [...byAnchor.values()].reduce((s, v) => s + v.length, 0);
+            if (total === 0) { toastr.warning('CNZ: No classified chunks found in chain — run a sync first.'); return; }
         }
 
         // ── 3. Concurrent worker pool ─────────────────────────────────────────
@@ -231,20 +200,8 @@ export async function rebuildRag() {
             await insertLorebookEntries(chatKey, chain.lkg.uuid, state._lorebookName, lbEntries);
         }
 
-        // ── 5. Rebuild plot lorebook file and re-index plot entry vectors ─────
-        const anchorChunks = chain.anchors
-            .map(ref => ({ uuid: ref.anchor.uuid, entries: ref.anchor.plotEntries ?? [] }))
-            .filter(c => c.entries.length > 0);
-
-        if (anchorChunks.length) {
-            const plotLbName = state._plotLorebookName ?? cnzPlotLbName(char.avatar);
-            state._plotLorebookName = plotLbName;
-            await rebuildPlotLorebook(plotLbName, anchorChunks);
-            for (const { uuid, entries } of anchorChunks) {
-                await insertLorebookEntries(chatKey, uuid, plotLbName, entries);
-            }
-            log('Maintenance', `rebuildRag: plot lorebook rebuilt (${anchorChunks.reduce((n, c) => n + c.entries.length, 0)} entries)`);
-        }
+        // ── 5. Rebuild plot lorebook vectors (shared with healer) ─────────────
+        await reconcilePlotLorebook(char, chain, chatKey);
 
     } catch (err) {
         error('Maintenance', 'rebuildRag:', err);

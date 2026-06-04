@@ -1,16 +1,18 @@
 /**
  * @file data/default-user/extensions/canonize/core/dna-chain.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
+ * @stamp {"utc":"2026-06-04T04:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role Pure Functions
  * @description
  * Pure derivation functions for the DNA chain: scanning chat messages to build
- * the chain, looking up the last-known-good anchor, and constructing anchor
- * payloads. No IO — callers pass all inputs; writers live in dna-writer.js.
+ * the chain, looking up the last-known-good anchor, constructing anchor payloads,
+ * and deriving chunk maps for the healer and rebuild pipeline.
+ * No IO — callers pass all inputs; writers live in dna-writer.js.
  *
  * @api-declaration
  * readDnaChain, getLkgAnchor, buildAnchorPayload, findLastAiMessageInPair,
- * buildNodeFileFromAnchor, findLkgAnchorByPosition, sanitizeDnaChain
+ * buildNodeFileFromAnchor, findLkgAnchorByPosition, sanitizeDnaChain,
+ * buildAnchorBoundaries, buildAnchorChunkMap
  *
  * @contract
  *   assertions:
@@ -18,6 +20,8 @@
  *     state_ownership: [none]
  *     external_io: [none]
  */
+
+import { formatPairsAsTranscript } from './transcript.js';
 
 // ─── Types (JSDoc only — no runtime impact) ───────────────────────────────────
 
@@ -189,4 +193,53 @@ export function findLkgAnchorByPosition(anchors, messages) {
  */
 export function sanitizeDnaChain(chain) {
     return chain;
+}
+
+// ─── Chunk Map Helpers ────────────────────────────────────────────────────────
+
+/**
+ * Derives the sorted pairEnd boundaries used to assign pair ranges to anchors.
+ * @param {object} chain  DNA chain from readDnaChain.
+ * @returns {{ uuid: string, maxPairEnd: number }[]}
+ */
+export function buildAnchorBoundaries(chain) {
+    return chain.anchors
+        .map(({ anchor }) => ({
+            uuid:       anchor.uuid,
+            maxPairEnd: (anchor.ragHeaders ?? []).reduce((m, rh) => Math.max(m, rh.pairEnd ?? 0), 0),
+        }))
+        .filter(b => b.maxPairEnd > 0)
+        .sort((a, b) => a.maxPairEnd - b.maxPairEnd);
+}
+
+/**
+ * Single-pass scan: finds cnz_chunk_header stamps in allPairs, derives chunk
+ * content and metadata, and groups chunks by anchor UUID using pairEnd boundaries.
+ * Returns a Map<uuid, chunk[]> ready for insertSyncChunks.
+ * @param {object}   chain           DNA chain from readDnaChain.
+ * @param {object[]} allPairs        Full pair list from buildProsePairs.
+ * @param {string}   headAnchorUuid  Fallback UUID for un-boundaried stamps.
+ * @returns {Map<string, object[]>}
+ */
+export function buildAnchorChunkMap(chain, allPairs, headAnchorUuid) {
+    const boundaries = buildAnchorBoundaries(chain);
+    const byAnchor   = new Map();
+    let prevEnd      = 0;
+    for (let i = 0; i < allPairs.length; i++) {
+        const pair    = allPairs[i];
+        const lastMsg = pair?.messages?.[pair.messages.length - 1];
+        if (!lastMsg?.extra?.cnz_chunk_header) continue;
+        const content = formatPairsAsTranscript(allPairs.slice(prevEnd, i + 1));
+        let uuid = headAnchorUuid;
+        for (const b of boundaries) { if (prevEnd < b.maxPairEnd) { uuid = b.uuid; break; } }
+        if (!byAnchor.has(uuid)) byAnchor.set(uuid, []);
+        byAnchor.get(uuid).push({
+            chunkIndex: byAnchor.get(uuid).length,
+            header:     lastMsg.extra.cnz_chunk_header,
+            turnRange:  lastMsg.extra.cnz_turn_label?.replace(/^\*+\s*Memory:\s*/i, '') ?? `Pairs ${prevEnd + 1}–${i + 1}`,
+            content, pairStart: prevEnd, pairEnd: i + 1, status: 'complete',
+        });
+        prevEnd = i + 1;
+    }
+    return byAnchor;
 }
