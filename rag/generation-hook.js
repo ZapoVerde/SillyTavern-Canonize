@@ -322,10 +322,16 @@ export async function onGenerationStarted() {
     const plotActivate = plotLbName ? result.toActivate.filter(a => a.world === plotLbName) : [];
 
     if (lbActivate.length) {
-        log('RagHook', `Semantic LB activation: ${lbActivate.length} entries`);
+        // Enrich stubs with full lorebook entry data so ST has content to inject.
+        // Passing bare {world, uid} results in content:'' and ST skips the entry.
+        const lbActivateEnriched = lbActivate.map(a => {
+            const entry = state._draftLorebook?.entries?.[String(a.uid)];
+            return entry ? { ...entry, world: a.world } : a;
+        });
+        log('RagHook', `Semantic LB activation: ${lbActivateEnriched.length} entries`);
         try {
             window.loggeryze?.time('CNZ LB activate [blocking]');
-            await eventSource.emit(event_types.WORLDINFO_FORCE_ACTIVATE, lbActivate);
+            await eventSource.emit(event_types.WORLDINFO_FORCE_ACTIVATE, lbActivateEnriched);
             window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
         } catch (err) {
             window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
