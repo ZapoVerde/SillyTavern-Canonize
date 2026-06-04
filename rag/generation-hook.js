@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/generation-hook.js
- * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
- * @version 2.4.0
+ * @stamp {"utc":"2026-06-04T15:40:00.000Z"}
+ * @version 2.5.0
  * @architectural-role IO Wrapper
  * @description
  * Prefetch-optimised RAG retrieval lifecycle. Owns the prefetch promise,
@@ -30,7 +30,7 @@ import { state }             from '../state.js';
 import { getSettings }       from '../core/settings.js';
 import { doRagFetch }        from './rag-fetch.js';
 import { insertLorebookEntries } from './file-store-lb.js';
-import { cnzChatKey }        from './api.js';
+import { cnzChatKey, cnzGetActiveChatKey } from './api.js';
 import { getStringHash }     from '../../../../utils.js';
 import { stripProtectedBlock } from '../lorebook/utils.js';
 import { log, error }        from '../log.js';
@@ -213,9 +213,7 @@ export async function onGenerationStarted() {
                         .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
                     try {
                         window.loggeryze?.time('CNZ JIT re-index [blocking]');
-                        const _ctx      = SillyTavern.getContext();
-                        const _chatFile = _ctx.getCurrentChatFile?.() ?? _ctx.characters?.[_ctx.characterId]?.chat ?? null;
-                        const _chatKey  = cnzChatKey(_chatFile);
+                        const _chatKey  = cnzGetActiveChatKey();
                         if (_chatKey) await insertLorebookEntries(_chatKey, lkgUuid, state._lorebookName, entries);
                         window.loggeryze?.timeEnd('CNZ JIT re-index [blocking]');
                         state._lastIndexedLorebookHash = currentHash;
@@ -289,7 +287,7 @@ export async function onGenerationStarted() {
     // kick off the next embed so it runs during streaming and the following swipe
     // finds a prefetch already in flight instead of starting cold.
     if (wasColdFetch && result) {
-        const wCtx      = SillyTavern.getContext();
+        const wCtx = SillyTavern.getContext();
         const wMessages = wCtx.chat ?? [];
         if (wMessages.length) {
             log('RagHook', `warm-ahead prefetch started (chatLen=${wMessages.length})`);

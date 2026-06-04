@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/healer.js
- * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
- * @version 2.1.0
+ * @stamp {"utc":"2026-06-04T15:28:00.000Z"}
+ * @version 2.2.0
  * @architectural-role Orchestrator
  * @description
  * Branch detection and state restoration. Walks the DNA chain to find the
@@ -43,7 +43,7 @@ import { embedCfg, reportEmbedUsage } from '../rag/embed-client.js';
 import { embedBatch } from '../rag/embed-direct.js';
 import { encodeVec } from '../rag/vec-math.js';
 import { insertSyncChunks, listAnchorUuids, deleteAnchor } from '../rag/file-store.js';
-import { cnzChatKey, cnzPlotLbName } from '../rag/api.js';
+import { cnzChatKey, cnzPlotLbName, cnzGetActiveChatKey } from '../rag/api.js';
 import { getAnchor, getLbVecMap, loadChatStore, flushChatStore, invalidateVecCache } from '../rag/chat-store.js';
 import { rebuildPlotLorebook } from '../lorebook/plot-lorebook.js';
 
@@ -123,7 +123,7 @@ async function _reconcileRagChunks(char, headAnchor, chatKey) {
     try {
         const ctx        = SillyTavern.getContext();
         const allPairs   = buildProsePairs(ctx.chat ?? []);
-        const chatFile   = ctx.getCurrentChatFile?.() ?? ctx.characters?.[ctx.characterId]?.chat ?? null;
+        const chatFile   = ctx.chatId ?? ctx.getCurrentChatId?.() ?? ctx.characters?.[ctx.characterId]?.chat ?? null;
         const validUuids = new Set(state._dnaChain.anchors.map(r => r.anchor.uuid));
 
         // ── 1. Purge anchors in store but not in chain ────────────────────────
@@ -290,7 +290,8 @@ export async function runHealer(char, chatFileName) {
     if (messages[headRef.msgIdx]?.extra?.cnz?.uuid === headRef.anchor.uuid) {
         state._lorebookName     = headRef.anchor.lorebook?.name || char?.data?.extensions?.world || char?.name || '';
         state._plotLorebookName = headRef.anchor.plotLorebookName ?? cnzPlotLbName(char.avatar);
-        await reconcileWorldState(char, headRef.anchor, cnzChatKey(chatFileName));
+        const activeChatKey     = cnzChatKey(chatFileName) ?? cnzGetActiveChatKey();
+        await reconcileWorldState(char, headRef.anchor, activeChatKey);
         return;
     }
 

@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/lifecycle.js
- * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
- * @version 1.1.0
+ * @stamp {"utc":"2026-06-04T15:47:00.000Z"}
+ * @version 1.2.0
  * @architectural-role Orchestrator
  * @description
  * Mount/unmount lifecycle for the CNZ extension. Binds and unbinds all dynamic
@@ -40,7 +40,7 @@ import { runCnzSync } from './core/sync.js';
 import { invalidateAllJobs } from './cycleStore.js';
 import { log, error } from './log.js';
 import { getStringHash } from '../../../utils.js';
-import { cnzChatKey } from './rag/api.js';
+import { cnzGetActiveChatKey } from './rag/api.js';
 import { insertLorebookEntries } from './rag/file-store-lb.js';
 
 // ── Module state ──────────────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ async function _applyPlotLorebookEdits(name) {
             const ctx  = SillyTavern.getContext();
             const char = ctx.characters[ctx.characterId];
             if (!char) { log('LbWatch', `No character selected — skipping re-vector`); return; }
-            const ck       = cnzChatKey(ctx.getCurrentChatFile?.() ?? ctx.characters?.[ctx.characterId]?.chat ?? '');
+            const ck       = cnzGetActiveChatKey();
             const byAnchor = new Map();
             for (const { uid, de, ref } of changed) {
                 if (!byAnchor.has(ref.anchor.uuid)) byAnchor.set(ref.anchor.uuid, []);
@@ -161,7 +161,7 @@ async function _applyPlotLorebookEdits(name) {
     }
 }
 
-// ── Embed progress monitor ────────────────────────────────────────────────────
+// ─── Embed progress monitor ────────────────────────────────────────────────────
 
 const EMBED_THRESHOLD = 20;
 let _embedToast = null;
@@ -180,7 +180,7 @@ function _onEmbedProgress({ total, done }) {
     }
 }
 
-// ── Mount / Unmount ───────────────────────────────────────────────────────────
+// ─── Mount / Unmount ───────────────────────────────────────────────────────────
 
 export function mountCnz() {
     log('Lifecycle', 'mountCnz: starting...');

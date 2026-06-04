@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/pipeline.js
- * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
- * @version 2.0.0
+ * @stamp {"utc":"2026-06-04T15:37:00.000Z"}
+ * @version 2.1.0
  * @architectural-role Orchestrator
  * @description
  * RAG classifier dispatch and the full sync-time pipeline. Sequences chunk
@@ -33,9 +33,9 @@ import { on, off, BUS_EVENTS } from '../bus.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
 import { buildProsePairs, formatPairsAsTranscript } from '../core/transcript.js';
 import { getSettings } from '../core/settings.js';
-import { cnzChatKey } from './api.js';
+import { cnzChatKey, cnzGetActiveChatKey } from './api.js';
 import { insertSyncChunks } from './file-store.js';
-import { warn, error } from '../log.js';
+import { warn, error }       from '../log.js';
 import { buildRagChunks } from './chunks.js';
 import { hydrateChunkHeadersFromChat } from './chat-labels.js';
 
@@ -159,8 +159,8 @@ export async function runRagPipeline(anchorUuid = null) {
     if (!settled.length || !anchorUuid) return;
 
     const ctx2     = SillyTavern.getContext();
-    const chatFile = ctx2.getCurrentChatFile?.() ?? ctx2.characters?.[ctx2.characterId]?.chat ?? null;
-    const chatKey  = cnzChatKey(chatFile);
+    const chatKey  = cnzGetActiveChatKey();
     if (!chatKey) return;
+    const chatFile = ctx2.chatId ?? ctx2.getCurrentChatId?.() ?? ctx2.characters?.[ctx2.characterId]?.chat ?? null;
     await insertSyncChunks(chatKey, anchorUuid, chatFile, state._ragChunks, state._stagedPairOffset);
 }

@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/maintenance.js
- * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
- * @version 2.1.1
+ * @stamp {"utc":"2026-06-04T15:31:00.000Z"}
+ * @version 2.2.0
  * @architectural-role Orchestrator
  * @description
  * User-initiated RAG rebuild (concurrent worker pool) triggered from the
@@ -26,7 +26,7 @@ import { readDnaChain, buildAnchorBoundaries, buildAnchorChunkMap } from './dna-
 import { buildProsePairs } from './transcript.js';
 import { buildRagChunks } from '../rag/chunks.js';
 import { waitForRagChunks } from '../rag/pipeline.js';
-import { cnzChatKey, cnzDefaultLbName } from '../rag/api.js';
+import { cnzChatKey, cnzDefaultLbName, cnzGetActiveChatKey } from '../rag/api.js';
 import { insertSyncChunks, anchorChunkCount } from '../rag/file-store.js';
 import { insertLorebookEntries } from '../rag/file-store-lb.js';
 import { reconcilePlotLorebook } from './healer.js';
@@ -86,9 +86,9 @@ export async function rebuildRag() {
         const ragSettings = getSettings();
 
         // ── 1b. Assign chunks to anchor groups ────────────────────────────────
-        const chatFile = ctx.getCurrentChatFile?.() ?? char?.chat ?? null;
-        const chatKey  = cnzChatKey(chatFile);
+        const chatKey  = cnzGetActiveChatKey();
         if (!chatKey) { toastr.error('CNZ: Cannot rebuild — no chat file active.'); return; }
+        const chatFile = ctx.chatId ?? ctx.getCurrentChatId?.() ?? char?.chat ?? null;
 
         let byAnchor, total;
         if (deepReclassify) {
@@ -208,4 +208,3 @@ export async function rebuildRag() {
         toastr.error(`CNZ: Rebuild failed: ${err.message}`);
     }
 }
-

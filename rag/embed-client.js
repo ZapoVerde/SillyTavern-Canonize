@@ -1,30 +1,29 @@
 /**
  * @file data/default-user/extensions/canonize/rag/embed-client.js
- * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
- * @architectural-role IO Wrapper — vector store proxy via ST's built-in /api/vector/* endpoints
+ * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @architectural-role IO Wrapper — embed config and usage reporting
  * @description
- * Calls ST's own vector endpoints for all embedding and retrieval operations.
- * ST's server handles API key auth via its secrets store — no key ever touches
- * the browser. Pattern identical to Vistalyze's use of /api/sd/* endpoints.
+ * Provides the embed configuration block (source, model, apiUrl) read from CNZ
+ * settings and the ST connection panels. Also reports embedding usage to Loggeryze.
  *
- * Collection naming: cnz_chunks_{avatarKey}, cnz_headers_{avatarKey}, cnz_lb_{avatarKey}
+ * Vectra insert/query operations have been replaced by embed-direct.js +
+ * vector-store.js. purgeCollection is retained for cleaning up any legacy Vectra
+ * collections left over from before this architecture change.
+ *
+ * testEmbed delegates to embed-direct.js so the settings panel smoke test
+ * exercises the actual embedding path.
  *
  * @api-declaration
- * embedCfg()                                         → EmbedCfg
- * insertItems(collectionId, items, cfg)               → Promise<void>
- * queryItems(collectionId, searchText, topK, cfg, signal?) → Promise<QueryResult>
- * listHashes(collectionId, cfg)                       → Promise<number[]>
- * deleteItems(collectionId, hashes, cfg)              → Promise<void>
- * purgeCollection(collectionId)                       → Promise<void>
- * testEmbed(cfg)                                      → Promise<{ ok, ms }>
+ * embedCfg()                → EmbedCfg
+ * reportEmbedUsage(chars, model) → void
+ * purgeCollection(collectionId)  → Promise<void>   (legacy cleanup only)
+ * testEmbed(cfg)            → Promise<{ ok, ms }>
  *
  * @contract
  *   assertions:
  *     purity:          mutates
  *     state_ownership: [none]
- *     external_io:     [POST /api/vector/insert, POST /api/vector/query,
- *                       POST /api/vector/list,   POST /api/vector/delete,
- *                       POST /api/vector/purge,
+ *     external_io:     [POST /api/vector/purge, embed-direct.js,
  *                       textgenerationwebui_settings, oai_settings]
  */
 
@@ -32,6 +31,7 @@ import { getRequestHeaders }                           from '../../../../../scri
 import { textgen_types, textgenerationwebui_settings } from '../../../../textgen-settings.js';
 import { oai_settings }                                from '../../../../openai.js';
 import { getSettings }                                 from '../core/settings.js';
+import { testEmbedDirect }                             from './embed-direct.js';
 import { log }                                         from '../log.js';
 
 const BASE = '/api/vector';
@@ -45,8 +45,7 @@ const URL_SOURCES = {
 // ── Embed config ──────────────────────────────────────────────────────────────
 
 /**
- * Builds the params block included in every /api/vector/* request body.
- * ST's server reads source/model/apiUrl and looks up the API key itself.
+ * Builds the params block consumed by embed-direct.js and (legacy) /api/vector/*.
  */
 export function embedCfg() {
     const s      = getSettings();
@@ -58,7 +57,7 @@ export function embedCfg() {
 
     if (source === 'workers_ai') {
         const accountId = (oai_settings.workers_ai_account_id ?? '').trim();
-        if (accountId) cfg.workers_ai_account_id = accountId;
+        if (accountId) cfg.urlOverride = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`;
     }
 
     log('EmbedClient', `cfg source=${cfg.source} model=${cfg.model || '(unset)'}`);
@@ -77,88 +76,32 @@ export function reportEmbedUsage(textLength, model) {
     });
 }
 
-// ── HTTP helpers ──────────────────────────────────────────────────────────────
-
-async function _post(path, body, signal) {
-    const res = await fetch(`${BASE}${path}`, {
-        method:  'POST',
-        headers: { ...getRequestHeaders(), 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
-        signal,
-    });
-    if (!res.ok) {
-        const text = await res.text().catch(() => res.statusText);
-        throw new Error(`CNZ vec-api ${path}: ${text}`);
-    }
-    const ct = res.headers.get('content-type') ?? '';
-    return ct.includes('application/json') ? res.json() : null;
-}
-
-// ── Public API ────────────────────────────────────────────────────────────────
+// ── Legacy Vectra cleanup ─────────────────────────────────────────────────────
 
 /**
- * Embeds and stores items in a Vectra collection. ST handles the embedding call.
- * @param {string}   collectionId
- * @param {{ hash: number, text: string, index?: number }[]} items
- * @param {object}   cfg   From embedCfg()
- * @param {AbortSignal} [signal]
- */
-export async function insertItems(collectionId, items, cfg, signal) {
-    await _post('/insert', { collectionId, items, ...cfg }, signal);
-}
-
-/**
- * Queries a Vectra collection by semantic similarity.
- * Returns items in descending score order — position is the rank for RRF.
- * @param {string}   collectionId
- * @param {string}   searchText
- * @param {number}   topK
- * @param {object}   cfg   From embedCfg()
- * @param {AbortSignal} [signal]
- * @returns {Promise<{ metadata: {hash:number, text:string}[], hashes: number[] }>}
- */
-export async function queryItems(collectionId, searchText, topK, cfg, signal) {
-    return _post('/query', { collectionId, searchText, topK, threshold: 0, ...cfg }, signal);
-}
-
-/**
- * Returns all hashes stored in a collection for a given source.
- * @param {string} collectionId
- * @param {object} cfg
- * @returns {Promise<number[]>}
- */
-export async function listHashes(collectionId, cfg) {
-    return _post('/list', { collectionId, ...cfg });
-}
-
-/**
- * Deletes specific items from a collection by hash.
- * @param {string}   collectionId
- * @param {number[]} hashes
- * @param {object}   cfg
- */
-export async function deleteItems(collectionId, hashes, cfg) {
-    await _post('/delete', { collectionId, hashes, ...cfg });
-}
-
-/**
- * Deletes an entire collection across all sources. Used for character purge.
+ * Deletes a Vectra collection. Used only to clean up collections created before
+ * the direct-embedding architecture change.
  * @param {string} collectionId
  */
 export async function purgeCollection(collectionId) {
-    await _post('/purge', { collectionId });
+    const res = await fetch(`${BASE}/purge`, {
+        method:  'POST',
+        headers: { ...getRequestHeaders(), 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ collectionId }),
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => res.statusText);
+        throw new Error(`CNZ vec-api /purge: ${text}`);
+    }
 }
 
+// ── Embed test ────────────────────────────────────────────────────────────────
+
 /**
- * Inserts a sentinel item, measures round-trip time, then purges the test collection.
- * @param {object} cfg   From embedCfg()
+ * Smoke test for the settings panel. Delegates to embed-direct.js.
+ * @param {object} cfg  From embedCfg()
  * @returns {Promise<{ ok: boolean, ms: number }>}
  */
 export async function testEmbed(cfg) {
-    const collectionId = `cnz_test_${Date.now()}`;
-    const t0 = Date.now();
-    await insertItems(collectionId, [{ hash: -1, text: 'The quick brown fox jumps over the lazy dog.', index: 0 }], cfg);
-    const ms = Date.now() - t0;
-    await purgeCollection(collectionId).catch(() => {});
-    return { ok: true, ms };
+    return testEmbedDirect(cfg);
 }

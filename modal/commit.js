@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/modal/commit.js
- * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
- * @version 1.1.0
+ * @stamp {"utc":"2026-06-04T15:45:00.000Z"}
+ * @version 1.2.0
  * @architectural-role Orchestrator
  * @description
  * Owns Step 4 of the review modal (Finalize / Commit). Handles character world
@@ -19,7 +19,7 @@
  *     external_io: [/api/characters/edit, /api/chats/saveChat, file-store-lb.js]
  */
 
-import { getRequestHeaders } from '../../../../../script.js';
+import { getRequestHeaders }     from '../../../../../script.js';
 import { getStringHash }     from '../../../../utils.js';
 import { state }             from '../state.js';
 import { readDnaChain }      from '../core/dna-chain.js';
@@ -27,7 +27,7 @@ import { writeCnzSummaryPrompt } from '../core/summary-prompt.js';
 import { isDraftDirty, stripProtectedBlock, stitchProtectedBlock } from '../lorebook/utils.js';
 import { lbSaveLorebook }    from '../lorebook/api.js';
 import { insertLorebookEntries } from '../rag/file-store-lb.js';
-import { cnzAvatarKey }      from '../rag/api.js';
+import { cnzAvatarKey, cnzGetActiveChatKey } from '../rag/api.js';
 import { warn, error }       from '../log.js';
 import { showReceiptsPanel, abortCommitWithError, renderReceipts } from './commit-ui.js';
 
@@ -126,12 +126,15 @@ async function commitChanges(char, hooksText) {
             const lkgUuid = state._dnaChain?.lkg?.uuid;
             if (changedEntries.length && lkgUuid) {
                 try {
-                    await insertLorebookEntries(cnzAvatarKey(char.avatar), lkgUuid, state._lorebookName, changedEntries);
-                    const hashStr = Object.values(state._draftLorebook.entries ?? {})
-                        .sort((a, b) => a.uid - b.uid)
-                        .map(e => `${e.uid}|${e.comment ?? ''}|${(e.key ?? []).join(',')}|${stripProtectedBlock(e.content ?? '')}`)
-                        .join('\n');
-                    state._lastIndexedLorebookHash = String(getStringHash(hashStr));
+                    const chatKey = cnzGetActiveChatKey();
+                    if (chatKey) {
+                        await insertLorebookEntries(chatKey, lkgUuid, state._lorebookName, changedEntries);
+                        const hashStr = Object.values(state._draftLorebook.entries ?? {})
+                            .sort((a, b) => a.uid - b.uid)
+                            .map(e => `${e.uid}|${e.comment ?? ''}|${(e.key ?? []).join(',')}|${stripProtectedBlock(e.content ?? '')}`)
+                            .join('\n');
+                        state._lastIndexedLorebookHash = String(getStringHash(hashStr));
+                    }
                 } catch (vecErr) {
                     warn('Commit', 'write-through vectoring failed:', vecErr);
                 }

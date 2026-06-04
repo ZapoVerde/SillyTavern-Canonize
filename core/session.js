@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/session.js
- * @stamp {"utc":"2026-05-23T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2026-06-04T15:25:00.000Z"}
+ * @version 1.1.0
  * @architectural-role Orchestrator
  * @description
  * Session lifecycle management. Owns state reset on character switch and the
@@ -62,7 +62,7 @@ export function onChatChanged() {
     }
 
     const char         = context.characters[context.characterId];
-    const chatFileName = context.getCurrentChatFile?.() ?? char?.chat ?? null;
+    const chatFileName = context.chatId ?? context.getCurrentChatId?.() ?? char?.chat ?? null;
 
     if (!char || char.avatar !== state._lastKnownAvatar) {
         state._lastKnownAvatar = char?.avatar ?? null;

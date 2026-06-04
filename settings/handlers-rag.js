@@ -154,6 +154,31 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
     });
 
     // ── Retrieval settings ────────────────────────────────────────────────────
+    $('#cnz-set-rag-signal-strength').on('input', function () {
+        const val = parseFloat($(this).val());
+        if (!isNaN(val)) { getSettings().ragSignalStrength = Math.min(1, Math.max(0, val)); saveSettingsDebounced(); updateDirtyIndicator(); }
+    });
+
+    $('#cnz-set-rag-chat-min').on('input', function () {
+        const val = parseInt($(this).val(), 10);
+        if (!isNaN(val) && val >= 0) { getSettings().ragChatMin = val; saveSettingsDebounced(); updateDirtyIndicator(); }
+    });
+
+    $('#cnz-set-rag-chat-max').on('input', function () {
+        const val = parseInt($(this).val(), 10);
+        if (!isNaN(val) && val >= 1) { getSettings().ragChatMax = val; saveSettingsDebounced(); updateDirtyIndicator(); }
+    });
+
+    $('#cnz-set-rag-lb-min').on('input', function () {
+        const val = parseInt($(this).val(), 10);
+        if (!isNaN(val) && val >= 0) { getSettings().ragLbMin = val; saveSettingsDebounced(); updateDirtyIndicator(); }
+    });
+
+    $('#cnz-set-rag-lb-max').on('input', function () {
+        const val = parseInt($(this).val(), 10);
+        if (!isNaN(val) && val >= 1) { getSettings().ragLbMax = val; saveSettingsDebounced(); updateDirtyIndicator(); }
+    });
+
     const EMBED_KEY_MAP = { voyageai: 'api_key_voyageai', nomicai: 'api_key_nomicai' };
 
     $('#cnz-set-embedding-source').on('change', function () {
@@ -168,31 +193,6 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
 
     $('#cnz-set-embedding-model').on('input', function () {
         getSettings().ragEmbeddingModel = $(this).val().trim();
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-rag-score-threshold').on('input', function () {
-        const val = parseFloat($(this).val());
-        if (!isNaN(val)) { getSettings().ragScoreThreshold = Math.min(1, Math.max(0, val)); saveSettingsDebounced(); updateDirtyIndicator(); }
-    });
-
-    $('#cnz-set-rag-max-results').on('input', function () {
-        const val = parseInt($(this).val(), 10);
-        if (!isNaN(val) && val >= 1) { getSettings().ragInflectionMaxResults = val; saveSettingsDebounced(); updateDirtyIndicator(); }
-    });
-
-    $('#cnz-set-rag-retrieval-topk').on('input', function () {
-        getSettings().ragRetrievalTopK = Math.max(0, parseInt($(this).val()) || 5);
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-rag-lb-retrieval-topk').on('input', function () {
-        getSettings().ragLbRetrievalTopK = Math.max(0, parseInt($(this).val()) || 3);
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-inflection-verbose').on('change', function () {
-        getSettings().ragInflectionVerbose = $(this).prop('checked');
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 

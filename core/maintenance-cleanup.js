@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/maintenance-cleanup.js
- * @stamp {"utc":"2026-06-04T03:00:00.000Z"}
- * @version 2.0.0
+ * @stamp {"utc":"2026-06-04T15:33:00.000Z"}
+ * @version 2.1.0
  * @architectural-role Orchestrator
  * @description
  * User-initiated cleanup: new-chat session reset and vector store purge. Split
@@ -20,7 +20,7 @@
 
 import { callPopup } from '../../../../../script.js';
 import { state } from '../state.js';
-import { cnzChatKey, cnzPlotLbName } from '../rag/api.js';
+import { cnzGetActiveChatKey, cnzPlotLbName } from '../rag/api.js';
 import { purgeChatStore } from '../rag/chat-store.js';
 import { lbSaveLorebook } from '../lorebook/api.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
@@ -49,8 +49,7 @@ export async function runNewChatCleanup(char) {
                 state._draftLorebook = structuredClone(state._lorebookData);
             }
 
-            const chatFile = SillyTavern.getContext().getCurrentChatFile?.() ?? null;
-            const chatKey  = cnzChatKey(chatFile);
+            const chatKey  = cnzGetActiveChatKey();
             if (chatKey) await purgeChatStore(chatKey);
             writeCnzSummaryPrompt(char.avatar, '', null);
 
@@ -86,8 +85,7 @@ export async function purgeCnzFiles() {
     if (!confirmed) return;
 
     try {
-        const chatFile = ctx.getCurrentChatFile?.() ?? null;
-        const chatKey  = cnzChatKey(chatFile);
+        const chatKey  = cnzGetActiveChatKey();
         if (chatKey) await purgeChatStore(chatKey);
 
         const plotLbName = state._plotLorebookName ?? cnzPlotLbName(char.avatar);

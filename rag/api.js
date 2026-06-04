@@ -1,17 +1,17 @@
 /**
  * @file data/default-user/extensions/canonize/rag/api.js
- * @stamp {"utc":"2026-06-04T02:00:00.000Z"}
- * @version 1.1.0
+ * @stamp {"utc":"2026-06-04T15:23:00.000Z"}
+ * @version 1.2.0
  * @architectural-role IO Wrapper
  * @description
  * Thin HTTP wrapper around the ST Data Bank file endpoints plus character
  * attachment registration. Covers file upload, file delete, character attachment
  * list/register, and the filename generation utilities (cnzFileName, cnzAvatarKey,
- * cnzChatKey).
+ * cnzChatKey, cnzGetActiveChatKey, cnzDefaultLbName, cnzPlotLbName).
  *
  * @api-declaration
  * uploadRagFile, cnzDeleteFile, registerCharacterAttachment,
- * getCharacterAttachments, cnzFileName, cnzAvatarKey, cnzChatKey, cnzDefaultLbName
+ * getCharacterAttachments, cnzFileName, cnzAvatarKey, cnzChatKey, cnzGetActiveChatKey, cnzDefaultLbName, cnzPlotLbName
  *
  * @contract
  *   assertions:
@@ -52,7 +52,7 @@ export async function uploadRagFile(text, fileName) {
         body:    JSON.stringify({ name: safeName, data: utf8ToBase64(text) }),
     });
     if (!res.ok) {
-        const errorText = await res.text();
+        const errorText = await res.text().catch(() => res.statusText);
         throw new Error(`RAG file upload failed (HTTP ${res.status}): ${errorText}`);
     }
     const json = await res.json();
@@ -114,6 +114,18 @@ export function cnzAvatarKey(avatarFilename) {
 export function cnzChatKey(chatFilename) {
     if (!chatFilename) return null;
     return chatFilename.replace(/[^a-zA-Z0-9_\-]/g, '_');
+}
+
+/**
+ * Retrieves and sanitizes the active chat's unique file key directly from SillyTavern context.
+ * Centralizes the lookup to prevent API method mismatch errors across modules.
+ * @returns {string|null} Sanitized chat key, or null if no active chat can be determined.
+ */
+export function cnzGetActiveChatKey() {
+    const ctx = SillyTavern.getContext();
+    if (!ctx) return null;
+    const rawId = ctx.chatId ?? ctx.getCurrentChatId?.() ?? ctx.characters?.[ctx.characterId]?.chat ?? null;
+    return cnzChatKey(rawId);
 }
 
 /**

@@ -34,7 +34,7 @@
 import { log, warn } from '../log.js';
 import { getStringHash } from '../../../../utils.js';
 import { insertLorebookEntries } from '../rag/file-store-lb.js';
-import { cnzAvatarKey } from '../rag/api.js';
+import { cnzChatKey } from '../rag/api.js';
 import { setDnaChain } from '../scheduler.js';
 import { readDnaChain, getLkgAnchor, buildAnchorPayload } from './dna-chain.js';
 import { writeDnaAnchor, writeDnaLinks } from './dna-writer.js';
@@ -138,7 +138,8 @@ export async function saveLorebookToDisk(anchorUuid, allSuggestions) {
         const char = ctx.characters[ctx.characterId];
         if (char) {
             try {
-                await insertLorebookEntries(cnzAvatarKey(char.avatar), anchorUuid, state._lorebookName, changed);
+                const _chatKey = cnzChatKey(ctx.getCurrentChatFile?.() ?? '');
+                if (_chatKey) await insertLorebookEntries(_chatKey, anchorUuid, state._lorebookName, changed);
                 const hashStr = Object.values(state._draftLorebook.entries ?? {})
                     .sort((a, b) => a.uid - b.uid)
                     .map(e => `${e.uid}|${e.comment ?? ''}|${(e.key ?? []).join(',')}|${stripProtectedBlock(e.content ?? '')}`)
@@ -226,13 +227,14 @@ export function processSceneUpdate(sceneText) {
  * @returns {Promise<{ uid: number, content: string, keys: string[], comment: string }[]>}
  *   The written entries with UIDs assigned — store these in the anchor payload.
  */
-export async function appendAndIndexPlotEntries(entries, anchorUuid, avatarFilename, plotLbName) {
+export async function appendAndIndexPlotEntries(entries, anchorUuid, _avatarFilename, plotLbName) {
     if (!entries.length) return [];
     await ensurePlotLorebook(plotLbName);
     const written = await appendPlotEntries(plotLbName, entries);
     if (!written.length) return [];
     try {
-        await insertLorebookEntries(cnzAvatarKey(avatarFilename), anchorUuid, plotLbName, written);
+        const _chatKey = cnzChatKey(SillyTavern.getContext().getCurrentChatFile?.() ?? '');
+        if (_chatKey) await insertLorebookEntries(_chatKey, anchorUuid, plotLbName, written);
     } catch (err) {
         warn('PlotLb', 'RAG indexing of plot entries failed:', err);
     }

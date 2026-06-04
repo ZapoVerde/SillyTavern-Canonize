@@ -1,6 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/rag-fetch.js
- * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @stamp {"utc":"2026-06-04T15:43:00.000Z"}
+ * @version 1.2.0
  * @architectural-role IO Wrapper — RAG retrieval execution
  * @description
  * Executes all three RAG channels (chat chunks, LB entries, plot LB entries)
@@ -27,7 +28,7 @@ import { queryLorebookEntries, queryRecentPlotEntries } from './file-store-lb.js
 import { distributionalCutoff } from './cutoff.js';
 import { embedCfg } from './embed-client.js';
 import { appendHealthRows } from './rag-health.js';
-import { cnzChatKey } from './api.js';
+import { cnzGetActiveChatKey } from './api.js';
 import { state } from '../state.js';
 import { log, error } from '../log.js';
 import { DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
@@ -66,7 +67,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const allPairs     = buildProsePairs(messages);
     const chatQuery    = cleanForEmbedding(formatPairsAsTranscript(allPairs.slice(-horizonPairs)));
 
-    const chatKey    = cnzChatKey(ctx.getCurrentChatFile?.() ?? ctx.characters?.[ctx.characterId]?.chat ?? '');
+    const chatKey    = cnzGetActiveChatKey();
     const plotLbName = state._plotLorebookName ?? null;
 
     log('RagFetch', `fetch anchors=${validUuids.length} signal=${signalStrength} chat=[${chatMin},${chatMax}] lb=[${lbMin},${lbMax}] plot=[${plotMin},${plotMax}]`);
