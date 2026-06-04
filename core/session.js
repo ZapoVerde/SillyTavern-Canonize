@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/session.js
- * @stamp {"utc":"2026-06-04T16:00:00.000Z"}
- * @version 1.2.0
+ * @stamp {"utc":"2026-06-04T16:30:00.000Z"}
+ * @version 1.2.2
  * @architectural-role Orchestrator
  * @description
  * Session lifecycle management. Owns state reset on character switch and the
@@ -62,24 +62,31 @@ export function onChatChanged() {
         return;
     }
 
-    const char         = context.characters[context.characterId];
-    const chatFileName = context.chatId ?? getCurrentChatId() ?? char?.chat ?? null;
+    let char = context.characters?.[context.characterId];
+    if (!char && context.characters && context.characterId != null) {
+        char = context.characters.find(c => c.avatar === context.characterId || c.name === context.characterId);
+    }
 
-    if (!char || char.avatar !== state._lastKnownAvatar) {
-        state._lastKnownAvatar = char?.avatar ?? null;
+    if (!char) {
+        state._lastKnownAvatar = null;
+        return;
+    }
+
+    const chatFileName = context.chatId ?? getCurrentChatId() ?? char.chat ?? null;
+
+    if (char.avatar !== state._lastKnownAvatar) {
+        state._lastKnownAvatar = char.avatar;
         resetSessionState();
         const chatMessages = SillyTavern.getContext().chat ?? [];
         state._dnaChain = readDnaChain(chatMessages);
         setDnaChain(state._dnaChain);
         syncCnzSummaryOnCharacterSwitch(char, state._dnaChain);
-        if (char) {
-            runHealer(char, chatFileName).catch(err =>
-                error('Sync', 'onChatChanged: healer failed:', err),
-            );
-            checkOrphans().catch(err =>
-                error('Sync', 'checkOrphans failed:', err),
-            );
-        }
+        runHealer(char, chatFileName).catch(err =>
+            error('Sync', 'onChatChanged: healer failed:', err),
+        );
+        checkOrphans().catch(err =>
+            error('Sync', 'checkOrphans failed:', err),
+        );
         return;
     }
 

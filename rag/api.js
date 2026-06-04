@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/api.js
- * @stamp {"utc":"2026-06-04T16:05:00.000Z"}
- * @version 1.2.1
+ * @stamp {"utc":"2026-06-04T16:40:00.000Z"}
+ * @version 1.2.3
  * @architectural-role IO Wrapper
  * @description
  * Thin HTTP wrapper around the ST Data Bank file endpoints plus character
@@ -23,6 +23,7 @@
 import { getRequestHeaders, saveSettingsDebounced, getCurrentChatId } from '../../../../../script.js';
 import { extension_settings } from '../../../../extensions.js';
 import { getMetaSettings } from '../core/settings.js';
+import { log } from '../log.js';
 
 // ─── File Primitives ──────────────────────────────────────────────────────────
 
@@ -124,7 +125,21 @@ export function cnzChatKey(chatFilename) {
 export function cnzGetActiveChatKey() {
     const ctx = SillyTavern.getContext();
     if (!ctx) return null;
-    const rawId = ctx.chatId ?? getCurrentChatId() ?? ctx.characters?.[ctx.characterId]?.chat ?? null;
+
+    let fallbackChat = null;
+    if (ctx.characterId != null && ctx.characters) {
+        let char = ctx.characters[ctx.characterId];
+        if (!char) {
+            char = ctx.characters.find(c => c.avatar === ctx.characterId || c.name === ctx.characterId);
+        }
+        if (char) {
+            fallbackChat = char.chat;
+        }
+    }
+
+    log('Api', `Resolving active chat key: context.chatId=${ctx.chatId}, getCurrentChatId=${getCurrentChatId()}, resolved character.chat=${fallbackChat}, characterId=${ctx.characterId} (${typeof ctx.characterId})`);
+
+    const rawId = ctx.chatId ?? getCurrentChatId() ?? fallbackChat ?? null;
     return cnzChatKey(rawId);
 }
 
