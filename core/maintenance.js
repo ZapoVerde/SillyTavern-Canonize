@@ -86,7 +86,7 @@ export async function rebuildRag() {
         const ragSettings = getSettings();
 
         // ── 1b. Assign chunks to anchor groups ────────────────────────────────
-        const chatFile = char?.chat ?? null;
+        const chatFile = ctx.getCurrentChatFile?.() ?? char?.chat ?? null;
         const chatKey  = cnzChatKey(chatFile);
         if (!chatKey) { toastr.error('CNZ: Cannot rebuild — no chat file active.'); return; }
 

@@ -123,7 +123,7 @@ async function _reconcileRagChunks(char, headAnchor, chatKey) {
     try {
         const ctx        = SillyTavern.getContext();
         const allPairs   = buildProsePairs(ctx.chat ?? []);
-        const chatFile   = ctx.characters?.[ctx.characterId]?.chat ?? null;
+        const chatFile   = ctx.getCurrentChatFile?.() ?? ctx.characters?.[ctx.characterId]?.chat ?? null;
         const validUuids = new Set(state._dnaChain.anchors.map(r => r.anchor.uuid));
 
         // ── 1. Purge anchors in store but not in chain ────────────────────────

@@ -66,7 +66,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const allPairs     = buildProsePairs(messages);
     const chatQuery    = cleanForEmbedding(formatPairsAsTranscript(allPairs.slice(-horizonPairs)));
 
-    const chatKey    = cnzChatKey(ctx.characters?.[ctx.characterId]?.chat ?? '');
+    const chatKey    = cnzChatKey(ctx.getCurrentChatFile?.() ?? ctx.characters?.[ctx.characterId]?.chat ?? '');
     const plotLbName = state._plotLorebookName ?? null;
 
     log('RagFetch', `fetch anchors=${validUuids.length} signal=${signalStrength} chat=[${chatMin},${chatMax}] lb=[${lbMin},${lbMax}] plot=[${plotMin},${plotMax}]`);

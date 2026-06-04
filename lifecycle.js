@@ -141,7 +141,7 @@ async function _applyPlotLorebookEdits(name) {
             const ctx  = SillyTavern.getContext();
             const char = ctx.characters[ctx.characterId];
             if (!char) { log('LbWatch', `No character selected — skipping re-vector`); return; }
-            const ck       = cnzChatKey(ctx.characters?.[ctx.characterId]?.chat ?? '');
+            const ck       = cnzChatKey(ctx.getCurrentChatFile?.() ?? ctx.characters?.[ctx.characterId]?.chat ?? '');
             const byAnchor = new Map();
             for (const { uid, de, ref } of changed) {
                 if (!byAnchor.has(ref.anchor.uuid)) byAnchor.set(ref.anchor.uuid, []);

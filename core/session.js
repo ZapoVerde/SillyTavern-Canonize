@@ -62,7 +62,7 @@ export function onChatChanged() {
     }
 
     const char         = context.characters[context.characterId];
-    const chatFileName = char?.chat ?? null;
+    const chatFileName = context.getCurrentChatFile?.() ?? char?.chat ?? null;
 
     if (!char || char.avatar !== state._lastKnownAvatar) {
         state._lastKnownAvatar = char?.avatar ?? null;
