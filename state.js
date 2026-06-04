@@ -47,6 +47,7 @@ import {
 export const EXT_NAME       = 'cnz';
 export const CNZ_SUMMARY_ID = 'cnz_summary';
 export const CNZ_RAG_ID     = 'cnz_rag';
+export const CNZ_LB_ID      = 'cnz_lb';
 
 /**
  * Profile-level configuration keys — saved per profile, loaded into activeState.

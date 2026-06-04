@@ -30,12 +30,13 @@ import { state }             from '../state.js';
 import { getSettings }       from '../core/settings.js';
 import { doRagFetch }        from './rag-fetch.js';
 import { insertLorebookEntries, purgeStaleLorebookEntries } from './file-store-lb.js';
-import { cnzChatKey, cnzGetActiveChatKey } from './api.js';
+import { cnzGetActiveChatKey } from './api.js';
 import { getStringHash }     from '../../../../utils.js';
 import { stripProtectedBlock } from '../lorebook/utils.js';
 import { log, error }        from '../log.js';
 import { eventSource, event_types } from '../../../../../script.js';
-import { writeCnzRagPrompt, clearCnzRagPrompt, appendCnzPlotArcs } from '../core/summary-prompt.js';
+import { writeCnzRagPrompt, clearCnzRagPrompt, appendCnzPlotArcs,
+         writeCnzLbPrompt, clearCnzLbPrompt } from '../core/summary-prompt.js';
 import { lbGetLorebook } from '../lorebook/api.js';
 import { DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE } from '../defaults.js';
 
@@ -146,6 +147,7 @@ export function resetRagState() {
     _swipeCache      = null;
     _timing          = null;
     clearCnzRagPrompt();
+    clearCnzLbPrompt();
 }
 
 export function prefetchRag() {
@@ -322,21 +324,23 @@ export async function onGenerationStarted() {
     const plotActivate = plotLbName ? result.toActivate.filter(a => a.world === plotLbName) : [];
 
     if (lbActivate.length) {
-        // Enrich stubs with full lorebook entry data so ST has content to inject.
-        // Passing bare {world, uid} results in content:'' and ST skips the entry.
-        const lbActivateEnriched = lbActivate.map(a => {
-            const entry = state._draftLorebook?.entries?.[String(a.uid)];
-            return entry ? { ...entry, world: a.world } : a;
-        });
-        log('RagHook', `Semantic LB activation: ${lbActivateEnriched.length} entries`);
-        try {
-            window.loggeryze?.time('CNZ LB activate [blocking]');
-            await eventSource.emit(event_types.WORLDINFO_FORCE_ACTIVATE, lbActivateEnriched);
-            window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
-        } catch (err) {
-            window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
-            error('RagHook', 'Lorebook semantic activation failed:', err);
+        const lbEntries = lbActivate
+            .map(a => state._draftLorebook?.entries?.[String(a.uid)])
+            .filter(Boolean);
+        if (lbEntries.length) {
+            const blocks = lbEntries.map(e => {
+                const tag   = (e.comment ?? '').replace(/\s+/g, '_');
+                const keys  = (e.key?.length ? e.key : e.extensions?.cnz_keys ?? []);
+                const alias = keys.length ? `(${keys.join(', ')})\n` : '';
+                return `<${tag}>\n${alias}${e.content ?? ''}\n</${tag}>`;
+            }).join('\n\n');
+            log('RagHook', `LB direct inject: ${lbEntries.length} entries`);
+            writeCnzLbPrompt(`The following are relevant world info entries:\n\n${blocks}`);
+        } else {
+            clearCnzLbPrompt();
         }
+    } else {
+        clearCnzLbPrompt();
     }
 
     if (plotLbName) {
