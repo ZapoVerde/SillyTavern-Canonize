@@ -52,6 +52,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const validUuids = chain.anchors.map(r => r.anchor.uuid);
 
     const signalStrength = settings.ragSignalStrength          ?? 0.35;
+    const cutoffMode     = settings.ragCutoffMode              ?? 'mean';
     const chatMin        = settings.ragChatMin                  ?? 2;
     const chatMax        = settings.ragChatMax                  ?? 8;
     const lbMin          = settings.ragLbMin                    ?? 2;
@@ -70,7 +71,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const chatKey    = cnzGetActiveChatKey();
     const plotLbName = state._plotLorebookName ?? null;
 
-    log('RagFetch', `fetch anchors=${validUuids.length} signal=${signalStrength} chat=[${chatMin},${chatMax}] lb=[${lbMin},${lbMax}] plot=[${plotMin},${plotMax}]`);
+    log('RagFetch', `fetch anchors=${validUuids.length} signal=${signalStrength} cutoff=${cutoffMode} chat=[${chatMin},${chatMax}] lb=[${lbMin},${lbMax}] plot=[${plotMin},${plotMax}]`);
 
     if (!chatKey || !chatQuery.trim() || !validUuids.length) {
         return { chunks: 0, injection: '', toActivate: [] };
@@ -105,9 +106,9 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
     // ── Distributional cutoff per channel ─────────────────────────────────────
 
-    const chunks   = distributionalCutoff(chatRaw, { min: chatMin, max: chatMax, signalStrength });
-    const lbHits   = distributionalCutoff(lbRaw,   { min: lbMin,  max: lbMax,   signalStrength });
-    const plotHits = distributionalCutoff(plotRaw,  { min: plotMin, max: plotMax, signalStrength });
+    const chunks   = distributionalCutoff(chatRaw, { min: chatMin, max: chatMax, signalStrength, cutoffMode });
+    const lbHits   = distributionalCutoff(lbRaw,   { min: lbMin,  max: lbMax,   signalStrength, cutoffMode });
+    const plotHits = distributionalCutoff(plotRaw,  { min: plotMin, max: plotMax, signalStrength, cutoffMode });
 
     // ── Logging + health telemetry ────────────────────────────────────────────
 
@@ -120,8 +121,15 @@ export async function doRagFetch(ctx, settings, chain, signal) {
         const minS = raw.at(-1)?.score ?? 0;
         const mu   = raw.reduce((s, c) => s + c.score, 0) / raw.length;
         const str  = maxS > 0 ? ((maxS - minS) / maxS).toFixed(3) : '0.000';
+        let cutoffVal = mu, cutoffLabel = 'μ';
+        if (cutoffMode === 'mean+1sd' || cutoffMode === 'mean+2sd') {
+            const σ = Math.sqrt(raw.reduce((s, c) => s + (c.score - mu) ** 2, 0) / raw.length);
+            const k = cutoffMode === 'mean+2sd' ? 2 : 1;
+            cutoffVal   = mu + k * σ;
+            cutoffLabel = cutoffMode === 'mean+2sd' ? 'μ+2σ' : 'μ+σ';
+        }
         const injectedScores = result.length ? ` (${result.map(c => c.score.toFixed(2)).join(', ')})` : '';
-        log('RagFetch', `${name}: ${raw.length} raw | max=${maxS.toFixed(3)} min=${minS.toFixed(3)} μ=${mu.toFixed(3)} strength=${str} → ${result.length} injected${injectedScores}`);
+        log('RagFetch', `${name}: ${raw.length} raw | max=${maxS.toFixed(3)} min=${minS.toFixed(3)} μ=${mu.toFixed(3)} cutoff=${cutoffVal.toFixed(3)}(${cutoffLabel}) strength=${str} → ${result.length} injected${injectedScores}`);
         healthRows.push({
             character: chatKey, channel: name, provider: cfg.source, model: cfg.model,
             candidates: raw.length, maxScore: maxS, minScore: minS, meanScore: mu,

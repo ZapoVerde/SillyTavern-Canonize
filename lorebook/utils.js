@@ -224,8 +224,8 @@ export function makeLbDraftEntry(uid, name, keys, content) {
  */
 export function toVirtualDoc(name, keys, content) {
     const sortedKeys = [...keys].sort((a, b) => a.localeCompare(b));
-    const keyLines   = sortedKeys.length ? sortedKeys.map(k => `KEY: ${k}`).join('\n') : 'KEY: (none)';
-    return `NAME: ${name}\n${keyLines}\n\n${content}`;
+    const keyLine    = sortedKeys.length ? `KEY: ${sortedKeys.join(', ')}` : 'KEY: (none)';
+    return `NAME: ${name}\n${keyLine}\n\n${content}`;
 }
 
 /**

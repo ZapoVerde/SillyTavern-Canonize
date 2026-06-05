@@ -83,7 +83,7 @@ export function applyLorebookToDraft(rawText, defaultMeceTag) {
         const origNarrative = origEntry ? stripProtectedBlock(origEntry.content ?? '') : '';
         const narrative     = stitchMeceTag(s._aiSnapshot.content.trim(), origNarrative, defaultMeceTag);
 
-        const effectiveKeys = getSettings().lbRagOnly ? [] : s._aiSnapshot.keys;
+        const effectiveKeys = s._aiSnapshot.keys;
 
         if (s.linkedUid !== null) {
             const entry = state._draftLorebook?.entries?.[String(s.linkedUid)];

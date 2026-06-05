@@ -93,6 +93,7 @@ export const PROFILE_DEFAULTS = Object.freeze({
     ragInjectionTemplate:     DEFAULT_RAG_INJECTION_TEMPLATE,
     cnzSummaryTemplate:       DEFAULT_CNZ_SUMMARY_TEMPLATE,
     cnzPlotChunkTemplate:     DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE,
+    ragCutoffMode:            'mean',
     ragEmbeddingSource:       'openrouter',
     ragEmbeddingModel:        '',
     lbRagOnly:                false,
