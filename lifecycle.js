@@ -167,7 +167,7 @@ const EMBED_THRESHOLD = 20;
 let _embedToast = null;
 
 function _onEmbedProgress({ total, done }) {
-    if (total > EMBED_THRESHOLD) {
+    if (total > EMBED_THRESHOLD && done < total) {
         const msg = `CNZ: Embedding ${done}/${total}...`;
         if (_embedToast?.is(':visible')) {
             _embedToast.find('.toast-message').text(msg);
