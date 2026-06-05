@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/core/sync.js
- * @stamp {"utc":"2026-05-31T00:00:00.000Z"}
+ * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
  * @version 1.1.0
  * @architectural-role Orchestrator
  * @description
@@ -39,7 +39,6 @@ import { lbEnsureLorebook, lbGetLorebook } from '../lorebook/api.js';
 import { stripProtectedBlock } from '../lorebook/utils.js';
 import { formatFilteredLorebookEntries } from '../lorebook/tags.js';
 import { runRagPipeline } from '../rag/pipeline.js';
-import { isPluginReachable } from '../rag/plugin-health.js';
 import { cnzDefaultLbName, cnzPlotLbName } from '../rag/api.js';
 import { patchCharacterWorld } from '../modal/commit.js';
 import { state } from '../state.js';
@@ -272,7 +271,6 @@ export async function runCnzSync(char, messages, { coverAll = false } = {}) {
     })();
 
     const ragPromise = (async () => {
-        if (!isPluginReachable()) { log('Rag', 'Lane 3: skipped (plugin unreachable)'); return true; }
         log('Rag', 'Lane 3: starting');
         try {
             await runRagPipeline(anchorUuid);

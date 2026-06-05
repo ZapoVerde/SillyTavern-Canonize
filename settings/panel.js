@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/settings/panel.js
- * @stamp {"utc":"2026-05-22T00:00:00.000Z"}
- * @version 2.0.0
+ * @stamp {"utc":"2026-06-03T21:26:00.000Z"}
+ * @version 2.0.1
  * @architectural-role Orchestrator
  * @description
  * Owns the extension settings panel rendered in the ST extensions drawer.
@@ -29,8 +29,6 @@ import { log, warn, setVerbose } from '../log.js';
 import { bindRagHandlers, updateRagAiControlsVisibility } from './handlers-rag.js';
 import { bindPlotHandlers } from './handlers-plot.js';
 import { bindCoreHandlers } from './handlers-core.js';
-import { getLastHealthResult } from '../rag/plugin-health.js';
-import { triggerSetupFromSettings } from '../core/plugin-setup-orchestrator.js';
 
 // ── Prompt Modal ──────────────────────────────────────────────────────────────
 
@@ -118,9 +116,11 @@ function refreshSettingsUI() {
     $('#cnz-set-embedding-source').val(s.ragEmbeddingSource ?? 'openrouter');
     $('#cnz-set-embedding-model').val(s.ragEmbeddingModel ?? '');
     $('#cnz-set-rag-score-threshold').val(s.ragScoreThreshold ?? 0.25);
+    $('#cnz-set-rag-max-results').val(s.ragInflectionMaxResults ?? 7);
     $('#cnz-set-rag-retrieval-topk').val(s.ragRetrievalTopK ?? 5);
     $('#cnz-set-rag-lb-retrieval-topk').val(s.ragLbRetrievalTopK ?? 3);
     $('#cnz-set-rag-separator').val(s.ragSeparator ?? '%%%');
+    $('#cnz-set-inflection-verbose').prop('checked', s.ragInflectionVerbose ?? false);
 
     $('#cnz-set-plot-retrieval-topk').val(s.ragPlotRetrievalTopK ?? 3);
     $('#cnz-set-plot-recency-count').val(s.ragPlotRecencyCount ?? 3);
@@ -185,15 +185,12 @@ export function injectSettingsPanel() {
     const $parent = $('#extensions_settings');
     if ($parent.length === 0) { warn('Init', 'injectSettingsPanel: #extensions_settings not found in DOM!'); return; }
     const meta         = getMetaSettings();
-    const health       = getLastHealthResult();
-    const pluginLinked = health ? (health.reachable && !health.needsSymlink) : false;
     $parent.append(
-        buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName, meta.verboseLogging ?? false, meta.enableCnz ?? true, pluginLinked),
+        buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName, meta.verboseLogging ?? false, meta.enableCnz ?? true),
     );
     setVerbose(meta.verboseLogging ?? false);
     bindSettingsHandlers();
     refreshProfileDropdown();
     updateRagAiControlsVisibility();
-    $('#cnz-setup-symlink-btn').on('click', () => triggerSetupFromSettings());
     log('Init', 'injectSettingsPanel: Success.');
 }

@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/pipeline.js
- * @stamp {"utc":"2026-05-21T00:00:00.000Z"}
- * @version 2.0.0
+ * @stamp {"utc":"2026-06-04T15:37:00.000Z"}
+ * @version 2.1.0
  * @architectural-role Orchestrator
  * @description
  * RAG classifier dispatch and the full sync-time pipeline. Sequences chunk
@@ -25,7 +25,7 @@
  *     purity: mutates
  *     state_ownership: [state._ragChunks, state._stagedProsePairs,
  *                       state._stagedPairOffset, state._splitPairIdx]
- *     external_io: [generateRaw via cycleStore, /api/plugins/cnz/insert-chunks, bus]
+ *     external_io: [generateRaw via cycleStore, file-store.js, bus]
  */
 
 import { state } from '../state.js';
@@ -33,9 +33,9 @@ import { on, off, BUS_EVENTS } from '../bus.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
 import { buildProsePairs, formatPairsAsTranscript } from '../core/transcript.js';
 import { getSettings } from '../core/settings.js';
-import { cnzAvatarKey } from './api.js';
-import { insertSyncChunks } from './vec-store.js';
-import { warn, error } from '../log.js';
+import { cnzChatKey, cnzGetActiveChatKey } from './api.js';
+import { insertSyncChunks } from './file-store.js';
+import { warn, error }       from '../log.js';
 import { buildRagChunks } from './chunks.js';
 import { hydrateChunkHeadersFromChat } from './chat-labels.js';
 
@@ -158,6 +158,9 @@ export async function runRagPipeline(anchorUuid = null) {
     const settled = state._ragChunks.filter(c => c.status === 'complete' || c.status === 'manual');
     if (!settled.length || !anchorUuid) return;
 
-    const chatFile = SillyTavern.getContext().getCurrentChatFile?.() ?? null;
-    await insertSyncChunks(cnzAvatarKey(char.avatar), anchorUuid, chatFile, state._ragChunks, state._stagedPairOffset);
+    const ctx2     = SillyTavern.getContext();
+    const chatKey  = cnzGetActiveChatKey();
+    if (!chatKey) return;
+    const chatFile = ctx2.chatId ?? ctx2.getCurrentChatId?.() ?? ctx2.characters?.[ctx2.characterId]?.chat ?? null;
+    await insertSyncChunks(chatKey, anchorUuid, chatFile, state._ragChunks, state._stagedPairOffset);
 }

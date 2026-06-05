@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/settings/handlers-core.js
- * @stamp {"utc":"2026-05-25T01:00:00.000Z"}
+ * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
  * @version 1.1.0
  * @architectural-role IO Wrapper
  * @description
@@ -79,6 +79,24 @@ export function bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refres
     $('#cnz-edit-targeted-new-prompt').on('click', () =>
         openPromptModal('targetedNewPrompt', 'Edit Targeted New Entry Prompt',
             DEFAULT_TARGETED_NEW_PROMPT, ['entry_name', 'transcript']));
+
+    $('#cnz-reset-all-prompts').on('click', async function () {
+        const confirmed = await callPopup(
+            '<h3>Reset All Prompts to Default</h3><p>This will discard all custom prompt text and restore the built-in defaults. This cannot be undone.</p>',
+            'confirm',
+        );
+        if (!confirmed) return;
+        const s = getSettings();
+        s.hookseekerPrompt      = null;
+        s.lorebookSyncPrompt    = null;
+        s.peopleSyncPrompt      = null;
+        s.targetedUpdatePrompt  = null;
+        s.targetedNewPrompt     = null;
+        saveSettingsDebounced();
+        updateDirtyIndicator();
+        toastr.success('All prompts reset to defaults.');
+        log('Settings', 'All prompts reset to defaults.');
+    });
 
     // ── Profile management ────────────────────────────────────────────────────
     $('#cnz-profile-select').on('change', function () {

@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/sync-helpers.js
- * @stamp {"utc":"2026-05-27T00:00:00.000Z"}
- * @version 1.1.0
+ * @stamp {"utc":"2026-06-04T16:20:00.000Z"}
+ * @version 1.1.1
  * @architectural-role Orchestrator
  * @description
  * Private helpers for the sync pipeline. Handles lorebook update processing,
@@ -32,9 +32,10 @@
  */
 
 import { log, warn } from '../log.js';
+import { getSettings } from '../settings/data.js';
 import { getStringHash } from '../../../../utils.js';
-import { insertLorebookEntries } from '../rag/vec-store.js';
-import { cnzAvatarKey } from '../rag/api.js';
+import { insertLorebookEntries } from '../rag/file-store-lb.js';
+import { cnzGetActiveChatKey } from '../rag/api.js';
 import { setDnaChain } from '../scheduler.js';
 import { readDnaChain, getLkgAnchor, buildAnchorPayload } from './dna-chain.js';
 import { writeDnaAnchor, writeDnaLinks } from './dna-writer.js';
@@ -82,17 +83,19 @@ export function applyLorebookToDraft(rawText, defaultMeceTag) {
         const origNarrative = origEntry ? stripProtectedBlock(origEntry.content ?? '') : '';
         const narrative     = stitchMeceTag(s._aiSnapshot.content.trim(), origNarrative, defaultMeceTag);
 
+        const effectiveKeys = s._aiSnapshot.keys;
+
         if (s.linkedUid !== null) {
             const entry = state._draftLorebook?.entries?.[String(s.linkedUid)];
             if (entry) {
                 entry.comment = s.name;
-                entry.key     = s._aiSnapshot.keys;
+                entry.key     = effectiveKeys;
                 entry.content = narrative;
             }
         } else {
             const uid = nextLorebookUid();
             state._draftLorebook.entries[String(uid)] = makeLbDraftEntry(
-                uid, s.name, s._aiSnapshot.keys, narrative,
+                uid, s.name, effectiveKeys, narrative,
             );
             s.linkedUid = uid;
         }
@@ -138,7 +141,8 @@ export async function saveLorebookToDisk(anchorUuid, allSuggestions) {
         const char = ctx.characters[ctx.characterId];
         if (char) {
             try {
-                await insertLorebookEntries(cnzAvatarKey(char.avatar), anchorUuid, state._lorebookName, changed);
+                const _chatKey = cnzGetActiveChatKey();
+                if (_chatKey) await insertLorebookEntries(_chatKey, anchorUuid, state._lorebookName, changed);
                 const hashStr = Object.values(state._draftLorebook.entries ?? {})
                     .sort((a, b) => a.uid - b.uid)
                     .map(e => `${e.uid}|${e.comment ?? ''}|${(e.key ?? []).join(',')}|${stripProtectedBlock(e.content ?? '')}`)
@@ -226,13 +230,14 @@ export function processSceneUpdate(sceneText) {
  * @returns {Promise<{ uid: number, content: string, keys: string[], comment: string }[]>}
  *   The written entries with UIDs assigned — store these in the anchor payload.
  */
-export async function appendAndIndexPlotEntries(entries, anchorUuid, avatarFilename, plotLbName) {
+export async function appendAndIndexPlotEntries(entries, anchorUuid, _avatarFilename, plotLbName) {
     if (!entries.length) return [];
     await ensurePlotLorebook(plotLbName);
     const written = await appendPlotEntries(plotLbName, entries);
     if (!written.length) return [];
     try {
-        await insertLorebookEntries(cnzAvatarKey(avatarFilename), anchorUuid, plotLbName, written);
+        const _chatKey = cnzGetActiveChatKey();
+        if (_chatKey) await insertLorebookEntries(_chatKey, anchorUuid, plotLbName, written);
     } catch (err) {
         warn('PlotLb', 'RAG indexing of plot entries failed:', err);
     }

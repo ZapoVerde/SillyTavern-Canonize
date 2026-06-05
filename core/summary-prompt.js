@@ -21,7 +21,7 @@
  */
 
 import { promptManager } from '../../../../../scripts/openai.js';
-import { CNZ_SUMMARY_ID, CNZ_RAG_ID } from '../state.js';
+import { CNZ_SUMMARY_ID, CNZ_RAG_ID, CNZ_LB_ID } from '../state.js';
 import { buildCnzSummaryContent, DEFAULT_CNZ_SUMMARY_TEMPLATE } from '../defaults.js';
 import { getSettings } from '../settings/data.js';
 
@@ -183,6 +183,40 @@ export function appendCnzPlotArcs(arcsText) {
     const tmpl       = getSettings()?.cnzSummaryTemplate || DEFAULT_CNZ_SUMMARY_TEMPLATE;
     prompt.cnz_plot  = arcsText ?? '';
     prompt.content   = buildCnzSummaryContent(prompt.cnz_scene ?? '', prompt.cnz_plot, tmpl);
+    pm.saveServiceSettings();
+}
+
+// ─── CNZ LB Prompt Management ─────────────────────────────────────────────────
+
+function ensureCnzLbPrompt(pm) {
+    if (pm.getPromptById(CNZ_LB_ID)) return;
+    pm.addPrompt({ name: 'CNZ World Info', content: '', role: 'system', enabled: true }, CNZ_LB_ID);
+    const order          = pm.getPromptOrderForCharacter(pm.activeCharacter);
+    const chatHistoryIdx = order.findIndex(e => e.identifier === 'chatHistory');
+    if (chatHistoryIdx !== -1) {
+        order.splice(chatHistoryIdx, 0, { identifier: CNZ_LB_ID, enabled: true });
+    } else {
+        order.push({ identifier: CNZ_LB_ID, enabled: true });
+    }
+    pm.saveServiceSettings();
+}
+
+export function writeCnzLbPrompt(content) {
+    const pm = getCnzPromptManager();
+    if (!pm) return;
+    ensureCnzLbPrompt(pm);
+    const prompt = pm.getPromptById(CNZ_LB_ID);
+    if (!prompt) return;
+    prompt.content = content;
+    pm.saveServiceSettings();
+}
+
+export function clearCnzLbPrompt() {
+    const pm = getCnzPromptManager();
+    if (!pm) return;
+    const prompt = pm.getPromptById(CNZ_LB_ID);
+    if (!prompt) return;
+    prompt.content = '';
     pm.saveServiceSettings();
 }
 

@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/chat-labels.js
- * @stamp {"utc":"2026-05-21T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role IO Wrapper
  * @description
  * All RAG-related DOM and chat-message IO. Injects chunk labels into the chat
@@ -13,6 +13,7 @@
  * renderSeparator(chunk)
  * renderChunkChatLabel(chunkIndex)
  * renderAllChunkChatLabels()
+ * renderChunkLabelsFromChat()
  * clearChunkChatLabels()
  * writeChunkHeaderToChat(chunkIndex)
  * hydrateChunkHeadersFromChat()
@@ -94,6 +95,31 @@ export function renderChunkChatLabel(chunkIndex) {
 export function renderAllChunkChatLabels() {
     for (let i = 0; i < state._ragChunks.length; i++) {
         renderChunkChatLabel(i);
+    }
+}
+
+/**
+ * Renders chunk labels for all messages that carry persisted cnz_chunk_header
+ * stamps. Works without staging state — reads directly from ctx.chat.
+ * Called by the session lifecycle on chat load so labels survive page reloads.
+ */
+export function renderChunkLabelsFromChat() {
+    const ctx  = SillyTavern.getContext();
+    const chat = ctx?.chat ?? [];
+    for (let i = 0; i < chat.length; i++) {
+        const msg    = chat[i];
+        const header = msg?.extra?.cnz_chunk_header;
+        if (!header) continue;
+        const $msgDiv = $(`div[mesid="${i}"]`);
+        if (!$msgDiv.length) continue;
+        $msgDiv.find('.cnz-chunk-label').remove();
+        const label     = msg.extra?.cnz_turn_label ?? '';
+        const turnRange = label.replace(/^[%*]+\s*Memory:\s*/i, '').trim() || label;
+        const bodyText  = turnRange ? `${turnRange}: ${header}` : header;
+        const $label = $('<div class="cnz-chunk-label"></div>');
+        $label.append($('<span class="cnz-chunk-label-prefix">◆ CANONIZE </span>'));
+        $label.append($('<span>').text(bodyText));
+        $msgDiv.find('div.mes_text').after($label);
     }
 }
 

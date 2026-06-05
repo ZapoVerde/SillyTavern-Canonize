@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/generation-hook.js
- * @stamp {"utc":"2026-05-23T00:00:00.000Z"}
- * @version 2.4.0
+ * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @version 2.5.1
  * @architectural-role IO Wrapper
  * @description
  * Prefetch-optimised RAG retrieval lifecycle. Owns the prefetch promise,
@@ -28,15 +28,15 @@
 
 import { state }             from '../state.js';
 import { getSettings }       from '../core/settings.js';
-import { isPluginReachable } from './plugin-health.js';
 import { doRagFetch }        from './rag-fetch.js';
-import { insertLorebookEntries } from './vec-store.js';
-import { cnzAvatarKey }      from './api.js';
+import { insertLorebookEntries, purgeStaleLorebookEntries } from './file-store-lb.js';
+import { cnzGetActiveChatKey } from './api.js';
 import { getStringHash }     from '../../../../utils.js';
 import { stripProtectedBlock } from '../lorebook/utils.js';
 import { log, error }        from '../log.js';
 import { eventSource, event_types } from '../../../../../script.js';
-import { writeCnzRagPrompt, clearCnzRagPrompt, appendCnzPlotArcs } from '../core/summary-prompt.js';
+import { writeCnzRagPrompt, clearCnzRagPrompt, appendCnzPlotArcs,
+         writeCnzLbPrompt, clearCnzLbPrompt } from '../core/summary-prompt.js';
 import { lbGetLorebook } from '../lorebook/api.js';
 import { DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE } from '../defaults.js';
 
@@ -147,11 +147,11 @@ export function resetRagState() {
     _swipeCache      = null;
     _timing          = null;
     clearCnzRagPrompt();
+    clearCnzLbPrompt();
 }
 
 export function prefetchRag() {
     const settings = getSettings();
-    if (!isPluginReachable()) return;
     const chain = state._dnaChain;
     if (!chain || chain.anchors.length === 0) return;
     const ctx      = SillyTavern.getContext();
@@ -184,10 +184,6 @@ export function prefetchRag() {
 export async function onGenerationStarted() {
     const ctx      = SillyTavern.getContext();
     const settings = getSettings();
-    if (!isPluginReachable()) {
-        clearCnzRagPrompt();
-        return;
-    }
     const chain = state._dnaChain;
     if (!chain || chain.anchors.length === 0) {
         clearCnzRagPrompt();
@@ -219,7 +215,11 @@ export async function onGenerationStarted() {
                         .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
                     try {
                         window.loggeryze?.time('CNZ JIT re-index [blocking]');
-                        await insertLorebookEntries(cnzAvatarKey(char?.avatar ?? ''), lkgUuid, state._lorebookName, entries);
+                        const _chatKey  = cnzGetActiveChatKey();
+                        if (_chatKey) {
+                            await purgeStaleLorebookEntries(_chatKey, lkgUuid, entries);
+                            await insertLorebookEntries(_chatKey, lkgUuid, state._lorebookName, entries);
+                        }
                         window.loggeryze?.timeEnd('CNZ JIT re-index [blocking]');
                         state._lastIndexedLorebookHash = currentHash;
                     } catch (err) {
@@ -292,7 +292,7 @@ export async function onGenerationStarted() {
     // kick off the next embed so it runs during streaming and the following swipe
     // finds a prefetch already in flight instead of starting cold.
     if (wasColdFetch && result) {
-        const wCtx      = SillyTavern.getContext();
+        const wCtx = SillyTavern.getContext();
         const wMessages = wCtx.chat ?? [];
         if (wMessages.length) {
             log('RagHook', `warm-ahead prefetch started (chatLen=${wMessages.length})`);
@@ -323,15 +323,40 @@ export async function onGenerationStarted() {
     const lbActivate   = plotLbName ? result.toActivate.filter(a => a.world !== plotLbName) : result.toActivate;
     const plotActivate = plotLbName ? result.toActivate.filter(a => a.world === plotLbName) : [];
 
-    if (lbActivate.length) {
-        log('RagHook', `Semantic LB activation: ${lbActivate.length} entries`);
-        try {
-            window.loggeryze?.time('CNZ LB activate [blocking]');
-            await eventSource.emit(event_types.WORLDINFO_FORCE_ACTIVATE, lbActivate);
-            window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
-        } catch (err) {
-            window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
-            error('RagHook', 'Lorebook semantic activation failed:', err);
+    if (settings.lbRagOnly ?? false) {
+        // ── Direct injection path (lorebook detached from character) ──────────
+        const lbEntries = lbActivate
+            .map(a => state._draftLorebook?.entries?.[String(a.uid)])
+            .filter(Boolean);
+        if (lbEntries.length) {
+            const blocks = lbEntries.map(e => {
+                const tag   = (e.comment ?? '').replace(/\s+/g, '_');
+                const keys  = (e.key?.length ? e.key : e.extensions?.cnz_keys ?? []);
+                const alias = keys.length ? `(${keys.join(', ')})\n` : '';
+                return `<${tag}>\n${alias}${e.content ?? ''}\n</${tag}>`;
+            }).join('\n\n');
+            log('RagHook', `LB direct inject: ${lbEntries.length} entries`);
+            writeCnzLbPrompt(`The following are relevant world info entries:\n\n${blocks}`);
+        } else {
+            clearCnzLbPrompt();
+        }
+    } else {
+        // ── WI pipeline path (lorebook attached, Structurize formats entries) ─
+        clearCnzLbPrompt();
+        if (lbActivate.length) {
+            const lbEnriched = lbActivate.map(a => {
+                const entry = state._draftLorebook?.entries?.[String(a.uid)];
+                return entry ? { ...entry, world: a.world } : a;
+            });
+            log('RagHook', `Semantic LB activation: ${lbEnriched.length} entries`);
+            try {
+                window.loggeryze?.time('CNZ LB activate [blocking]');
+                await eventSource.emit(event_types.WORLDINFO_FORCE_ACTIVATE, lbEnriched);
+                window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
+            } catch (err) {
+                window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
+                error('RagHook', 'LB WI activation failed:', err);
+            }
         }
     }
 
@@ -339,7 +364,8 @@ export async function onGenerationStarted() {
         try {
             if (plotActivate.length) {
                 const lb      = await lbGetLorebook(plotLbName);
-                const entries = plotActivate.map(a => lb.entries?.[String(a.uid)]).filter(Boolean);
+                const entries = plotActivate.map(a => lb.entries?.[String(a.uid)]).filter(Boolean)
+                    .sort((a, b) => a.uid - b.uid);
                 appendCnzPlotArcs(entries.length ? _formatPlotArcs(entries, settings.cnzPlotChunkTemplate) : '');
                 if (entries.length) log('RagHook', `Plot arcs injected: ${plotActivate.length} entries`);
             } else {

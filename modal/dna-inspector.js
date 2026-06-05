@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/modal/dna-inspector.js
- * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
- * @version 1.1.0
+ * @stamp {"utc":"2026-06-04T15:35:00.000Z"}
+ * @version 1.2.0
  * @architectural-role IO Wrapper
  * @description
  * Opens, populates, and closes the DNA Chain Inspector modal. Reads the DNA
@@ -16,13 +16,14 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: [none]
- *     external_io: [DOM, /api/plugins/cnz/health]
+ *     external_io:     [DOM, file-store.js]
  */
 
 import { escapeHtml } from '../state.js';
 import { readDnaChain } from '../core/dna-chain.js';
 import { warn } from '../log.js';
-import { anchorStats } from '../rag/vec-store.js';
+import { anchorStats } from '../rag/file-store.js';
+import { cnzGetActiveChatKey } from '../rag/api.js';
 
 function closeDnaChainInspector() {
     $('#cnz-li-overlay').addClass('cnz-hidden');
@@ -65,8 +66,9 @@ export async function openDnaChainInspector() {
     if (chain.anchors.length === 0) {
         $body.append('<div class="cnz-li-rag-row"><span class="cnz-li-rag-name cnz-li-status-muted">No syncs committed yet.</span></div>');
     } else {
+        const chatKey   = cnzGetActiveChatKey();
         const statsList = await Promise.all(
-            chain.anchors.map(({ anchor }) => anchorStats(anchor.uuid).catch(err => {
+            chain.anchors.map(({ anchor }) => anchorStats(chatKey, anchor.uuid).catch(err => {
                 warn('DnaInspector', 'DB stats failed for', anchor.uuid, err);
                 return null;
             }))

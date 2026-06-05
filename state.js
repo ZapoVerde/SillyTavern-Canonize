@@ -47,6 +47,7 @@ import {
 export const EXT_NAME       = 'cnz';
 export const CNZ_SUMMARY_ID = 'cnz_summary';
 export const CNZ_RAG_ID     = 'cnz_rag';
+export const CNZ_LB_ID      = 'cnz_lb';
 
 /**
  * Profile-level configuration keys — saved per profile, loaded into activeState.
@@ -84,11 +85,18 @@ export const PROFILE_DEFAULTS = Object.freeze({
     ragPlotFillerStrategy:    'random',
     maxConcurrentCalls:       3,
     ragScoreThreshold:        0.25,
+    ragInflectionEnabled:           true,
+    ragInflectionMinScore:          0.15,
+    ragInflectionMaxResults:        7,
+    ragInflectionOverfetchMultiplier: 4,
+    ragInflectionVerbose:           false,
     ragInjectionTemplate:     DEFAULT_RAG_INJECTION_TEMPLATE,
     cnzSummaryTemplate:       DEFAULT_CNZ_SUMMARY_TEMPLATE,
     cnzPlotChunkTemplate:     DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE,
+    ragCutoffMode:            'mean',
     ragEmbeddingSource:       'openrouter',
     ragEmbeddingModel:        '',
+    lbRagOnly:                false,
     ragClassifierPrompt:      DEFAULT_RAG_CLASSIFIER_PROMPT,
     targetedUpdatePrompt:     DEFAULT_TARGETED_UPDATE_PROMPT,
     targetedNewPrompt:        DEFAULT_TARGETED_NEW_PROMPT,

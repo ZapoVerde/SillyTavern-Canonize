@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/healer.js
- * @stamp {"utc":"2026-05-22T00:00:00.000Z"}
- * @version 2.1.0
+ * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @version 2.2.3
  * @architectural-role Orchestrator
  * @description
  * Branch detection and state restoration. Walks the DNA chain to find the
@@ -27,22 +27,27 @@
  *     state_ownership: [state._dnaChain, state._lorebookName]
  *     external_io: [callPopup, toastr, lorebook via healer-restore.js,
  *                   healer-restore.js, scheduler.setDnaChain,
- *                   /api/plugins/cnz/health, /api/plugins/cnz/insert-chunks]
+ *                   file-store.js, file-store-lb.js]
  */
 
-import { callPopup } from '../../../../../script.js';
-import { getStringHash } from '../../../../utils.js';
+import { callPopup, getCurrentChatId } from '../../../../../script.js';
 import { state } from '../state.js';
-import { readDnaChain, findLkgAnchorByPosition, buildNodeFileFromAnchor } from './dna-chain.js';
+import { readDnaChain, findLkgAnchorByPosition, buildNodeFileFromAnchor, buildAnchorChunkMap } from './dna-chain.js';
 import { setDnaChain } from '../scheduler.js';
 import { lbGetLorebook } from '../lorebook/api.js';
-import { error, log } from '../log.js';
+import { error, log, warn } from '../log.js';
 import { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
-import { getSettings } from './settings.js';
-import { buildProsePairs, formatPairsAsTranscript } from './transcript.js';
-import { anchorChunkCount, insertSyncChunks, insertLorebookEntries } from '../rag/vec-store.js';
-import { cnzAvatarKey, cnzPlotLbName } from '../rag/api.js';
+import { buildProsePairs } from './transcript.js';
+import { getStringHash } from '../../../../utils.js';
+import { embedCfg, reportEmbedUsage } from '../rag/embed-client.js';
+import { embedBatch } from '../rag/embed-direct.js';
+import { encodeVec } from '../rag/vec-math.js';
+import { insertSyncChunks, listAnchorUuids, deleteAnchor } from '../rag/file-store.js';
+import { cnzChatKey, cnzPlotLbName, cnzGetActiveChatKey } from '../rag/api.js';
+import { getAnchor, getLbVecMap, loadChatStore, flushChatStore, invalidateVecCache } from '../rag/chat-store.js';
 import { rebuildPlotLorebook } from '../lorebook/plot-lorebook.js';
+import { lbSetCharacterLorebook } from '../lorebook/api.js';
+import { getSettings } from './settings.js';
 
 // Re-export restore ops — callers that import from healer.js keep working.
 export { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
@@ -55,7 +60,7 @@ export { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
  * the lorebook write is idempotent and insertLorebookEntries uses upsert.
  * No-op if the chain carries no plot entries.
  */
-async function _reconcilePlotLorebook(char, chain) {
+export async function reconcilePlotLorebook(char, chain, chatKey) {
     const anchors = chain?.anchors ?? [];
     const anchorChunks = anchors
         .map(ref => ({ uuid: ref.anchor.uuid, entries: ref.anchor.plotEntries ?? [] }))
@@ -73,15 +78,39 @@ async function _reconcilePlotLorebook(char, chain) {
         return;
     }
 
-    const avatarKey = cnzAvatarKey(char.avatar);
+    if (!chatKey || chatKey === 'null' || chatKey === 'undefined') return;
+
+    // ── Batch: collect all entries needing vectors across all anchors ──────────
+    const store    = await loadChatStore(chatKey);
+    const toEmbed  = [];
+
     for (const { uuid, entries } of anchorChunks) {
-        try {
-            await insertLorebookEntries(avatarKey, uuid, plotLbName, entries);
-        } catch (err) {
-            error('Healer', `Plot entry vectorization failed (anchor ${uuid}):`, err);
+        const anchor = store.anchors[uuid] ?? { chunks: [], vecChunks: { content: {}, header: {} }, lbEntries: [], vecLb: { content: {} }, plotHistory: {} };
+        store.anchors[uuid] = anchor;
+        const vecMap = await getLbVecMap(chatKey, uuid);
+        const seen   = new Set(anchor.lbEntries.filter(e => vecMap.has(e.hash)).map(e => e.hash));
+        for (const e of entries.filter(e => !e.disable && e.content?.trim())) {
+            const hash = getStringHash(e.content);
+            if (!seen.has(hash))
+                toEmbed.push({ uuid, hash, uid: e.uid, content: e.content, keys: e.key ?? [] });
         }
     }
-    log('Healer', 'Plot entry vectorization complete');
+
+    if (toEmbed.length) {
+        const cfg        = embedCfg();
+        const totalChars = toEmbed.reduce((s, t) => s + t.content.length, 0);
+        const vecs       = await embedBatch(toEmbed.map(t => t.content), cfg, false);
+        reportEmbedUsage(totalChars, cfg.model);
+
+        for (const [i, t] of toEmbed.entries()) {
+            const anchor = store.anchors[t.uuid];
+            anchor.lbEntries.push({ hash: t.hash, anchorUuid: t.uuid, lorebookName: plotLbName, entryUid: t.uid, entryKeys: t.keys, content: t.content });
+            anchor.vecLb.content[t.hash] = encodeVec(vecs[i]);
+            invalidateVecCache(chatKey, t.uuid);
+        }
+        await flushChatStore(chatKey, store);
+    }
+    log('Healer', `Plot entry vectorization complete: ${toEmbed.length} entries`);
 }
 
 // ─── RAG Auto-Reconciliation ──────────────────────────────────────────────────
@@ -89,68 +118,89 @@ async function _reconcilePlotLorebook(char, chain) {
 /**
  * Silently rebuilds the vector DB from cnz_chunk_header stamps already written
  * to chat messages, when RAG is enabled but the DB is empty for this character.
- * No-ops if the plugin is unreachable or no stamps are found.
+ * No-ops if no stamps are found.
  */
-async function _reconcileRagChunks(char, headAnchor) {
-
+async function _reconcileRagChunks(char, headAnchor, chatKey) {
+    if (!chatKey || chatKey === 'null' || chatKey === 'undefined') return;
     try {
-        const avatarKey = cnzAvatarKey(char.avatar);
-        const counts    = await anchorChunkCount(avatarKey, headAnchor.uuid);
+        const ctx        = SillyTavern.getContext();
+        const allPairs   = buildProsePairs(ctx.chat ?? []);
+        const chatFile   = ctx.chatId ?? getCurrentChatId() ?? ctx.characters?.[ctx.characterId]?.chat ?? null;
+        const validUuids = new Set(state._dnaChain.anchors.map(r => r.anchor.uuid));
 
-        // ── Chat chunks ───────────────────────────────────────────────────────
-        if ((counts.chunksForCharacter ?? 0) === 0) {
-            log('Healer', 'RAG DB empty — rebuilding chat chunks from stamps');
-
-            const ctx      = SillyTavern.getContext();
-            const allPairs = buildProsePairs(ctx.chat ?? []);
-            const chatFile = ctx.getCurrentChatFile?.() ?? null;
-            const chunks   = [];
-            let prevEnd    = 0;
-
-            for (let i = 0; i < allPairs.length; i++) {
-                const pair    = allPairs[i];
-                const lastMsg = pair?.messages?.[pair.messages.length - 1];
-                if (!lastMsg?.extra?.cnz_chunk_header) continue;
-                const content = formatPairsAsTranscript(allPairs.slice(prevEnd, i + 1));
-                chunks.push({
-                    chunkIndex: chunks.length,
-                    header:     lastMsg.extra.cnz_chunk_header,
-                    turnRange:  lastMsg.extra.cnz_turn_label?.replace(/^\*+\s*Memory:\s*/i, '') ?? `Pairs ${prevEnd + 1}–${i + 1}`,
-                    content,
-                    pairStart:  prevEnd,
-                    pairEnd:    i + 1,
-                    status:     'complete',
-                });
-                prevEnd = i + 1;
-            }
-
-            if (chunks.length) {
-                await insertSyncChunks(avatarKey, headAnchor.uuid, chatFile, chunks, 0);
-                log('Healer', `RAG auto-reconcile: indexed ${chunks.length} chat chunks`);
-                toastr.info(`CNZ: Auto-indexed ${chunks.length} chunks from chat history.`);
+        // ── 1. Purge anchors in store but not in chain ────────────────────────
+        const storedUuids = await listAnchorUuids(chatKey);
+        for (const uuid of storedUuids) {
+            if (!validUuids.has(uuid)) {
+                await deleteAnchor(chatKey, uuid);
+                log('Healer', `RAG reconcile: purged orphan anchor ${uuid.slice(0, 8)}`);
             }
         }
 
-        // ── Lorebook entries ──────────────────────────────────────────────────
-        const lbSnapshot = headAnchor.lorebook ?? {};
-        const lbName     = lbSnapshot.name ?? char?.data?.extensions?.world ?? char?.name;
-        const rawEntries = Object.values(lbSnapshot.entries ?? {});
-        const entries    = rawEntries
-            .filter(e => e.disable !== true && e.content?.trim())
-            .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
+        // ── 2. Rebuild any anchor where expected chunk hashes are missing or unvectored
+        // Full hash comparison: derive content from stamps → hash → check vs store+vecs.
+        const byAnchor = buildAnchorChunkMap(state._dnaChain, allPairs, headAnchor.uuid);
 
-        if (entries.length && lbName) {
-            const knownHashes = new Set(counts.lbHashesForAnchor ?? []);
-            const missing     = entries.filter(e => !knownHashes.has(getStringHash(e.content)));
-            if (missing.length) {
-                log('Healer', `Indexing ${missing.length}/${entries.length} lorebook entries for "${lbName}"`);
-                await insertLorebookEntries(avatarKey, headAnchor.uuid, lbName, missing);
-                log('Healer', `Lorebook entries indexed`);
-                toastr.info(`CNZ: Auto-indexed ${missing.length} lorebook entries for "${lbName}".`);
+        let rebuilt = 0;
+        for (const [uuid, chunks] of byAnchor) {
+            if (!validUuids.has(uuid)) continue;
+            const anchor         = await getAnchor(chatKey, uuid);
+            const vecKeys        = new Set(Object.keys(anchor?.vecChunks?.content ?? {}));
+            const storedWithVec  = new Set((anchor?.chunks ?? []).filter(c => vecKeys.has(String(c.hash))).map(c => String(c.hash)));
+            const expectedHashes = chunks.map(c => String(getStringHash(c.content)));
+            if (expectedHashes.length > 0 && expectedHashes.every(h => storedWithVec.has(h))) continue;
+            const { inserted } = await insertSyncChunks(chatKey, uuid, chatFile, chunks, 0);
+            rebuilt += inserted;
+        }
+        if (rebuilt > 0) {
+            log('Healer', `RAG reconcile: rebuilt ${rebuilt} chunks`);
+            toastr.info(`CNZ: Auto-indexed ${rebuilt} chunks from chat history.`);
+        }
+
+        // ── 3. Lorebook entries — full check across all anchors ───────────────
+        // Collect every lb entry missing a vector, then embed in one batch.
+        const store      = await loadChatStore(chatKey);
+        const toEmbedLb  = [];
+
+        for (const { anchor } of state._dnaChain.anchors) {
+            if (!validUuids.has(anchor.uuid)) continue;
+            const lbSnapshot = anchor.lorebook ?? {};
+            const lbName     = lbSnapshot.name ?? char?.data?.extensions?.world ?? char?.name;
+            if (!lbName) continue;
+            const entries = Object.values(lbSnapshot.entries ?? {})
+                .filter(e => e.disable !== true && e.content?.trim());
+            if (!entries.length) continue;
+
+            const anchorData = store.anchors[anchor.uuid] ??
+                { chunks: [], vecChunks: { content: {}, header: {} }, lbEntries: [], vecLb: { content: {} }, plotHistory: {} };
+            store.anchors[anchor.uuid] = anchorData;
+            const vecMap     = await getLbVecMap(chatKey, anchor.uuid);
+            const seenHashes = new Set(anchorData.lbEntries.filter(e => vecMap.has(e.hash)).map(e => e.hash));
+
+            for (const e of entries) {
+                const hash = getStringHash(e.content);
+                if (!seenHashes.has(hash))
+                    toEmbedLb.push({ uuid: anchor.uuid, lbName, hash, uid: e.uid, content: e.content, keys: e.key ?? [] });
             }
         }
+
+        if (toEmbedLb.length) {
+            const cfg  = embedCfg();
+            const vecs = await embedBatch(toEmbedLb.map(t => t.content), cfg, false);
+            reportEmbedUsage(toEmbedLb.reduce((s, t) => s + t.content.length, 0), cfg.model);
+            for (const [i, t] of toEmbedLb.entries()) {
+                const anchorData = store.anchors[t.uuid];
+                anchorData.lbEntries.push({ hash: t.hash, anchorUuid: t.uuid, lorebookName: t.lbName, entryUid: t.uid, entryKeys: t.keys, content: t.content });
+                anchorData.vecLb.content[t.hash] = encodeVec(vecs[i]);
+                invalidateVecCache(chatKey, t.uuid);
+            }
+            flushChatStore(chatKey, store);
+            log('Healer', `RAG reconcile: indexed ${toEmbedLb.length} lorebook entries across all anchors`);
+            toastr.info(`CNZ: Auto-indexed ${toEmbedLb.length} lorebook entries.`);
+        }
+
     } catch (err) {
-        error('Healer', 'RAG auto-reconcile failed:', err);
+        error('Healer', 'RAG reconcile failed:', err);
     }
 }
 
@@ -163,7 +213,7 @@ async function _reconcileRagChunks(char, headAnchor) {
  * @param {object} char        Current character object from context.
  * @param {object} headAnchor  The head CnzAnchor from the DNA chain.
  */
-async function reconcileWorldState(char, headAnchor) {
+async function reconcileWorldState(char, headAnchor, chatKey) {
     let lorebookStale = false;
     const lorebookName = char?.data?.extensions?.world || char?.name;
     if (lorebookName) {
@@ -187,8 +237,8 @@ async function reconcileWorldState(char, headAnchor) {
         }
     }
 
-    await _reconcileRagChunks(char, headAnchor);
-    await _reconcilePlotLorebook(char, state._dnaChain);
+    await _reconcileRagChunks(char, headAnchor, chatKey);
+    await reconcilePlotLorebook(char, state._dnaChain, chatKey);
 }
 
 // ─── New Chat Guard ───────────────────────────────────────────────────────────
@@ -210,6 +260,18 @@ async function maybePromptLorebookCleanup(char) {
     await runNewChatCleanup(char);
 }
 
+// ─── Chat Summary ─────────────────────────────────────────────────────────────
+
+function _logChatSummary(messages, chain) {
+    const anchorCount = chain.anchors.length;
+    const chunkCount  = messages.filter(m => m?.extra?.cnz_chunk_header).length;
+    const plotCount   = chain.anchors.reduce((n, r) => n + (r.anchor.plotEntries?.length ?? 0), 0);
+    const lkgIdx      = chain.lkgMsgIdx ?? -1;
+    const tail        = lkgIdx >= 0 ? messages.slice(lkgIdx + 1) : messages;
+    const uncommitted = tail.filter(m => !m.is_system && m.is_user).length;
+    log('Healer', `Chat: ${anchorCount} anchor(s) | ${chunkCount} chunk header(s) | ${plotCount} plot entr(ies) | ${uncommitted} uncommitted pair(s) since last anchor`);
+}
+
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
 /**
@@ -222,14 +284,15 @@ async function maybePromptLorebookCleanup(char) {
  *   - Restoration failure → toastr.error.
  *
  * @param {object} char           Current character object from context.
- * @param {string} _chatFileName  Kept for call-site signature parity; unused.
+ * @param {string} chatFileName  ST chat filename — used to derive the per-chat store key.
  */
-export async function runHealer(char, _chatFileName) {
+export async function runHealer(char, chatFileName) {
     const context  = SillyTavern.getContext();
     const messages = context.chat ?? [];
 
     state._dnaChain = readDnaChain(messages);
     setDnaChain(state._dnaChain);
+    _logChatSummary(messages, state._dnaChain);
 
     if (state._dnaChain.anchors.length === 0) {
         await maybePromptLorebookCleanup(char);
@@ -242,7 +305,25 @@ export async function runHealer(char, _chatFileName) {
     if (messages[headRef.msgIdx]?.extra?.cnz?.uuid === headRef.anchor.uuid) {
         state._lorebookName     = headRef.anchor.lorebook?.name || char?.data?.extensions?.world || char?.name || '';
         state._plotLorebookName = headRef.anchor.plotLorebookName ?? cnzPlotLbName(char.avatar);
-        await reconcileWorldState(char, headRef.anchor);
+
+        // Sync lorebook attachment to match bypass setting.
+        if (state._lorebookName) {
+            const bypass = getSettings().lbRagOnly ?? false;
+            const current = char?.data?.extensions?.world ?? '';
+            const want    = bypass ? '' : state._lorebookName;
+            if (current !== want) {
+                lbSetCharacterLorebook(want).catch(err =>
+                    warn('Healer', 'Could not sync lorebook attachment:', err));
+            }
+        }
+        const activeChatKey     = cnzChatKey(chatFileName) ?? cnzGetActiveChatKey();
+
+        if (!activeChatKey || activeChatKey === 'null' || activeChatKey === 'undefined') {
+            warn('Healer', 'runHealer: activeChatKey resolved to null/empty — skipping reconciliation');
+            return;
+        }
+
+        await reconcileWorldState(char, headRef.anchor, activeChatKey);
         return;
     }
 

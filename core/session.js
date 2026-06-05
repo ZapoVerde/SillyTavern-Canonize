@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/session.js
- * @stamp {"utc":"2026-05-23T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @version 1.2.3
  * @architectural-role Orchestrator
  * @description
  * Session lifecycle management. Owns state reset on character switch and the
@@ -19,13 +19,14 @@
  *     external_io: [ST context, healer, scheduler, DNA chain]
  */
 
+import { getCurrentChatId } from '../../../../../script.js';
 import { log, error } from '../log.js';
 import { invalidateAllJobs } from '../cycleStore.js';
 import { resetScheduler, setDnaChain } from '../scheduler.js';
 import { readDnaChain } from './dna-chain.js';
 import { syncCnzSummaryOnCharacterSwitch } from './summary-prompt.js';
 import { runHealer } from './healer.js';
-import { clearChunkChatLabels } from '../rag/chat-labels.js';
+import { clearChunkChatLabels, renderChunkLabelsFromChat } from '../rag/chat-labels.js';
 import { resetRagState } from '../rag/generation-hook.js';
 import { checkOrphans } from './orphans.js';
 import { state } from '../state.js';
@@ -61,24 +62,32 @@ export function onChatChanged() {
         return;
     }
 
-    const char         = context.characters[context.characterId];
-    const chatFileName = char?.chat ?? null;
+    let char = context.characters?.[context.characterId];
+    if (!char && context.characters && context.characterId != null) {
+        char = context.characters.find(c => c.avatar === context.characterId || c.name === context.characterId);
+    }
 
-    if (!char || char.avatar !== state._lastKnownAvatar) {
-        state._lastKnownAvatar = char?.avatar ?? null;
+    if (!char) {
+        state._lastKnownAvatar = null;
+        return;
+    }
+
+    const chatFileName = context.chatId ?? getCurrentChatId() ?? char.chat ?? null;
+
+    if (char.avatar !== state._lastKnownAvatar) {
+        state._lastKnownAvatar = char.avatar;
         resetSessionState();
         const chatMessages = SillyTavern.getContext().chat ?? [];
         state._dnaChain = readDnaChain(chatMessages);
         setDnaChain(state._dnaChain);
         syncCnzSummaryOnCharacterSwitch(char, state._dnaChain);
-        if (char) {
-            runHealer(char, char.chat).catch(err =>
-                error('Sync', 'onChatChanged: healer failed:', err),
-            );
-            checkOrphans().catch(err =>
-                error('Sync', 'checkOrphans failed:', err),
-            );
-        }
+        runHealer(char, chatFileName).catch(err =>
+            error('Sync', 'onChatChanged: healer failed:', err),
+        );
+        checkOrphans().catch(err =>
+            error('Sync', 'checkOrphans failed:', err),
+        );
+        renderChunkLabelsFromChat();
         return;
     }
 
@@ -87,4 +96,5 @@ export function onChatChanged() {
             error('Sync', 'runHealer uncaught error:', err),
         );
     }
+    renderChunkLabelsFromChat();
 }

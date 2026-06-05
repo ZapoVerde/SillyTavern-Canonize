@@ -1,9 +1,3 @@
-Here is the completely updated and restructured `README.md`. 
-
-The beginning has been rewritten to establish the three core pillars of the extension—**Operational Economy**, **High Prompt Adherence**, and **Clutter-Free Semantic Context**—as the primary selling points, while integrating the new **People Curator** features and detailed configuration guide in the appendices.
-
-***
-
 # Canonize
 
 This documentation introduces you to the Canonize narrative engine, explaining its core purposes, features, installation, and underlying mechanics in clear, plain language.
@@ -36,44 +30,24 @@ Instead of forcing the model to read exhaustive, chronological history, Canonize
 *   **Dynamic World Knowledge Retrieval:** The extension automatically extracts new facts, character descriptions, and locations as they are introduced in the story. It saves these details directly into standard SillyTavern lorebooks, ensuring they are only retrieved when relevant keywords are used in the active chat.
 *   **Archived Conversation Memory (RAG):** Older conversation blocks are sliced, summarized, and indexed in a searchable background database. When you send a message, the system searches this database for semantically relevant past events (such as an emotional conversation that happened 200 messages ago) and feeds those specific memories back to the AI just in time.
 *   **Timeline Recovery and Branch Guard:** If you decide to swipe to a different response, delete messages, or switch between different chats, the extension automatically detects the change. It rolls back your summary, lorebook state, and background memory to match that exact moment in time, preventing your database from being corrupted by abandoned plot paths.
-*   **Clean, Complete Deactivation:** If you decide to turn the extension off, a single master switch halts all background schedulers, disconnects active database streams, removes the control buttons from your user interface, and purges all custom prompts from the AI's execution list, leaving your chat environment entirely pristine.
+*   **Clean, Complete Deactivation:** If you decide to turn the extension off, a single master switch halts all background schedulers, removes the control buttons from your user interface, and purges all custom prompts from the AI's execution list, leaving your chat environment entirely pristine.
 
 ---
 
 ### How to Install
 
-Canonize has two parts: a browser extension and a server plugin. **Both must be installed.** The extension alone will not work.
+Canonize is a standard SillyTavern extension with no server plugin and no npm install. The Narrative Memory (RAG) system calls your configured embedding provider directly from the browser, which requires one configuration change in SillyTavern before installing.
 
-#### Part 1 — Install the Extension
+**Prerequisites**
+
+*   Open `config.yaml` in your SillyTavern data directory and set `allowKeysExposure: true`. This allows Canonize to read your stored API key at call time so it can reach the embedding provider directly. The key is never stored or forwarded by Canonize itself.
+*   Restart SillyTavern after editing `config.yaml`.
+
+**Installation**
 
 1.  **Open Extensions Menu:** Open your SillyTavern interface, click the Extensions icon (the puzzle piece), and select the option to install an extension from a URL.
 2.  **Provide the Link:** Paste the web address of this repository into the input field and click the install button.
-
-#### Part 2 — Install the Server Plugin (Required)
-
-The Narrative Memory (RAG) system requires a server-side plugin to manage the embedded vector database. This plugin ships inside the extension but **must be copied manually into SillyTavern's plugin directory.**
-
-3.  **Locate the plugin files:** After the extension installs, find the `plugin` subfolder inside the Canonize extension directory:
-    ```
-    [ST extensions folder]/SillyTavern-Canonize/plugin/
-    ```
-4.  **Copy the plugin to ST's plugin directory:** Copy the entire contents of that `plugin/` folder into a new folder named `cnz` inside your SillyTavern `plugins/` directory:
-    ```
-    [ST plugins folder]/cnz/
-    ```
-    When done, the folder should contain: `index.js`, `embed.js`, `routes.js`, `db.js`, `rrf.js`, and `package.json`.
-
-    **Docker users:** your ST plugins folder is the `st-plugins/` directory in your Canonize workspace (mounted as `/home/node/app/plugins` in the container). Create `st-plugins/cnz/` and copy the files there.
-
-5.  **Install plugin dependencies:** Inside the `cnz` plugin folder, run:
-    ```
-    npm install
-    ```
-6.  **Restart SillyTavern:** The plugin only loads at server startup. Restart ST completely (not just a browser refresh).
-
-#### Part 3 — Verify
-
-7.  **Refresh Your Browser:** After ST restarts, reload your browser page. You will see a new book-shaped sync icon appear in your chat toolbar and a new configuration panel inside your extensions drawer. If the plugin is not installed or unreachable, RAG will be silently skipped rather than erroring.
+3.  **Refresh Your Browser:** After installation, reload your browser page. You will see a new book-shaped sync icon appear in your chat toolbar and a new configuration panel inside your extensions drawer.
 
 ---
 
@@ -168,9 +142,10 @@ Canonize supports multiple setting profiles (e.g., a "Low Cost" profile for chea
 #### 4. Connections & Prompts
 *   **Summary Connection Profile:** Select a specific Connection Manager profile to run background summarization and lorebook syncs. This allows you to offload background tasks to a cheaper model, leaving your main chat model unburdened. Leaving this blank defaults to your currently selected chat model.
 *   **Edit Prompts:** Opens a prompt editor for your *Summary*, *Lorebook*, *People*, and *Targeted* prompts.
+*   **Reset All Prompts to Default:** Discards all custom prompt text and restores the built-in defaults for every prompt in this section.
 
 #### 5. Narrative Memory (RAG) Settings
-RAG is always active when the server plugin is reachable. No enable toggle is required.
+RAG is always active when Canonize is enabled. No separate toggle is required.
 
 *   **RAG Contents:**
     *   *Summary + Full Content:* Retrieves the AI's summarized header of an event plus the actual dialogue. Recommended.
@@ -179,15 +154,31 @@ RAG is always active when the server plugin is reachable. No enable toggle is re
 *   **RAG Connection Profile:** The model profile used specifically for chunk classification.
 *   **Chunk Size (pairs):** How many turn-pairs are compressed into each RAG archive block. Default is `2`.
 *   **Chunk Overlap:** Adds overlapping turn-pairs between adjacent chunks to ensure transition scenes aren't cut in half.
-*   **Simultaneous Calls:** The maximum number of background AI classification calls allowed to run at once. 
-*   **Embedding Source / Model:** Select the provider (OpenRouter, OpenAI, local Ollama, etc.) and model name used to calculate semantic search vectors.
+*   **Simultaneous Calls:** The maximum number of background AI classification calls allowed to run at once.
+*   **Embedding Source / Model:** Select the provider (OpenRouter, OpenAI, Voyage AI, local Ollama, etc.) and model name used to generate embedding vectors. Canonize calls this provider directly using your stored API key.
+
+**Retrieval Tuning**
+
+Canonize uses a distributional cutoff rather than a fixed result count. On each turn it computes the cosine similarity of all stored vectors against the current query, checks whether the score distribution has meaningful spread (signal strength test), and returns everything above the mean — clamped to the bounds you set.
+
+*   **Signal Strength Threshold:** Minimum normalised spread `(max − min) / max` required before the mean cutoff runs. If the scores are too clustered (weak signal), only the minimum number of results is returned. Default `0.35`.
+*   **Chat Min / Max:** Floor and ceiling for the number of narrative memory chunks injected per turn.
+*   **LB Min / Max:** Floor and ceiling for the number of lorebook entries activated via semantic search per turn.
+*   **Plot Min / Max:** Floor and ceiling for plot lorebook arc entries retrieved per turn.
 
 #### 6. Admin and Utilities
-*   **Setup Symlink / Plugin Linked:** Links the SillyTavern plugin folder to the extension's folder so updates happen automatically. 
 *   **Verbose Logging:** Outputs detailed background execution logs to your browser console.
 *   **Inspect Chain:** Opens the **DNA Chain Inspector** to view your save-state timeline.
-*   **Rebuild RAG:** Scans your chat history and re-indexes all historical chunks into the vector database. Useful if your local database was cleared or corrupted.
-*   **Purge RAG:** Clears the vector database for the active character.
+*   **Rebuild RAG:** Re-embeds all stored chunks and lorebook entries for the active chat, rebuilding the cache from scratch. Use this after switching embedding providers or models, or if the cache file is missing or corrupt. Does not affect your chat history.
+*   **Purge RAG:** Deletes all RAG data for the active chat, including vectors and chunk metadata. The cache will be rebuilt automatically by the healer on next load.
+
+**RAG Cache File**
+
+To avoid re-embedding the same content on every session, Canonize writes a cache file named `cnz_store_<chatname>.json` to your SillyTavern user files directory. One file is created per chat. These files are disposable — if deleted, Canonize will silently rebuild them from your chat history on next load at the cost of one embedding pass. You can safely delete them to reclaim disk space or to force a clean re-index.
+
+**Health Telemetry**
+
+Each generation turn appends one row per retrieval channel to `cnz_rag_health.csv` in your SillyTavern user files directory. Columns include the embedding provider and model, candidate count, max/min/mean cosine scores, signal strength, slope, whether the signal test passed, items returned, and whether the result ceiling was hit. Open this file in any spreadsheet application to inspect retrieval quality over time.
 
 ---
 

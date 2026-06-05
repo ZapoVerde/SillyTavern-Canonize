@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/index.js
- * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
- * @version 1.4.0
+ * @stamp {"utc":"2026-06-03T21:00:00.000Z"}
+ * @version 1.4.1
  * @architectural-role Orchestrator
  * @description
  * SillyTavern Narrative Engine (CNZ) — extension entry point.
@@ -32,7 +32,6 @@ import { runCnzSync } from './core/sync.js';
 import { writeChunkHeaderToChat, renderChunkChatLabel } from './rag/chat-labels.js';
 import { onGenerationStarted } from './rag/generation-hook.js';
 import { injectModal } from './modal/modal-setup.js';
-import { runPluginSetup } from './core/plugin-setup-orchestrator.js';
 import { renderRagCard } from './modal/rag-workshop.js';
 import { injectSettingsPanel } from './settings/panel.js';
 import { initLifecycle } from './lifecycle.js';
@@ -44,8 +43,6 @@ async function init() {
     try {
         initSettings();
         log('Init', 'Settings initialized.');
-        await runPluginSetup();
-        log('Init', 'Plugin setup checked.');
         initSceneTracker();
         log('Init', 'Scene tracker initialized.');
         initScheduler(Triggers, getSettings);
@@ -127,6 +124,28 @@ async function init() {
             if (!getMetaSettings().enableCnz) return;
             if (type !== 'quiet') {
                 await onGenerationStarted().catch(err => error('RagHook', err));
+
+                if (Array.isArray(chat)) {
+                    const settings = getSettings();
+                    const lcb = settings.liveContextBuffer ?? 5;
+                    const userMsgs = chat.filter(m => !m.is_system && m.is_user);
+                    if (userMsgs.length > lcb) {
+                        const firstKeepUser = userMsgs[userMsgs.length - lcb];
+                        const cutoffIndex = chat.indexOf(firstKeepUser);
+                        if (cutoffIndex > 0) {
+                            const kept = [];
+                            for (let i = 0; i < chat.length; i++) {
+                                const msg = chat[i];
+                                if (i >= cutoffIndex || msg.is_system) {
+                                    kept.push(msg);
+                                }
+                            }
+                            chat.length = 0;
+                            chat.push(...kept);
+                            log('Prune', `Pruned history. Restricted active window to last ${lcb} pairs.`);
+                        }
+                    }
+                }
             }
         };
 

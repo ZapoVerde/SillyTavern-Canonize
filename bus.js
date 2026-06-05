@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/bus.js
- * @stamp {"utc":"2026-05-24T00:00:00.000Z"}
+ * @stamp {"utc":"2026-06-03T00:00:00.000Z"}
  * @version 1.1.0
  * @architectural-role Stateful Owner
  * @description
@@ -78,4 +78,5 @@ export const BUS_EVENTS = Object.freeze({
     MODAL_OPENED:           'MODAL_OPENED',            // { }
     CORRECTION_SUBMITTED:   'CORRECTION_SUBMITTED',    // { cycleId, corrections }
     DNA_WRITE_REQUESTED:    'DNA_WRITE_REQUESTED',     // { cycleId, payload }
+    EMBED_PROGRESS:         'EMBED_PROGRESS',          // { total: number, done: number }
 });

@@ -1,16 +1,17 @@
 /**
  * @file data/default-user/extensions/canonize/rag/api.js
- * @stamp {"utc":"2026-03-25T00:00:00.000Z"}
- * @version 1.0.16
+ * @stamp {"utc":"2026-06-04T16:55:00.000Z"}
+ * @version 1.2.5
  * @architectural-role IO Wrapper
  * @description
  * Thin HTTP wrapper around the ST Data Bank file endpoints plus character
  * attachment registration. Covers file upload, file delete, character attachment
- * list/register, and the filename generation utilities (cnzFileName, cnzAvatarKey).
+ * list/register, and the filename generation utilities (cnzFileName, cnzAvatarKey,
+ * cnzChatKey, cnzGetActiveChatKey, cnzDefaultLbName, cnzPlotLbName).
  *
  * @api-declaration
  * uploadRagFile, cnzDeleteFile, registerCharacterAttachment,
- * getCharacterAttachments, cnzFileName, cnzAvatarKey, cnzDefaultLbName
+ * getCharacterAttachments, cnzFileName, cnzAvatarKey, cnzChatKey, cnzGetActiveChatKey, cnzDefaultLbName, cnzPlotLbName
  *
  * @contract
  *   assertions:
@@ -19,9 +20,10 @@
  *     external_io: [/api/files/upload, /api/files/delete]
  */
 
-import { getRequestHeaders, saveSettingsDebounced } from '../../../../../script.js';
+import { getRequestHeaders, saveSettingsDebounced, getCurrentChatId } from '../../../../../script.js';
 import { extension_settings } from '../../../../extensions.js';
 import { getMetaSettings } from '../core/settings.js';
+import { log } from '../log.js';
 
 // ─── File Primitives ──────────────────────────────────────────────────────────
 
@@ -51,7 +53,7 @@ export async function uploadRagFile(text, fileName) {
         body:    JSON.stringify({ name: safeName, data: utf8ToBase64(text) }),
     });
     if (!res.ok) {
-        const errorText = await res.text();
+        const errorText = await res.text().catch(() => res.statusText);
         throw new Error(`RAG file upload failed (HTTP ${res.status}): ${errorText}`);
     }
     const json = await res.json();
@@ -101,6 +103,45 @@ export function getCharacterAttachments(avatarKey) {
  */
 export function cnzAvatarKey(avatarFilename) {
     return avatarFilename.replace(/[^a-zA-Z0-9_\-]/g, '_');
+}
+
+/**
+ * Converts an ST chat filename to a safe CNZ chat key used as the per-chat
+ * RAG store file key. Same sanitization as cnzAvatarKey.
+ * e.g. "Hero - 2026-06-04@03:39:18.jsonl" → "Hero_-_2026-06-04_03_39_18_jsonl"
+ * @param {string} chatFilename  Raw chat filename from ctx.getCurrentChatFile().
+ * @returns {string|null}
+ */
+export function cnzChatKey(chatFilename) {
+    if (!chatFilename || chatFilename === 'null' || chatFilename === 'undefined') return null;
+    const cleanName = chatFilename.replace(/\.jsonl?$/i, '');
+    return cleanName.replace(/[^a-zA-Z0-9_\-]/g, '_');
+}
+
+/**
+ * Retrieves and sanitizes the active chat's unique file key directly from SillyTavern context.
+ * Centralizes the lookup to prevent API method mismatch errors across modules.
+ * @returns {string|null} Sanitized chat key, or null if no active chat can be determined.
+ */
+export function cnzGetActiveChatKey() {
+    const ctx = SillyTavern.getContext();
+    if (!ctx) return null;
+
+    let fallbackChat = null;
+    if (ctx.characterId != null && ctx.characters) {
+        let char = ctx.characters[ctx.characterId];
+        if (!char) {
+            char = ctx.characters.find(c => c.avatar === ctx.characterId || c.name === ctx.characterId);
+        }
+        if (char) {
+            fallbackChat = char.chat;
+        }
+    }
+
+    log('Api', `Resolving active chat key: context.chatId=${ctx.chatId}, getCurrentChatId=${getCurrentChatId()}, resolved character.chat=${fallbackChat}, characterId=${ctx.characterId} (${typeof ctx.characterId})`);
+
+    const rawId = ctx.chatId ?? getCurrentChatId() ?? fallbackChat ?? null;
+    return cnzChatKey(rawId);
 }
 
 /**
