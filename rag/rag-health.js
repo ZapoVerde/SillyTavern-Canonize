@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/rag/rag-health.js
- * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @stamp {"utc":"2026-06-06T00:00:00.000Z"}
  * @architectural-role IO Wrapper — RAG health telemetry CSV writer
  * @description
  * Appends one row per channel per turn to cnz_rag_health.csv. The CSV is loaded
@@ -18,8 +18,6 @@
  *   min_score     — lowest cosine in candidate set
  *   mean_score    — μ (the mean cutoff threshold)
  *   slope         — (max - min) / candidates — average drop per rank
- *   signal_str    — (max - min) / max — normalised spread
- *   signal_pass   — whether signal_str ≥ threshold (mean cutoff ran)
  *   returned      — items after cutoff
  *   clamped       — true if returned === max (ceiling hit; consider raising max)
  *
@@ -38,7 +36,7 @@ import { readRawFile, writeRawFile } from './file-io.js';
 import { log, error } from '../log.js';
 
 const FILE    = 'cnz_rag_health.csv';
-const HEADER  = 'timestamp,character,channel,provider,model,candidates,max_score,min_score,mean_score,slope,signal_str,signal_pass,returned,clamped';
+const HEADER  = 'timestamp,character,channel,provider,model,candidates,max_score,min_score,mean_score,slope,returned,clamped';
 
 // In-memory line buffer. Null until first write initialises from disk.
 let _lines = null;
@@ -59,17 +57,16 @@ function _fmt(n) { return Number.isFinite(n) ? n.toFixed(4) : ''; }
 
 /**
  * @typedef {{
- *   character:    string,
- *   channel:      'chat'|'lb'|'plot',
- *   provider:     string,
- *   model:        string,
- *   candidates:   number,
- *   maxScore:     number,
- *   minScore:     number,
- *   meanScore:    number,
- *   signalThresh: number,
- *   returned:     number,
- *   max:          number,
+ *   character:  string,
+ *   channel:    'chat'|'lb'|'plot',
+ *   provider:   string,
+ *   model:      string,
+ *   candidates: number,
+ *   maxScore:   number,
+ *   minScore:   number,
+ *   meanScore:  number,
+ *   returned:   number,
+ *   max:        number,
  * }} HealthRow
  */
 
@@ -88,11 +85,9 @@ export async function appendHealthRows(rows) {
         const ts = new Date().toISOString();
 
         for (const r of active) {
-            const slope       = r.candidates > 0 ? (r.maxScore - r.minScore) / r.candidates : 0;
-            const signalStr   = r.maxScore > 0 ? (r.maxScore - r.minScore) / r.maxScore : 0;
-            const signalPass  = signalStr >= r.signalThresh;
-            const clamped     = r.returned === r.max && r.candidates > r.max;
-            const char        = r.character.slice(0, 24).replace(/,/g, '_');
+            const slope   = r.candidates > 0 ? (r.maxScore - r.minScore) / r.candidates : 0;
+            const clamped = r.returned === r.max && r.candidates > r.max;
+            const char    = r.character.slice(0, 24).replace(/,/g, '_');
 
             _lines.push([
                 ts,
@@ -105,8 +100,6 @@ export async function appendHealthRows(rows) {
                 _fmt(r.minScore),
                 _fmt(r.meanScore),
                 _fmt(slope),
-                _fmt(signalStr),
-                signalPass,
                 r.returned,
                 clamped,
             ].join(','));

@@ -97,6 +97,7 @@ export const PROFILE_DEFAULTS = Object.freeze({
     ragEmbeddingSource:       'openrouter',
     ragEmbeddingModel:        '',
     lbRagOnly:                false,
+    ragFtsUnicode:            false,
     ragClassifierPrompt:      DEFAULT_RAG_CLASSIFIER_PROMPT,
     targetedUpdatePrompt:     DEFAULT_TARGETED_UPDATE_PROMPT,
     targetedNewPrompt:        DEFAULT_TARGETED_NEW_PROMPT,

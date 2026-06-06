@@ -27,6 +27,7 @@ import { escapeHtml } from '../state.js';
 import { getSettings, getMetaSettings } from './data.js';
 import { log, warn, setVerbose } from '../log.js';
 import { bindRagHandlers, updateRagAiControlsVisibility } from './handlers-rag.js';
+import { configureFts } from '../rag/fts.js';
 import { bindPlotHandlers } from './handlers-plot.js';
 import { bindCoreHandlers } from './handlers-core.js';
 
@@ -121,6 +122,8 @@ function refreshSettingsUI() {
     $('#cnz-set-rag-lb-retrieval-topk').val(s.ragLbRetrievalTopK ?? 3);
     $('#cnz-set-rag-separator').val(s.ragSeparator ?? '%%%');
     $('#cnz-set-inflection-verbose').prop('checked', s.ragInflectionVerbose ?? false);
+    $('#cnz-set-rag-fts-unicode').prop('checked', s.ragFtsUnicode ?? false);
+    configureFts({ unicodeMode: s.ragFtsUnicode ?? false });
 
     $('#cnz-set-plot-retrieval-topk').val(s.ragPlotRetrievalTopK ?? 3);
     $('#cnz-set-plot-recency-count').val(s.ragPlotRecencyCount ?? 3);

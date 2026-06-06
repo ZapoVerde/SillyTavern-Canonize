@@ -40,8 +40,9 @@ Canonize is a standard SillyTavern extension with no server plugin and no npm in
 
 **Prerequisites**
 
-*   Open `config.yaml` in your SillyTavern data directory and set `allowKeysExposure: true`. This allows Canonize to read your stored API key at call time so it can reach the embedding provider directly. The key is never stored or forwarded by Canonize itself.
-*   Restart SillyTavern after editing `config.yaml`.
+*   **Cloud embedding providers only:** If you are using a cloud embedding provider (OpenAI, OpenRouter, Voyage AI, etc.), open `config.yaml` in your SillyTavern data directory and set `allowKeysExposure: true`, then restart SillyTavern. If you are using a local provider (Ollama, llama.cpp, vllm), skip this step — no key is involved.
+
+    This setting is required because Canonize calls the embedding API directly from your browser rather than through SillyTavern's built-in vector proxy. The direct call is necessary to receive similarity scores, which Canonize uses to filter results by relevance. SillyTavern's proxy returns only ranked results without scores, so it cannot be used here. There is an [open issue](https://github.com/SillyTavern/SillyTavern/issues/5729) to expose scores through the proxy; once that ships, this requirement will be removed. The key is read from SillyTavern's own secret store at call time and is used solely for embedding requests — your LLM API key is never touched. Canonize does not store or forward keys.
 
 **Installation**
 
@@ -159,12 +160,12 @@ RAG is always active when Canonize is enabled. No separate toggle is required.
 
 **Retrieval Tuning**
 
-Canonize uses a distributional cutoff rather than a fixed result count. On each turn it computes the cosine similarity of all stored vectors against the current query, checks whether the score distribution has meaningful spread (signal strength test), and returns everything above the mean — clamped to the bounds you set.
+Canonize uses a distributional cutoff rather than a fixed result count. On each turn it computes the cosine similarity of all stored vectors against the current query and returns everything above the mean — clamped to the bounds you set. If nothing clears the threshold, at least the minimum number of results is returned.
 
-*   **Signal Strength Threshold:** Minimum normalised spread `(max − min) / max` required before the mean cutoff runs. If the scores are too clustered (weak signal), only the minimum number of results is returned. Default `0.35`.
 *   **Chat Min / Max:** Floor and ceiling for the number of narrative memory chunks injected per turn.
 *   **LB Min / Max:** Floor and ceiling for the number of lorebook entries activated via semantic search per turn.
 *   **Plot Min / Max:** Floor and ceiling for plot lorebook arc entries retrieved per turn.
+*   **Unicode FTS:** By default, keyword matching strips non-ASCII characters, optimizing for English. Enable this if you roleplay in a non-Latin language (French, German, Russian, etc.) so that text is preserved correctly in the keyword index. The semantic embedding lane is unaffected by this setting.
 
 #### 6. Admin and Utilities
 *   **Verbose Logging:** Outputs detailed background execution logs to your browser console.
@@ -178,7 +179,7 @@ To avoid re-embedding the same content on every session, Canonize writes a cache
 
 **Health Telemetry**
 
-Each generation turn appends one row per retrieval channel to `cnz_rag_health.csv` in your SillyTavern user files directory. Columns include the embedding provider and model, candidate count, max/min/mean cosine scores, signal strength, slope, whether the signal test passed, items returned, and whether the result ceiling was hit. Open this file in any spreadsheet application to inspect retrieval quality over time.
+Each generation turn appends one row per retrieval channel to `cnz_rag_health.csv` in your SillyTavern user files directory. Columns include the embedding provider and model, candidate count, max/min/mean cosine scores, slope, items returned, and whether the result ceiling was hit. Open this file in any spreadsheet application to inspect retrieval quality over time.
 
 ---
 

@@ -1,12 +1,12 @@
 /**
  * @file data/default-user/extensions/canonize/settings/html-rag.js
- * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @stamp {"utc":"2026-06-06T00:00:00.000Z"}
  * @architectural-role Pure Functions
  * @description
  * Builds the HTML for the RAG area of the CNZ settings panel: two collapsible
  * sections — RAG Summarization (AI classification) and RAG Storage & Retrieval
  * (embedding + retrieval). Retrieval controls reflect the distributional cutoff
- * strategy: signal strength (global) and per-channel min/max.
+ * strategy: cutoff mode and per-channel min/max.
  *
  * @api-declaration
  * buildRagSectionHTML(s, escapeHtml) → string
@@ -122,7 +122,7 @@ export function buildRagSectionHTML(s, escapeHtml) {
                 <b style="text-decoration:underline">How does memory retrieval work?</b>
               </div>
               <div id="cnz-inflection-explainer-body" class="cnz-hidden" style="margin-bottom:12px;padding:8px 12px;border-left:2px solid var(--SmartThemeBlurTintColor, #5c85d6);background:rgba(255,255,255,0.015);font-size:0.82rem;line-height:1.45;color:var(--cnz-text-muted, #888);">
-                Rather than using a fixed number of results or an absolute quality threshold, Canonize evaluates the score distribution returned by each search. It first checks whether the results have meaningful spread — if everything scores similarly, there is no real signal and only the minimum is returned. When spread exists, it takes everything above the distribution mean and clamps to your configured min and max. This makes retrieval adapt automatically to the query and the state of the database, without manual tuning as your story grows.
+                Rather than using a fixed number of results or an absolute quality threshold, Canonize evaluates the score distribution returned by each search. It takes everything above the distribution mean (or mean + std dev, depending on your cutoff mode) and clamps to your configured min and max. If nothing passes the threshold, at least the minimum number of results is returned. This makes retrieval adapt automatically to the query and the state of the database, without manual tuning as your story grows.
               </div>
 
               <div class="cnz-settings-inline-row">
@@ -161,11 +161,14 @@ export function buildRagSectionHTML(s, escapeHtml) {
                 </div>
               </div>
 
-              <!-- Retrieval controls -->
-              <div class="cnz-settings-inline-row">
-                <label for="cnz-set-rag-signal-strength">Signal Strength ${tip('Minimum score spread required before the distribution is trusted. If max and min scores are too close together, there is no meaningful signal and only the minimum results are returned. Lower = more permissive. Higher = stricter.')}</label>
-                <input id="cnz-set-rag-signal-strength" type="number" min="0" max="1" step="0.01" value="${escapeHtml(String(s.ragSignalStrength ?? 0.35))}">
+              <div class="cnz-settings-row">
+                <label class="cnz-checkbox-label">
+                  <input type="checkbox" id="cnz-set-rag-fts-unicode" ${(s.ragFtsUnicode ?? false) ? 'checked' : ''}>
+                  <span>Unicode FTS ${tip('FTS keyword matching strips non-ASCII characters by default, optimizing for English. Enable this to preserve Unicode text for non-Latin languages (French, German, Russian, etc.).')}</span>
+                </label>
               </div>
+
+              <!-- Retrieval controls -->
               <div class="cnz-settings-inline-row">
                 <label for="cnz-set-rag-cutoff-mode">Cutoff Mode ${tip('Score threshold used when filtering candidates. Mean keeps everything above the average. Higher modes (mean + std dev) are stricter — fewer results, higher confidence.')}</label>
                 <select id="cnz-set-rag-cutoff-mode" class="cnz-select cnz-settings-select-sm">

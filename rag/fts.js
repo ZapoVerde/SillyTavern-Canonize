@@ -11,7 +11,12 @@
  * Tokenisation applies lowercase normalisation, a small English stop-word list,
  * and a simple suffix stemmer (removes -s, -ing, -ed, -er, -ly).
  *
+ * Unicode mode (configureFts) disables ASCII stripping so non-Latin scripts
+ * are preserved in the index. The stop-word list and stemmer remain English-only
+ * but are harmless for other languages — they simply never match.
+ *
  * @api-declaration
+ * configureFts({ unicodeMode })                  → void  (module config)
  * buildFtsIndex(chunks)                          → FtsIndex
  * addChunkToIndex(index, chunk, chunkIdx)        → void  (mutates index)
  * queryFts(index, chunks, queryText, validUuids, topK) → ScoredChunk[]
@@ -22,9 +27,18 @@
  *   assertions:
  *     purity:          pure (buildFtsIndex, queryFts, serialise, deserialise)
  *                      mutates index only (addChunkToIndex)
- *     state_ownership: [none]
+ *     state_ownership: [_unicodeMode — module-level config flag]
  *     external_io:     [none]
  */
+
+// ── Module config ─────────────────────────────────────────────────────────────
+
+let _unicodeMode = false;
+
+/** @param {{ unicodeMode: boolean }} cfg */
+export function configureFts({ unicodeMode }) {
+    _unicodeMode = !!unicodeMode;
+}
 
 // ── Tokenisation ──────────────────────────────────────────────────────────────
 
@@ -54,11 +68,11 @@ function _stem(word) {
 
 function _tokenise(text) {
     if (!text) return [];
-    return text.toLowerCase()
-        .replace(/[^a-z0-9\s]/g, ' ')
-        .split(/\s+/)
-        .filter(t => t.length >= 2 && !STOP_WORDS.has(t))
-        .map(_stem);
+    const lower = text.toLowerCase();
+    const tokens = _unicodeMode
+        ? lower.split(/[\s\p{P}]+/u)
+        : lower.replace(/[^a-z0-9\s]/g, ' ').split(/\s+/);
+    return tokens.filter(t => t.length >= 2 && !STOP_WORDS.has(t)).map(_stem);
 }
 
 // ── Index structure ───────────────────────────────────────────────────────────

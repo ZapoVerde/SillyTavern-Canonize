@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/settings/handlers-rag.js
- * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
+ * @stamp {"utc":"2026-06-06T00:00:00.000Z"}
  * @version 1.1.0
  * @architectural-role IO Wrapper
  * @description
@@ -20,6 +20,7 @@
 
 import { saveSettingsDebounced } from '../../../../../script.js';
 import { state } from '../state.js';
+import { configureFts } from '../rag/fts.js';
 import { DEFAULT_RAG_CLASSIFIER_PROMPT, DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 import { getSettings } from './data.js';
 import { bindEmbedHandlers } from './handlers-rag-embed.js';
@@ -94,11 +95,6 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
     });
 
     // ── Retrieval settings ────────────────────────────────────────────────────
-    $('#cnz-set-rag-signal-strength').on('input', function () {
-        const val = parseFloat($(this).val());
-        if (!isNaN(val)) { getSettings().ragSignalStrength = Math.min(1, Math.max(0, val)); saveSettingsDebounced(); updateDirtyIndicator(); }
-    });
-
     $('#cnz-set-rag-cutoff-mode').on('change', function () {
         getSettings().ragCutoffMode = $(this).val();
         saveSettingsDebounced(); updateDirtyIndicator();
@@ -122,6 +118,14 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
     $('#cnz-set-rag-lb-max').on('input', function () {
         const val = parseInt($(this).val(), 10);
         if (!isNaN(val) && val >= 1) { getSettings().ragLbMax = val; saveSettingsDebounced(); updateDirtyIndicator(); }
+    });
+
+    // ── Unicode FTS ───────────────────────────────────────────────────────────
+    $('#cnz-set-rag-fts-unicode').on('change', function () {
+        const unicodeMode = $(this).prop('checked');
+        getSettings().ragFtsUnicode = unicodeMode;
+        configureFts({ unicodeMode });
+        saveSettingsDebounced(); updateDirtyIndicator();
     });
 
     // ── LB RAG-only mode ──────────────────────────────────────────────────────
