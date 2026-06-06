@@ -167,6 +167,7 @@ Canonize uses a distributional cutoff rather than a fixed result count. On each 
 *   **Chat Min / Max:** Floor and ceiling for the number of narrative memory chunks injected per turn.
 *   **LB Min / Max:** Floor and ceiling for the number of lorebook entries activated via semantic search per turn.
 *   **Plot Min / Max:** Floor and ceiling for plot lorebook arc entries retrieved per turn.
+*   **Recent cards per arc / Recent cards per filler arc:** For every retrieved arc, the oldest card (the one that opened the arc) is always injected. These settings control how many *additional* cards are drawn from the recent end of that arc. Set to `0` to get the origin card only; set to `3` to get the origin plus up to three most recent. For a single-card arc the value has no effect.
 *   **Unicode FTS:** By default, keyword matching strips non-ASCII characters, optimizing for English. Enable this if you roleplay in a non-Latin language (French, German, Russian, etc.) so that text is preserved correctly in the keyword index. The semantic embedding lane is unaffected by this setting.
 
 #### 6. Admin and Utilities

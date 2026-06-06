@@ -31,8 +31,8 @@ export function buildPlotSectionHTML(s, escapeHtml) {
                 <input id="cnz-set-plot-retrieval-topk" type="number" min="0" max="10" step="1" value="${escapeHtml(String(s.ragPlotRetrievalTopK ?? 3))}">
               </div>
               <div class="cnz-settings-inline-row">
-                <label for="cnz-set-plot-recency-count">Cards per semantic arc ${tip('How many of the most recent entries to include for each semantically matched arc.')}</label>
-                <input id="cnz-set-plot-recency-count" type="number" min="1" max="10" step="1" value="${escapeHtml(String(s.ragPlotRecencyCount ?? 3))}">
+                <label for="cnz-set-plot-recency-count">Recent cards per arc ${tip('Additional cards pulled from the end of each semantically matched arc. The first (oldest) card is always included regardless. Set to 0 for first-card-only.')}</label>
+                <input id="cnz-set-plot-recency-count" type="number" min="0" max="10" step="1" value="${escapeHtml(String(s.ragPlotRecencyCount ?? 3))}">
               </div>
 
               <div class="cnz-settings-inline-row">
@@ -58,8 +58,8 @@ export function buildPlotSectionHTML(s, escapeHtml) {
 
               <div id="cnz-plot-filler-body" class="${fillerEnabled ? '' : 'cnz-disabled'}">
                 <div class="cnz-settings-inline-row">
-                  <label for="cnz-set-plot-filler-cards">Cards per filler arc ${tip('How many recent entries to include per filler arc. Keep low — fillers are background context.')}</label>
-                  <input id="cnz-set-plot-filler-cards" type="number" min="1" max="5" step="1" value="${escapeHtml(String(s.ragPlotFillerCards ?? 1))}">
+                  <label for="cnz-set-plot-filler-cards">Recent cards per filler arc ${tip('Additional recent cards per filler arc. The first card is always included. Set to 0 for first-card-only.')}</label>
+                  <input id="cnz-set-plot-filler-cards" type="number" min="0" max="5" step="1" value="${escapeHtml(String(s.ragPlotFillerCards ?? 1))}">
                 </div>
                 <div class="cnz-settings-inline-row">
                   <label for="cnz-set-plot-filler-strategy">Filler selection ${tip('How to pick which arcs fill the gap.')}</label>

@@ -163,10 +163,15 @@ export async function queryRecentPlotEntries(chatKey, lorebookName, validAnchorU
         const rows = pool.filter(e => uids.includes(e.entryUid));
         return [...new Set(rows.flatMap(e => (e.content.match(/#\w+/g) ?? [])))];
     };
-    const recentByTag = (tag, count) =>
-        pool.filter(e => e.content.includes(tag))
-            .sort((a, b) => b.entryUid - a.entryUid)
-            .slice(0, count).map(e => e.entryUid);
+    const recentByTag = (tag, count) => {
+        const sorted = pool.filter(e => e.content.includes(tag))
+            .sort((a, b) => b.entryUid - a.entryUid); // newest first
+        if (!sorted.length) return [];
+        const recent   = sorted.slice(0, count).map(e => e.entryUid);
+        const firstUid = sorted[sorted.length - 1].entryUid;
+        if (!recent.includes(firstUid)) recent.push(firstUid);
+        return recent;
+    };
 
     const seen   = new Set(semanticUids.map(Number));
     const result = [];

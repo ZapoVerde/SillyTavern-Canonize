@@ -27,7 +27,7 @@ export function bindPlotHandlers({ updateDirtyIndicator, openPromptModal }) {
     });
 
     $('#cnz-set-plot-recency-count').on('input', function () {
-        getSettings().ragPlotRecencyCount = Math.max(1, parseInt($(this).val()) || 3);
+        getSettings().ragPlotRecencyCount = Math.max(0, parseInt($(this).val()) || 0);
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
@@ -43,7 +43,7 @@ export function bindPlotHandlers({ updateDirtyIndicator, openPromptModal }) {
     });
 
     $('#cnz-set-plot-filler-cards').on('input', function () {
-        getSettings().ragPlotFillerCards = Math.max(1, parseInt($(this).val()) || 1);
+        getSettings().ragPlotFillerCards = Math.max(0, parseInt($(this).val()) || 0);
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
