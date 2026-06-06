@@ -1,5 +1,7 @@
 # Canonize
 
+**[Unreleased]**
+
 This documentation introduces you to the Canonize narrative engine, explaining its core purposes, features, installation, and underlying mechanics in clear, plain language.
 
 ---
@@ -36,7 +38,7 @@ Instead of forcing the model to read exhaustive, chronological history, Canonize
 
 ### How to Install
 
-Canonize is a standard SillyTavern extension with no server plugin and no npm install. The Narrative Memory (RAG) system calls your configured embedding provider directly from the browser, which requires one configuration change in SillyTavern before installing.
+Canonize is a standard SillyTavern extension. The Narrative Memory (RAG) system calls your configured embedding provider directly from the browser, which requires one configuration change in SillyTavern before installing.
 
 **Prerequisites**
 
