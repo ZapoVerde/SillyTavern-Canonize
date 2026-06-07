@@ -147,7 +147,15 @@ export async function doRagFetch(ctx, settings, chain, signal) {
         const trailing = BAR_WIDTH - barLen;
         const total    = Math.round(score * 1000);
         const kw       = Math.round(kwContribution * 1000);
-        const scoreInt = kw > 0 ? `  ${total - kw}+${kw}=${total}` : `  ${total}`;
+        const vecTotal = total - kw;
+        const cS       = laneScores?.content ?? 0;
+        const hS       = laneScores?.header  ?? 0;
+        const vecSum   = cS + hS;
+        const c        = vecSum > 0 ? Math.round(vecTotal * cS / vecSum) : vecTotal;
+        const h        = vecTotal - c;
+        const scoreInt = (laneScores && (cS > 0 || hS > 0))
+            ? `  ${c}+${h}+${kw}=${total}`
+            : `  ${total}`;
 
         if (!isInjected) {
             const bar = '█'.repeat(barLen) + '░'.repeat(trailing);
