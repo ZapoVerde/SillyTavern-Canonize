@@ -51,7 +51,8 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const messages   = ctx.chat ?? [];
     const validUuids = chain.anchors.map(r => r.anchor.uuid);
 
-    const cutoffMode     = settings.ragCutoffMode              ?? 'mean';
+    const sensitivityK   = settings.ragSensitivityK             ?? 0.7;
+    const poolMultiple   = settings.ragPoolMultiple             ?? 2;
     const chatMin        = settings.ragChatMin                  ?? 2;
     const chatMax        = settings.ragChatMax                  ?? 8;
     const lbMin          = settings.ragLbMin                    ?? 2;
@@ -70,7 +71,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const chatKey    = cnzGetActiveChatKey();
     const plotLbName = state._plotLorebookName ?? null;
 
-    log('RagFetch', `fetch anchors=${validUuids.length} cutoff=${cutoffMode} chat=[${chatMin},${chatMax}] lb=[${lbMin},${lbMax}] plot=[${plotMin},${plotMax}]`);
+    log('RagFetch', `fetch anchors=${validUuids.length} k=${sensitivityK} pool=${poolMultiple}x chat=[${chatMin},${chatMax}] lb=[${lbMin},${lbMax}] plot=[${plotMin},${plotMax}]`);
 
     if (!chatKey || !chatQuery.trim() || !validUuids.length) {
         return { chunks: 0, injection: '', toActivate: [] };
@@ -105,38 +106,78 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
     // ── Distributional cutoff per channel ─────────────────────────────────────
 
-    const chunks   = distributionalCutoff(chatRaw, { min: chatMin, max: chatMax, cutoffMode });
-    const lbHits   = distributionalCutoff(lbRaw,   { min: lbMin,  max: lbMax,   cutoffMode });
-    const plotHits = distributionalCutoff(plotRaw,  { min: plotMin, max: plotMax, cutoffMode });
+    const cutoffOpts = { k: sensitivityK, poolMultiple };
+    const { results: chunks,   metadata: chatMeta  } = distributionalCutoff(chatRaw, { min: chatMin, max: chatMax, ...cutoffOpts });
+    const { results: lbHits,   metadata: lbMeta    } = distributionalCutoff(lbRaw,   { min: lbMin,   max: lbMax,   ...cutoffOpts });
+    const { results: plotHits, metadata: plotMeta  } = distributionalCutoff(plotRaw,  { min: plotMin, max: plotMax, ...cutoffOpts });
 
     // ── Logging + health telemetry ────────────────────────────────────────────
 
     const cfg = embedCfg();
     const healthRows = [];
 
-    const _logChannel = (name, raw, result, maxBound) => {
+    const _logChannel = (name, raw, result, meta) => {
         if (!raw.length) { log('RagFetch', `${name}: no candidates`); return; }
-        const maxS = raw[0]?.score ?? 0;
-        const minS = raw.at(-1)?.score ?? 0;
-        const mu   = raw.reduce((s, c) => s + c.score, 0) / raw.length;
-        let cutoffVal = mu, cutoffLabel = 'μ';
-        if (cutoffMode === 'mean+1sd' || cutoffMode === 'mean+2sd') {
-            const σ = Math.sqrt(raw.reduce((s, c) => s + (c.score - mu) ** 2, 0) / raw.length);
-            const k = cutoffMode === 'mean+2sd' ? 2 : 1;
-            cutoffVal   = mu + k * σ;
-            cutoffLabel = cutoffMode === 'mean+2sd' ? 'μ+2σ' : 'μ+σ';
+        const maxS     = raw[0]?.score ?? 0;
+        const minS     = raw.at(-1)?.score ?? 0;
+        const M_active = result.length;
+
+        // ── Collapsible group header (visible when collapsed) ─────────────────
+        let header = `[CNZ] ${name}`;
+        if (meta) {
+            const cliffNote = meta.cliff_detected ? `  cliff@${meta.cliff_index}` : '';
+            header += ` | ${raw.length} raw  pool=${meta.candidate_pool_size}  Sk=${meta.pearson_skewness.toFixed(2)}  R=${meta.scaling_factor_R.toFixed(2)}${cliffNote}  → ${M_active} injected`;
+        } else {
+            header += ` | ${raw.length} raw (cold-start)  → ${M_active} injected`;
         }
-        const injectedScores = result.length ? ` (${result.map(c => c.score.toFixed(2)).join(', ')})` : '';
-        log('RagFetch', `${name}: ${raw.length} raw | max=${maxS.toFixed(3)} min=${minS.toFixed(3)} μ=${mu.toFixed(3)} cutoff=${cutoffVal.toFixed(3)}(${cutoffLabel}) → ${result.length} injected${injectedScores}`);
+
+        console.groupCollapsed(header);
+
+        // ── Bar chart (visible when expanded) ─────────────────────────────────
+        if (meta) {
+            const BAR_WIDTH = 20;
+            const pool      = raw.slice(0, meta.candidate_pool_size);
+
+            for (let i = 0; i < pool.length; i++) {
+                const score  = pool[i].score;
+                const barLen = maxS > 0 ? Math.round((score / maxS) * BAR_WIDTH) : 0;
+                const bar    = '█'.repeat(barLen) + '░'.repeat(BAR_WIDTH - barLen);
+                const isInjected = i < M_active;
+                const isCliff    = meta.cliff_detected && i === M_active - 1;
+                const cliffMark  = isCliff && pool[i + 1]
+                    ? `  ← cliff  Δ${(score - pool[i + 1].score).toFixed(3)}`
+                    : '';
+
+                const line = `  ${String(i).padStart(2)}  ${bar}  ${score.toFixed(3)}${cliffMark}`;
+                console.log(`%c${line}`, isInjected ? 'color:inherit' : 'color:#777');
+
+                if (i === M_active - 1 && i < pool.length - 1) {
+                    console.log('%c  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ cutoff', 'color:#5c85d6');
+                }
+            }
+        }
+
+        console.groupEnd();
+
+        // ── Health telemetry ──────────────────────────────────────────────────
         healthRows.push({
             character: chatKey, channel: name, provider: cfg.source, model: cfg.model,
-            candidates: raw.length, maxScore: maxS, minScore: minS, meanScore: mu,
-            returned: result.length, max: maxBound,
+            candidates: raw.length, maxScore: maxS, minScore: minS,
+            returned: result.length,
+            poolSize:        meta?.candidate_pool_size  ?? null,
+            localMean:       meta?.local_mean           ?? null,
+            localMedian:     meta?.local_median         ?? null,
+            localStdDev:     meta?.local_std_dev        ?? null,
+            pearsonSkewness: meta?.pearson_skewness     ?? null,
+            sensitivityK:    meta?.sensitivity_k        ?? null,
+            scalingFactorR:  meta?.scaling_factor_R     ?? null,
+            cliffDetected:   meta?.cliff_detected       ?? false,
+            cliffIndex:      meta?.cliff_index          ?? null,
         });
     };
-    _logChannel('chat', chatRaw.sort((a, b) => b.score - a.score), chunks,   chatMax);
-    _logChannel('lb',   lbRaw.sort((a, b) => b.score - a.score),   lbHits,   lbMax);
-    _logChannel('plot', plotRaw.sort((a, b) => b.score - a.score),  plotHits, plotMax);
+    _logChannel('chat', chatRaw.sort((a, b) => b.score - a.score), chunks,   chatMeta);
+    _logChannel('lb',   lbRaw.sort((a, b) => b.score - a.score),   lbHits,   lbMeta);
+    _logChannel('plot', plotRaw.sort((a, b) => b.score - a.score),  plotHits, plotMeta);
 
     appendHealthRows(healthRows).catch(() => {});
 

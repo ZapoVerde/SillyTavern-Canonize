@@ -122,7 +122,7 @@ export function buildRagSectionHTML(s, escapeHtml) {
                 <b style="text-decoration:underline">How does memory retrieval work?</b>
               </div>
               <div id="cnz-inflection-explainer-body" class="cnz-hidden" style="margin-bottom:12px;padding:8px 12px;border-left:2px solid var(--SmartThemeBlurTintColor, #5c85d6);background:rgba(255,255,255,0.015);font-size:0.82rem;line-height:1.45;color:var(--cnz-text-muted, #888);">
-                Rather than using a fixed number of results or an absolute quality threshold, Canonize evaluates the score distribution returned by each search. It takes everything above the distribution mean (or mean + std dev, depending on your cutoff mode) and clamps to your configured min and max. If nothing passes the threshold, at least the minimum number of results is returned. This makes retrieval adapt automatically to the query and the state of the database, without manual tuning as your story grows.
+                Rather than using a fixed threshold, Canonize inspects the shape of your top candidates on every turn. It samples a small pool (Pool Multiple x Max Results), measures how skewed the score distribution is, and dynamically scales the result window up or down. A sharp peak (one standout memory, lots of filler) tightens the window; a dense plateau (many equally-relevant memories) expands it. A second cliff-detection pass can cut even earlier if there is a statistically significant score break. Min and Max are hard boundaries the dynamic window never crosses.
               </div>
 
               <div class="cnz-settings-inline-row">
@@ -170,12 +170,20 @@ export function buildRagSectionHTML(s, escapeHtml) {
 
               <!-- Retrieval controls -->
               <div class="cnz-settings-inline-row">
-                <label for="cnz-set-rag-cutoff-mode">Cutoff Mode ${tip('Score threshold used when filtering candidates. Mean keeps everything above the average. Higher modes (mean + std dev) are stricter — fewer results, higher confidence.')}</label>
-                <select id="cnz-set-rag-cutoff-mode" class="cnz-select cnz-settings-select-sm">
-                  <option value="mean"     ${ (s.ragCutoffMode ?? 'mean') === 'mean'     ? 'selected' : ''}>Mean</option>
-                  <option value="mean+1sd" ${ (s.ragCutoffMode ?? 'mean') === 'mean+1sd' ? 'selected' : ''}>Mean + 1 std dev</option>
-                  <option value="mean+2sd" ${ (s.ragCutoffMode ?? 'mean') === 'mean+2sd' ? 'selected' : ''}>Mean + 2 std dev</option>
-                </select>
+                <label for="cnz-set-rag-sensitivity-k">Memory Focus ${tip('Controls how strongly the shape of the score distribution compresses or expands the result window. Lower values (0.1) make retrieval permissive — distribution shape has little effect. Higher values (1.5) make it strict — a sharp peak collapses the window aggressively, a plateau opens it fully.')}</label>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <input id="cnz-set-rag-sensitivity-k" type="range" min="0.1" max="1.5" step="0.1"
+                         value="${escapeHtml(String(s.ragSensitivityK ?? 0.7))}" style="flex:1">
+                  <span id="cnz-set-rag-sensitivity-k-val" style="min-width:2.5em;text-align:right;font-size:0.85rem">${escapeHtml(String(s.ragSensitivityK ?? 0.7))}</span>
+                </div>
+              </div>
+              <div class="cnz-settings-inline-row">
+                <label for="cnz-set-rag-pool-multiple">Pool Multiple ${tip('Candidate pool size = Pool Multiple x Max Results (minimum 6). A larger pool gives cliff detection more data to calibrate against and broadens the skewness sample. 2 is tight and fast; 3 is more stable for large databases.')}</label>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <input id="cnz-set-rag-pool-multiple" type="range" min="1" max="5" step="0.5"
+                         value="${escapeHtml(String(s.ragPoolMultiple ?? 2))}" style="flex:1">
+                  <span id="cnz-set-rag-pool-multiple-val" style="min-width:2.5em;text-align:right;font-size:0.85rem">${escapeHtml(String(s.ragPoolMultiple ?? 2))}x</span>
+                </div>
               </div>
               <div class="cnz-settings-inline-row" style="align-items:baseline;gap:8px;">
                 <label style="flex:1">Chat context ${tip('Results from searching the narrative memory store using recent conversation turns as the query.')}</label>

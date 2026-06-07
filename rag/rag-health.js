@@ -8,18 +8,24 @@
  * Failures are logged and swallowed so health tracking never interrupts generation.
  *
  * Columns:
- *   timestamp     — ISO 8601 UTC
- *   character     — avatarKey (truncated to 24 chars for readability)
- *   channel       — chat | lb | plot
- *   provider      — embedding source (openrouter, voyageai, etc.)
- *   model         — embedding model name
- *   candidates    — total items before distributional cutoff
- *   max_score     — highest cosine in candidate set
- *   min_score     — lowest cosine in candidate set
- *   mean_score    — μ (the mean cutoff threshold)
- *   slope         — (max - min) / candidates — average drop per rank
- *   returned      — items after cutoff
- *   clamped       — true if returned === max (ceiling hit; consider raising max)
+ *   timestamp          — ISO 8601 UTC
+ *   character          — avatarKey (truncated to 24 chars for readability)
+ *   channel            — chat | lb | plot
+ *   provider           — embedding source (openrouter, voyageai, etc.)
+ *   model              — embedding model name
+ *   candidates         — total items in raw result set (database size proxy)
+ *   max_score          — highest cosine in raw result set
+ *   min_score          — lowest cosine in raw result set
+ *   pool_size          — N_C (candidate pool actually analysed)
+ *   local_mean         — μ of the candidate pool
+ *   local_median       — median of the candidate pool
+ *   local_std_dev      — σ of the candidate pool (floor 0.01)
+ *   pearson_skewness   — Sk = 3(μ - median) / σ
+ *   sensitivity_k      — user k parameter at time of retrieval
+ *   scaling_factor_r   — R = e^(-k·Sk)
+ *   cliff_detected     — true if cliff-detection override fired
+ *   cliff_index        — pool index where cliff was found (empty if none)
+ *   returned           — final items injected
  *
  * @api-declaration
  * appendHealthRows(rows: HealthRow[]) → Promise<void>
@@ -36,7 +42,7 @@ import { readRawFile, writeRawFile } from './file-io.js';
 import { log, error } from '../log.js';
 
 const FILE    = 'cnz_rag_health.csv';
-const HEADER  = 'timestamp,character,channel,provider,model,candidates,max_score,min_score,mean_score,slope,returned,clamped';
+const HEADER  = 'timestamp,character,channel,provider,model,candidates,max_score,min_score,pool_size,local_mean,local_median,local_std_dev,pearson_skewness,sensitivity_k,scaling_factor_r,cliff_detected,cliff_index,returned';
 
 // In-memory line buffer. Null until first write initialises from disk.
 let _lines = null;
@@ -57,16 +63,23 @@ function _fmt(n) { return Number.isFinite(n) ? n.toFixed(4) : ''; }
 
 /**
  * @typedef {{
- *   character:  string,
- *   channel:    'chat'|'lb'|'plot',
- *   provider:   string,
- *   model:      string,
- *   candidates: number,
- *   maxScore:   number,
- *   minScore:   number,
- *   meanScore:  number,
- *   returned:   number,
- *   max:        number,
+ *   character:       string,
+ *   channel:         'chat'|'lb'|'plot',
+ *   provider:        string,
+ *   model:           string,
+ *   candidates:      number,
+ *   maxScore:        number,
+ *   minScore:        number,
+ *   returned:        number,
+ *   poolSize:        number|null,
+ *   localMean:       number|null,
+ *   localMedian:     number|null,
+ *   localStdDev:     number|null,
+ *   pearsonSkewness: number|null,
+ *   sensitivityK:    number|null,
+ *   scalingFactorR:  number|null,
+ *   cliffDetected:   boolean,
+ *   cliffIndex:      number|null,
  * }} HealthRow
  */
 
@@ -85,9 +98,7 @@ export async function appendHealthRows(rows) {
         const ts = new Date().toISOString();
 
         for (const r of active) {
-            const slope   = r.candidates > 0 ? (r.maxScore - r.minScore) / r.candidates : 0;
-            const clamped = r.returned === r.max && r.candidates > r.max;
-            const char    = r.character.slice(0, 24).replace(/,/g, '_');
+            const char = r.character.slice(0, 24).replace(/,/g, '_');
 
             _lines.push([
                 ts,
@@ -98,10 +109,16 @@ export async function appendHealthRows(rows) {
                 r.candidates,
                 _fmt(r.maxScore),
                 _fmt(r.minScore),
-                _fmt(r.meanScore),
-                _fmt(slope),
+                r.poolSize        ?? '',
+                _fmt(r.localMean),
+                _fmt(r.localMedian),
+                _fmt(r.localStdDev),
+                _fmt(r.pearsonSkewness),
+                _fmt(r.sensitivityK),
+                _fmt(r.scalingFactorR),
+                r.cliffDetected,
+                r.cliffIndex      ?? '',
                 r.returned,
-                clamped,
             ].join(','));
         }
 

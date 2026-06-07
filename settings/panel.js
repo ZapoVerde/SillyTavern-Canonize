@@ -116,13 +116,15 @@ function refreshSettingsUI() {
 
     $('#cnz-set-embedding-source').val(s.ragEmbeddingSource ?? 'openrouter');
     $('#cnz-set-embedding-model').val(s.ragEmbeddingModel ?? '');
-    $('#cnz-set-rag-cutoff-mode').val(s.ragCutoffMode ?? 'mean');
+    $('#cnz-set-rag-sensitivity-k').val(s.ragSensitivityK ?? 0.7);
+    $('#cnz-set-rag-sensitivity-k-val').text((s.ragSensitivityK ?? 0.7).toFixed(1));
+    $('#cnz-set-rag-pool-multiple').val(s.ragPoolMultiple ?? 2);
+    $('#cnz-set-rag-pool-multiple-val').text((s.ragPoolMultiple ?? 2) + 'x');
     $('#cnz-set-rag-chat-min').val(s.ragChatMin ?? 2);
     $('#cnz-set-rag-chat-max').val(s.ragChatMax ?? 8);
     $('#cnz-set-rag-lb-min').val(s.ragLbMin ?? 2);
     $('#cnz-set-rag-lb-max').val(s.ragLbMax ?? 4);
     $('#cnz-set-rag-separator').val(s.ragSeparator ?? '%%%');
-    $('#cnz-set-inflection-verbose').prop('checked', s.ragInflectionVerbose ?? false);
     $('#cnz-set-rag-fts-unicode').prop('checked', s.ragFtsUnicode ?? false);
     configureFts({ unicodeMode: s.ragFtsUnicode ?? false });
 
