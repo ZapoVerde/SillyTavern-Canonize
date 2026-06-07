@@ -145,7 +145,9 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const _barLine = (score, sources, laneScores, kwContribution, isInjected, BAR_WIDTH, maxS) => {
         const barLen   = maxS > 0 ? Math.round((score / maxS) * BAR_WIDTH) : 0;
         const trailing = BAR_WIDTH - barLen;
-        const scoreInt = `  ${Math.round(score * 1000)}`;
+        const total    = Math.round(score * 1000);
+        const kw       = Math.round(kwContribution * 1000);
+        const scoreInt = kw > 0 ? `  ${total - kw}+${kw}=${total}` : `  ${total}`;
 
         if (!isInjected) {
             const bar = '█'.repeat(barLen) + '░'.repeat(trailing);
