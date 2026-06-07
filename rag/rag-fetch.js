@@ -141,41 +141,30 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const EMPTY_STYLE = 'color:#3a3a3a';
     const GRAY_STYLE  = 'color:#555';
 
-    const _sourceTag = (sources) => {
-        const parts = [];
-        if (sources?.includes('content')) parts.push('c');
-        if (sources?.includes('header'))  parts.push('h');
-        if (sources?.includes('keyword')) parts.push('k');
-        return (parts.join('+') || 'vec').padEnd(5);
-    };
-
     // Returns { format, styles } for a single bar line using %c segments.
-    const _barLine = (rank, score, sources, laneScores, kwContribution, isInjected, BAR_WIDTH, maxS) => {
+    const _barLine = (score, sources, laneScores, kwContribution, isInjected, BAR_WIDTH, maxS) => {
         const barLen   = maxS > 0 ? Math.round((score / maxS) * BAR_WIDTH) : 0;
         const trailing = BAR_WIDTH - barLen;
-        const tag      = _sourceTag(sources);
-        const rankStr  = String(rank).padStart(2);
-        const scoreStr = `  ${score.toFixed(3)}`;
+        const scoreInt = `  ${Math.round(score * 1000)}`;
 
         if (!isInjected) {
             const bar = '█'.repeat(barLen) + '░'.repeat(trailing);
-            return { format: `%c${rankStr}  ${tag}  ${bar}${scoreStr}`, styles: [GRAY_STYLE] };
+            return { format: `%c  ${bar}${scoreInt}`, styles: [GRAY_STYLE] };
         }
 
         const lanes = (sources ?? []).filter(s => LANE_COLORS[s]);
         if (!lanes.length) {
             const bar = '█'.repeat(barLen) + '░'.repeat(trailing);
-            return { format: `%c${rankStr}  ${tag}  ${bar}${scoreStr}`, styles: ['color:inherit'] };
+            return { format: `%c  ${bar}${scoreInt}`, styles: ['color:inherit'] };
         }
 
-        // Keyword portion is proportional to its actual score contribution.
-        // Vector portion (content + header) fills the remainder, proportioned by lane scores.
+        // Keyword portion proportional to its actual contribution; vector fills the remainder.
         const kwW     = (score > 0 && kwContribution > 0)
             ? Math.min(barLen, Math.round(barLen * kwContribution / score))
             : 0;
         const vectorW = barLen - kwW;
 
-        let format  = `${rankStr}  ${tag}  `;
+        let format  = '  ';
         const styles = [];
 
         const vectorLanes = lanes.filter(l => l !== 'keyword');
@@ -193,7 +182,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
         if (kwW > 0) { format += `%c${'█'.repeat(kwW)}`; styles.push(`color:${LANE_COLORS.keyword}`); }
         if (trailing > 0) { format += `%c${'░'.repeat(trailing)}`; styles.push(EMPTY_STYLE); }
-        format += `%c${scoreStr}`;
+        format += `%c${scoreInt}`;
         styles.push('color:inherit');
         return { format, styles };
     };
@@ -222,7 +211,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
             for (let i = 0; i < pool.length; i++) {
                 const { format, styles } = _barLine(
-                    i + 1, pool[i].score, pool[i].sources, pool[i].laneScores,
+                    pool[i].score, pool[i].sources, pool[i].laneScores,
                     pool[i].kwContribution ?? 0, i < M_active, BAR_WIDTH, maxS,
                 );
                 console.log(format, ...styles);
