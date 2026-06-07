@@ -105,24 +105,26 @@ export async function doRagFetch(ctx, settings, chain, signal) {
         }
     }
 
-    // ── Keyword blend (chat channel only — lb/plot have no FTS layer) ─────────
-    // Normalise TF-IDF scores within this result set so the top keyword match
-    // contributes exactly (1 - kwBlend) × maxVectorScore to the fused score.
-    // Keyword-only items (score=0 from RRF) are ranked purely by this contribution.
+    // ── Keyword blend — all channels that carry kwTfidf ──────────────────────
+    // Normalise TF-IDF scores so the top keyword match contributes exactly
+    // (1 - kwBlend) × maxVectorScore. Keyword-only items (score=0 from RRF)
+    // are ranked purely by this contribution.
 
-    const maxVec    = chatRaw.reduce((m, r) => Math.max(m, r.score), 0);
-    const maxKw     = chatRaw.reduce((m, r) => Math.max(m, r.kwTfidf ?? 0), 0);
-    const kwScale   = maxKw > 0 ? (1 - kwBlend) * maxVec : 0;
-
-    if (kwScale > 0) {
-        for (const r of chatRaw) {
-            const contrib    = r.kwTfidf != null ? (r.kwTfidf / maxKw) * kwScale : 0;
+    const _applyKwBlend = (raw) => {
+        const maxVec = raw.reduce((m, r) => Math.max(m, r.score), 0);
+        const maxKw  = raw.reduce((m, r) => Math.max(m, r.kwTfidf ?? 0), 0);
+        const scale  = maxKw > 0 ? (1 - kwBlend) * maxVec : 0;
+        for (const r of raw) {
+            const contrib    = (scale > 0 && r.kwTfidf != null) ? (r.kwTfidf / maxKw) * scale : 0;
             r.kwContribution = contrib;
             r.score         += contrib;
         }
-    } else {
-        for (const r of chatRaw) r.kwContribution = 0;
-    }
+        return scale;
+    };
+
+    const kwScaleChat = _applyKwBlend(chatRaw);
+    const kwScaleLb   = _applyKwBlend(lbRaw);
+    const kwScalePlot = _applyKwBlend(plotRaw);
 
     // ── Distributional cutoff per channel ─────────────────────────────────────
 
@@ -248,9 +250,9 @@ export async function doRagFetch(ctx, settings, chain, signal) {
             cutoffMode:      meta?.cutoff_mode         ?? null,
         });
     };
-    _logChannel('chat', chatRaw.sort((a, b) => b.score - a.score), chunks,   chatMeta, kwScale);
-    _logChannel('lb',   lbRaw.sort((a, b) => b.score - a.score),   lbHits,   lbMeta);
-    _logChannel('plot', plotRaw.sort((a, b) => b.score - a.score),  plotHits, plotMeta);
+    _logChannel('chat', chatRaw.sort((a, b) => b.score - a.score), chunks,   chatMeta, kwScaleChat);
+    _logChannel('lb',   lbRaw.sort((a, b) => b.score - a.score),   lbHits,   lbMeta,   kwScaleLb);
+    _logChannel('plot', plotRaw.sort((a, b) => b.score - a.score),  plotHits, plotMeta, kwScalePlot);
 
     appendHealthRows(healthRows).catch(() => {});
 
