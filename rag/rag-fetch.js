@@ -130,27 +130,28 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     };
 
     // Returns { format, styles } for a single bar line using %c segments.
-    const _barLine = (score, sources, isInjected, BAR_WIDTH, maxS) => {
+    const _barLine = (rank, score, sources, isInjected, BAR_WIDTH, maxS) => {
         const barLen   = maxS > 0 ? Math.round((score / maxS) * BAR_WIDTH) : 0;
         const trailing = BAR_WIDTH - barLen;
         const tag      = _sourceTag(sources);
+        const rankStr  = String(rank).padStart(2);
         const scoreStr = `  ${score.toFixed(3)}`;
 
         if (!isInjected) {
             const bar = '█'.repeat(barLen) + '░'.repeat(trailing);
-            return { format: `%c  ${tag}  ${bar}${scoreStr}`, styles: [GRAY_STYLE] };
+            return { format: `%c${rankStr}  ${tag}  ${bar}${scoreStr}`, styles: [GRAY_STYLE] };
         }
 
         const lanes = (sources ?? []).filter(s => LANE_COLORS[s]);
         if (!lanes.length) {
             // No lane data (lb/plot): single-color bar.
             const bar = '█'.repeat(barLen) + '░'.repeat(trailing);
-            return { format: `%c  ${tag}  ${bar}${scoreStr}`, styles: ['color:inherit'] };
+            return { format: `%c${rankStr}  ${tag}  ${bar}${scoreStr}`, styles: ['color:inherit'] };
         }
 
         // Divide filled portion into equal segments, one color per lane.
         const segW  = Math.floor(barLen / lanes.length);
-        let format  = `  ${tag}  `;
+        let format  = `${rankStr}  ${tag}  `;
         const styles = [];
         for (let s = 0; s < lanes.length; s++) {
             const w = (s === lanes.length - 1) ? barLen - segW * s : segW;
@@ -186,7 +187,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
             for (let i = 0; i < pool.length; i++) {
                 const { format, styles } = _barLine(
-                    pool[i].score, pool[i].sources, i < M_active, BAR_WIDTH, maxS,
+                    i + 1, pool[i].score, pool[i].sources, i < M_active, BAR_WIDTH, maxS,
                 );
                 console.log(format, ...styles);
 
