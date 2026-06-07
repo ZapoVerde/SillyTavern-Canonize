@@ -1,6 +1,6 @@
 /**
  * @file data/default-user/extensions/canonize/rag/rag-health.js
- * @stamp {"utc":"2026-06-06T00:00:00.000Z"}
+ * @stamp {"utc":"2026-06-07T00:00:00.000Z"}
  * @architectural-role IO Wrapper — RAG health telemetry CSV writer
  * @description
  * Appends one row per channel per turn to cnz_rag_health.csv. The CSV is loaded
@@ -20,11 +20,9 @@
  *   local_mean         — μ of the candidate pool
  *   local_median       — median of the candidate pool
  *   local_std_dev      — σ of the candidate pool (floor 0.01)
- *   pearson_skewness   — Sk = 3(μ - median) / σ
- *   sensitivity_k      — user k parameter at time of retrieval
- *   scaling_factor_r   — R = e^(-k·Sk)
- *   cliff_detected     — true if cliff-detection override fired
- *   cliff_index        — pool index where cliff was found (empty if none)
+ *   pearson_skewness   — Sk = 3(μ - median) / σ  [display only, not used for cutoff]
+ *   threshold          — score value used as the cutoff line
+ *   cutoff_mode        — mean | mean+1sd | mean+2sd
  *   returned           — final items injected
  *
  * @api-declaration
@@ -41,8 +39,8 @@
 import { readRawFile, writeRawFile } from './file-io.js';
 import { log, error } from '../log.js';
 
-const FILE    = 'cnz_rag_health.csv';
-const HEADER  = 'timestamp,character,channel,provider,model,candidates,max_score,min_score,pool_size,local_mean,local_median,local_std_dev,pearson_skewness,sensitivity_k,scaling_factor_r,cliff_detected,cliff_index,returned';
+const FILE   = 'cnz_rag_health.csv';
+const HEADER = 'timestamp,character,channel,provider,model,candidates,max_score,min_score,pool_size,local_mean,local_median,local_std_dev,pearson_skewness,threshold,cutoff_mode,returned';
 
 // In-memory line buffer. Null until first write initialises from disk.
 let _lines = null;
@@ -76,10 +74,8 @@ function _fmt(n) { return Number.isFinite(n) ? n.toFixed(4) : ''; }
  *   localMedian:     number|null,
  *   localStdDev:     number|null,
  *   pearsonSkewness: number|null,
- *   sensitivityK:    number|null,
- *   scalingFactorR:  number|null,
- *   cliffDetected:   boolean,
- *   cliffIndex:      number|null,
+ *   threshold:       number|null,
+ *   cutoffMode:      string|null,
  * }} HealthRow
  */
 
@@ -109,15 +105,13 @@ export async function appendHealthRows(rows) {
                 r.candidates,
                 _fmt(r.maxScore),
                 _fmt(r.minScore),
-                r.poolSize        ?? '',
+                r.poolSize     ?? '',
                 _fmt(r.localMean),
                 _fmt(r.localMedian),
                 _fmt(r.localStdDev),
                 _fmt(r.pearsonSkewness),
-                _fmt(r.sensitivityK),
-                _fmt(r.scalingFactorR),
-                r.cliffDetected,
-                r.cliffIndex      ?? '',
+                _fmt(r.threshold),
+                r.cutoffMode   ?? '',
                 r.returned,
             ].join(','));
         }

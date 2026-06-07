@@ -51,7 +51,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const messages   = ctx.chat ?? [];
     const validUuids = chain.anchors.map(r => r.anchor.uuid);
 
-    const sensitivityK   = settings.ragSensitivityK             ?? 0.7;
+    const cutoffMode     = settings.ragCutoffMode               ?? 'mean';
     const poolMultiple   = settings.ragPoolMultiple             ?? 2;
     const chatMin        = settings.ragChatMin                  ?? 2;
     const chatMax        = settings.ragChatMax                  ?? 8;
@@ -71,7 +71,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const chatKey    = cnzGetActiveChatKey();
     const plotLbName = state._plotLorebookName ?? null;
 
-    log('RagFetch', `fetch anchors=${validUuids.length} k=${sensitivityK} pool=${poolMultiple}x chat=[${chatMin},${chatMax}] lb=[${lbMin},${lbMax}] plot=[${plotMin},${plotMax}]`);
+    log('RagFetch', `fetch anchors=${validUuids.length} cutoff=${cutoffMode} pool=${poolMultiple}x chat=[${chatMin},${chatMax}] lb=[${lbMin},${lbMax}] plot=[${plotMin},${plotMax}]`);
 
     if (!chatKey || !chatQuery.trim() || !validUuids.length) {
         return { chunks: 0, injection: '', toActivate: [] };
@@ -106,7 +106,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
     // ── Distributional cutoff per channel ─────────────────────────────────────
 
-    const cutoffOpts = { k: sensitivityK, poolMultiple };
+    const cutoffOpts = { cutoffMode, poolMultiple };
     const { results: chunks,   metadata: chatMeta  } = distributionalCutoff(chatRaw, { min: chatMin, max: chatMax, ...cutoffOpts });
     const { results: lbHits,   metadata: lbMeta    } = distributionalCutoff(lbRaw,   { min: lbMin,   max: lbMax,   ...cutoffOpts });
     const { results: plotHits, metadata: plotMeta  } = distributionalCutoff(plotRaw,  { min: plotMin, max: plotMax, ...cutoffOpts });
@@ -116,43 +116,82 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const cfg = embedCfg();
     const healthRows = [];
 
+    // ── Lane color palette (chat channel only — lb/plot have no sources field) ──
+    const LANE_COLORS = { content: '#4fc3f7', header: '#ffb74d', keyword: '#81c784' };
+    const EMPTY_STYLE = 'color:#3a3a3a';
+    const GRAY_STYLE  = 'color:#555';
+
+    const _sourceTag = (sources) => {
+        const parts = [];
+        if (sources?.includes('content')) parts.push('c');
+        if (sources?.includes('header'))  parts.push('h');
+        if (sources?.includes('keyword')) parts.push('k');
+        return (parts.join('+') || 'vec').padEnd(5);
+    };
+
+    // Returns { format, styles } for a single bar line using %c segments.
+    const _barLine = (score, sources, isInjected, BAR_WIDTH, maxS) => {
+        const barLen   = maxS > 0 ? Math.round((score / maxS) * BAR_WIDTH) : 0;
+        const trailing = BAR_WIDTH - barLen;
+        const tag      = _sourceTag(sources);
+        const scoreStr = `  ${score.toFixed(3)}`;
+
+        if (!isInjected) {
+            const bar = '█'.repeat(barLen) + '░'.repeat(trailing);
+            return { format: `%c  ${tag}  ${bar}${scoreStr}`, styles: [GRAY_STYLE] };
+        }
+
+        const lanes = (sources ?? []).filter(s => LANE_COLORS[s]);
+        if (!lanes.length) {
+            // No lane data (lb/plot): single-color bar.
+            const bar = '█'.repeat(barLen) + '░'.repeat(trailing);
+            return { format: `%c  ${tag}  ${bar}${scoreStr}`, styles: ['color:inherit'] };
+        }
+
+        // Divide filled portion into equal segments, one color per lane.
+        const segW  = Math.floor(barLen / lanes.length);
+        let format  = `  ${tag}  `;
+        const styles = [];
+        for (let s = 0; s < lanes.length; s++) {
+            const w = (s === lanes.length - 1) ? barLen - segW * s : segW;
+            format += `%c${'█'.repeat(w)}`;
+            styles.push(`color:${LANE_COLORS[lanes[s]]}`);
+        }
+        if (trailing > 0) { format += `%c${'░'.repeat(trailing)}`; styles.push(EMPTY_STYLE); }
+        format += `%c${scoreStr}`;
+        styles.push('color:inherit');
+        return { format, styles };
+    };
+
     const _logChannel = (name, raw, result, meta) => {
         if (!raw.length) { log('RagFetch', `${name}: no candidates`); return; }
         const maxS     = raw[0]?.score ?? 0;
         const minS     = raw.at(-1)?.score ?? 0;
         const M_active = result.length;
 
-        // ── Collapsible group header (visible when collapsed) ─────────────────
+        // ── Collapsible group header ──────────────────────────────────────────
         let header = `[CNZ] ${name}`;
         if (meta) {
-            const cliffNote = meta.cliff_detected ? `  cliff@${meta.cliff_index}` : '';
-            header += ` | ${raw.length} raw  pool=${meta.candidate_pool_size}  Sk=${meta.pearson_skewness.toFixed(2)}  R=${meta.scaling_factor_R.toFixed(2)}${cliffNote}  → ${M_active} injected`;
+            header += ` | ${raw.length} raw  pool=${meta.candidate_pool_size}  μ=${meta.local_mean.toFixed(3)}  Sk=${meta.pearson_skewness.toFixed(2)}  (${meta.cutoff_mode})  → ${M_active} injected`;
         } else {
             header += ` | ${raw.length} raw (cold-start)  → ${M_active} injected`;
         }
 
         console.groupCollapsed(header);
 
-        // ── Bar chart (visible when expanded) ─────────────────────────────────
+        // ── Bar chart ─────────────────────────────────────────────────────────
         if (meta) {
             const BAR_WIDTH = 20;
             const pool      = raw.slice(0, meta.candidate_pool_size);
 
             for (let i = 0; i < pool.length; i++) {
-                const score  = pool[i].score;
-                const barLen = maxS > 0 ? Math.round((score / maxS) * BAR_WIDTH) : 0;
-                const bar    = '█'.repeat(barLen) + '░'.repeat(BAR_WIDTH - barLen);
-                const isInjected = i < M_active;
-                const isCliff    = meta.cliff_detected && i === M_active - 1;
-                const cliffMark  = isCliff && pool[i + 1]
-                    ? `  ← cliff  Δ${(score - pool[i + 1].score).toFixed(3)}`
-                    : '';
-
-                const line = `  ${String(i).padStart(2)}  ${bar}  ${score.toFixed(3)}${cliffMark}`;
-                console.log(`%c${line}`, isInjected ? 'color:inherit' : 'color:#777');
+                const { format, styles } = _barLine(
+                    pool[i].score, pool[i].sources, i < M_active, BAR_WIDTH, maxS,
+                );
+                console.log(format, ...styles);
 
                 if (i === M_active - 1 && i < pool.length - 1) {
-                    console.log('%c  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ cutoff', 'color:#5c85d6');
+                    console.log('%c  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ cutoff  (threshold ${meta.threshold.toFixed(3)})', 'color:#5c85d6');
                 }
             }
         }
@@ -163,16 +202,14 @@ export async function doRagFetch(ctx, settings, chain, signal) {
         healthRows.push({
             character: chatKey, channel: name, provider: cfg.source, model: cfg.model,
             candidates: raw.length, maxScore: maxS, minScore: minS,
-            returned: result.length,
-            poolSize:        meta?.candidate_pool_size  ?? null,
-            localMean:       meta?.local_mean           ?? null,
-            localMedian:     meta?.local_median         ?? null,
-            localStdDev:     meta?.local_std_dev        ?? null,
-            pearsonSkewness: meta?.pearson_skewness     ?? null,
-            sensitivityK:    meta?.sensitivity_k        ?? null,
-            scalingFactorR:  meta?.scaling_factor_R     ?? null,
-            cliffDetected:   meta?.cliff_detected       ?? false,
-            cliffIndex:      meta?.cliff_index          ?? null,
+            returned:        result.length,
+            poolSize:        meta?.candidate_pool_size ?? null,
+            localMean:       meta?.local_mean          ?? null,
+            localMedian:     meta?.local_median        ?? null,
+            localStdDev:     meta?.local_std_dev       ?? null,
+            pearsonSkewness: meta?.pearson_skewness    ?? null,
+            threshold:       meta?.threshold           ?? null,
+            cutoffMode:      meta?.cutoff_mode         ?? null,
         });
     };
     _logChannel('chat', chatRaw.sort((a, b) => b.score - a.score), chunks,   chatMeta);

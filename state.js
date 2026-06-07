@@ -88,7 +88,7 @@ export const PROFILE_DEFAULTS = Object.freeze({
     ragChatMax:               8,
     ragLbMin:                 2,
     ragLbMax:                 4,
-    ragSensitivityK:          0.7,
+    ragCutoffMode:            'mean',
     ragPoolMultiple:          2,
     ragInjectionTemplate:     DEFAULT_RAG_INJECTION_TEMPLATE,
     cnzSummaryTemplate:       DEFAULT_CNZ_SUMMARY_TEMPLATE,

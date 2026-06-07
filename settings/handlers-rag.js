@@ -95,13 +95,9 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
     });
 
     // ── Retrieval settings ────────────────────────────────────────────────────
-    $('#cnz-set-rag-sensitivity-k').on('input', function () {
-        const val = parseFloat($(this).val());
-        if (!isNaN(val)) {
-            getSettings().ragSensitivityK = val;
-            $('#cnz-set-rag-sensitivity-k-val').text(val.toFixed(1));
-            saveSettingsDebounced(); updateDirtyIndicator();
-        }
+    $('#cnz-set-rag-cutoff-mode').on('change', function () {
+        getSettings().ragCutoffMode = $(this).val();
+        saveSettingsDebounced(); updateDirtyIndicator();
     });
 
     $('#cnz-set-rag-pool-multiple').on('input', function () {

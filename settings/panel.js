@@ -116,8 +116,7 @@ function refreshSettingsUI() {
 
     $('#cnz-set-embedding-source').val(s.ragEmbeddingSource ?? 'openrouter');
     $('#cnz-set-embedding-model').val(s.ragEmbeddingModel ?? '');
-    $('#cnz-set-rag-sensitivity-k').val(s.ragSensitivityK ?? 0.7);
-    $('#cnz-set-rag-sensitivity-k-val').text((s.ragSensitivityK ?? 0.7).toFixed(1));
+    $('#cnz-set-rag-cutoff-mode').val(s.ragCutoffMode ?? 'mean');
     $('#cnz-set-rag-pool-multiple').val(s.ragPoolMultiple ?? 2);
     $('#cnz-set-rag-pool-multiple-val').text((s.ragPoolMultiple ?? 2) + 'x');
     $('#cnz-set-rag-chat-min').val(s.ragChatMin ?? 2);

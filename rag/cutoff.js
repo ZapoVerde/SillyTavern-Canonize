@@ -1,23 +1,18 @@
 /**
  * @file data/default-user/extensions/canonize/rag/cutoff.js
  * @stamp {"utc":"2026-06-07T00:00:00.000Z"}
- * @architectural-role Pure — dynamic RAG cutoff via micro-pool shape analysis
+ * @architectural-role Pure — dynamic RAG cutoff via micro-pool mean threshold
  * @description
- * Two-pass localized shape analysis that scales the retrieval window based on
- * the statistical topology of the top-N candidates rather than a global
- * database average.
+ * Applies a mean threshold to a localised candidate pool rather than the full
+ * database, eliminating the scale-smothering effect of global statistics.
  *
- * Pass 1 — Pearson skewness of the candidate pool drives a scaling factor R
- *           applied to the user's Max ceiling, producing M_active.
- * Pass 2 — Cliff detection scans adjacent score drops within M_active and
- *           truncates earlier if a statistically anomalous break is found.
- *
- * A single pool multiple controls both passes. Higher values pull more tail
- * items into the pool, which stabilises μ_D for cliff calibration and
- * broadens the skewness sample.
+ * Pool size = max(poolMultiple × max, 6). The threshold (mean, mean+1σ, or
+ * mean+2σ) is computed from pool scores only. Pearson skewness is calculated
+ * and returned as display-only telemetry — it does not affect the cutoff.
  *
  * @api-declaration
- * distributionalCutoff(candidates, { min, max, k, poolMultiple }) → { results, metadata }
+ * distributionalCutoff(candidates, { min, max, poolMultiple, cutoffMode })
+ *   → { results: object[], metadata: CutoffMeta|null }
  *
  * @contract
  *   assertions:
@@ -34,94 +29,80 @@
  *   local_median:         number,
  *   local_std_dev:        number,
  *   pearson_skewness:     number,
- *   sensitivity_k:        number,
- *   scaling_factor_R:     number,
- *   clamped_m_active:     number,
- *   cliff_detected:       boolean,
- *   cliff_index:          number|null,
+ *   threshold:            number,
+ *   cutoff_mode:          string,
  *   final_returned_count: number,
  * }} CutoffMeta
  */
 
 /**
- * @param {object[]} candidates     Sorted descending by score; each has { score }
+ * @param {object[]} candidates    Sorted descending by score; each has { score }
  * @param {object}   opts
- * @param {number}   opts.min           Minimum results to return
- * @param {number}   opts.max           Maximum results to return
- * @param {number}   opts.k             Sensitivity factor (strictness coefficient)
- * @param {number}   opts.poolMultiple  Candidate pool size = max(poolMultiple × max, 6)
+ * @param {number}   opts.min          Minimum results to return
+ * @param {number}   opts.max          Maximum results to return
+ * @param {number}   opts.poolMultiple Pool size = max(poolMultiple × max, 6)
+ * @param {string}   opts.cutoffMode   'mean' | 'mean+1sd' | 'mean+2sd'
  * @returns {{ results: object[], metadata: CutoffMeta|null }}
  */
-export function distributionalCutoff(candidates, { min = 2, max = 8, k = 0.7, poolMultiple = 2 }) {
+export function distributionalCutoff(candidates, { min = 2, max = 8, poolMultiple = 2, cutoffMode = 'mean' }) {
     if (!candidates.length) return { results: [], metadata: null };
 
     const sorted  = [...candidates].sort((a, b) => b.score - a.score);
     const V_total = sorted.length;
 
-    // Cold-start bypass: too few items to shape-analyse, return everything.
+    // Cold-start bypass: too few items to analyse, return everything.
     if (V_total <= min) return { results: sorted, metadata: null };
 
     // ── Build candidate pool ───────────────────────────────────────────────────
 
-    const N_C = Math.max(Math.round(poolMultiple * max), 6);
-    const C   = sorted.slice(0, N_C);
+    const N_C  = Math.max(Math.round(poolMultiple * max), 6);
+    const pool = sorted.slice(0, N_C);
 
-    // ── Pass 1: local skewness → scaling factor → M_active ────────────────────
+    // ── Pool statistics ────────────────────────────────────────────────────────
 
-    const mu_C = C.reduce((s, c) => s + c.score, 0) / C.length;
+    const mu = pool.reduce((s, c) => s + c.score, 0) / pool.length;
 
-    const cScores = C.map(c => c.score).sort((a, b) => a - b);
-    const mid     = Math.floor(C.length / 2);
-    const median_C = C.length % 2 === 0
-        ? (cScores[mid - 1] + cScores[mid]) / 2
-        : cScores[mid];
+    const pScores = pool.map(c => c.score).sort((a, b) => a - b);
+    const mid     = Math.floor(pool.length / 2);
+    const median  = pool.length % 2 === 0
+        ? (pScores[mid - 1] + pScores[mid]) / 2
+        : pScores[mid];
 
-    const sigma_C = Math.max(
-        Math.sqrt(C.reduce((s, c) => s + (c.score - mu_C) ** 2, 0) / C.length),
+    const sigma = Math.max(
+        Math.sqrt(pool.reduce((s, c) => s + (c.score - mu) ** 2, 0) / pool.length),
         0.01,
     );
 
-    const Sk = 3 * (mu_C - median_C) / sigma_C;
-    const R  = Math.exp(-k * Sk);
+    // Pearson skewness — display only, does not drive the cutoff.
+    const skewness = 3 * (mu - median) / sigma;
 
-    let M_active = Math.max(min, Math.min(Math.floor(max * R + 0.5), max));
+    // ── Threshold cutoff ───────────────────────────────────────────────────────
 
-    // ── Pass 2: cliff detection ────────────────────────────────────────────────
+    let threshold = mu;
+    if (cutoffMode === 'mean+1sd') threshold = mu + sigma;
+    if (cutoffMode === 'mean+2sd') threshold = mu + 2 * sigma;
 
-    // Compute adjacent drops across the full pool for μ_D calibration.
-    const drops = [];
-    for (let i = 0; i < C.length - 1; i++) drops.push(C[i].score - C[i + 1].score);
-    const mu_D = drops.reduce((s, d) => s + d, 0) / drops.length;
+    const aboveThreshold = pool.filter(c => c.score > threshold);
 
-    let cliff_detected = false;
-    let cliff_index    = null;
+    // Nothing clears the threshold: fall back to the min floor.
+    const floored = aboveThreshold.length < min
+        ? sorted.slice(0, Math.min(min, sorted.length))
+        : aboveThreshold;
 
-    for (let i = 0; i < M_active - 1; i++) {
-        if (drops[i] > 1.5 * mu_D && drops[i] > 0.015) {
-            M_active       = i + 1;
-            cliff_detected = true;
-            cliff_index    = i;
-            break;
-        }
-    }
+    const results = floored.slice(0, max);
 
-    // ── Return ─────────────────────────────────────────────────────────────────
-
-    const results  = sorted.slice(0, M_active);
-    const metadata = {
-        database_total_items: V_total,
-        candidate_pool_size:  N_C,
-        local_mean:           mu_C,
-        local_median:         median_C,
-        local_std_dev:        sigma_C,
-        pearson_skewness:     Sk,
-        sensitivity_k:        k,
-        scaling_factor_R:     R,
-        clamped_m_active:     M_active,
-        cliff_detected,
-        cliff_index,
-        final_returned_count: results.length,
+    return {
+        results,
+        metadata: {
+            database_total_items: V_total,
+            candidate_pool_size:  N_C,
+            local_mean:           mu,
+            local_median:         median,
+            local_std_dev:        sigma,
+            pearson_skewness:     skewness,
+            threshold,
+            cutoff_mode:          cutoffMode,
+            final_returned_count: results.length,
+        },
     };
-
-    return { results, metadata };
 }

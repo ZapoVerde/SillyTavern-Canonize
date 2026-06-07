@@ -170,15 +170,15 @@ export function buildRagSectionHTML(s, escapeHtml) {
 
               <!-- Retrieval controls -->
               <div class="cnz-settings-inline-row">
-                <label for="cnz-set-rag-sensitivity-k">Memory Focus ${tip('Controls how strongly the shape of the score distribution compresses or expands the result window. Lower values (0.1) make retrieval permissive — distribution shape has little effect. Higher values (1.5) make it strict — a sharp peak collapses the window aggressively, a plateau opens it fully.')}</label>
-                <div style="display:flex;align-items:center;gap:8px">
-                  <input id="cnz-set-rag-sensitivity-k" type="range" min="0.1" max="1.5" step="0.1"
-                         value="${escapeHtml(String(s.ragSensitivityK ?? 0.7))}" style="flex:1">
-                  <span id="cnz-set-rag-sensitivity-k-val" style="min-width:2.5em;text-align:right;font-size:0.85rem">${escapeHtml(String(s.ragSensitivityK ?? 0.7))}</span>
-                </div>
+                <label for="cnz-set-rag-cutoff-mode">Cutoff Mode ${tip('Score threshold applied to the local candidate pool. Mean keeps everything above the pool average. Higher modes are stricter — useful for noisy databases or when too many marginally-relevant results are leaking through. Skewness is logged for observation but does not affect the cutoff.')}</label>
+                <select id="cnz-set-rag-cutoff-mode" class="cnz-select cnz-settings-select-sm">
+                  <option value="mean"     ${ (s.ragCutoffMode ?? 'mean') === 'mean'     ? 'selected' : ''}>Mean</option>
+                  <option value="mean+1sd" ${ (s.ragCutoffMode ?? 'mean') === 'mean+1sd' ? 'selected' : ''}>Mean + 1 std dev</option>
+                  <option value="mean+2sd" ${ (s.ragCutoffMode ?? 'mean') === 'mean+2sd' ? 'selected' : ''}>Mean + 2 std dev</option>
+                </select>
               </div>
               <div class="cnz-settings-inline-row">
-                <label for="cnz-set-rag-pool-multiple">Pool Multiple ${tip('Candidate pool size = Pool Multiple x Max Results (minimum 6). A larger pool gives cliff detection more data to calibrate against and broadens the skewness sample. 2 is tight and fast; 3 is more stable for large databases.')}</label>
+                <label for="cnz-set-rag-pool-multiple">Pool Multiple ${tip('Candidate pool size = Pool Multiple x Max Results (minimum 6). Stats are computed on this pool only, not the full database. 2 is a tight competitive set; 3 gives more stable statistics for larger databases.')}</label>
                 <div style="display:flex;align-items:center;gap:8px">
                   <input id="cnz-set-rag-pool-multiple" type="range" min="1" max="5" step="0.5"
                          value="${escapeHtml(String(s.ragPoolMultiple ?? 2))}" style="flex:1">
