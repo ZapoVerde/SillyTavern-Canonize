@@ -192,7 +192,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
                 console.log(format, ...styles);
 
                 if (i === M_active - 1 && i < pool.length - 1) {
-                    console.log('%c  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ cutoff  (threshold ${meta.threshold.toFixed(3)})', 'color:#5c85d6');
+                    console.log(`%c  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ cutoff  (threshold ${meta.threshold.toFixed(3)})`, 'color:#5c85d6');
                 }
             }
         }
