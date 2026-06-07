@@ -110,13 +110,13 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     // contributes exactly (1 - kwBlend) × maxVectorScore to the fused score.
     // Keyword-only items (score=0 from RRF) are ranked purely by this contribution.
 
-    const maxVec = chatRaw.reduce((m, r) => Math.max(m, r.score), 0);
-    const maxKw  = chatRaw.reduce((m, r) => Math.max(m, r.kwTfidf ?? 0), 0);
+    const maxVec    = chatRaw.reduce((m, r) => Math.max(m, r.score), 0);
+    const maxKw     = chatRaw.reduce((m, r) => Math.max(m, r.kwTfidf ?? 0), 0);
+    const kwScale   = maxKw > 0 ? (1 - kwBlend) * maxVec : 0;
 
-    if (maxKw > 0) {
-        const kwScale = (1 - kwBlend) * maxVec;
+    if (kwScale > 0) {
         for (const r of chatRaw) {
-            const contrib   = r.kwTfidf != null ? (r.kwTfidf / maxKw) * kwScale : 0;
+            const contrib    = r.kwTfidf != null ? (r.kwTfidf / maxKw) * kwScale : 0;
             r.kwContribution = contrib;
             r.score         += contrib;
         }
@@ -198,7 +198,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
         return { format, styles };
     };
 
-    const _logChannel = (name, raw, result, meta) => {
+    const _logChannel = (name, raw, result, meta, kwMaxContrib = 0) => {
         if (!raw.length) { log('RagFetch', `${name}: no candidates`); return; }
         const maxS     = raw[0]?.score ?? 0;
         const minS     = raw.at(-1)?.score ?? 0;
@@ -207,7 +207,8 @@ export async function doRagFetch(ctx, settings, chain, signal) {
         // ── Collapsible group header ──────────────────────────────────────────
         let header = `[CNZ] ${name}`;
         if (meta) {
-            header += ` | ${raw.length} raw  pool=${meta.candidate_pool_size}  μ=${meta.local_mean.toFixed(3)}  Sk=${meta.pearson_skewness.toFixed(2)}  (${meta.cutoff_mode})  → ${M_active} injected`;
+            const kwPart = kwMaxContrib > 0 ? `  kw≤${kwMaxContrib.toFixed(3)}` : '';
+            header += ` | ${raw.length} raw  pool=${meta.candidate_pool_size}  μ=${meta.local_mean.toFixed(3)}  Sk=${meta.pearson_skewness.toFixed(2)}  (${meta.cutoff_mode})${kwPart}  → ${M_active} injected`;
         } else {
             header += ` | ${raw.length} raw (cold-start)  → ${M_active} injected`;
         }
@@ -248,7 +249,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
             cutoffMode:      meta?.cutoff_mode         ?? null,
         });
     };
-    _logChannel('chat', chatRaw.sort((a, b) => b.score - a.score), chunks,   chatMeta);
+    _logChannel('chat', chatRaw.sort((a, b) => b.score - a.score), chunks,   chatMeta, kwScale);
     _logChannel('lb',   lbRaw.sort((a, b) => b.score - a.score),   lbHits,   lbMeta);
     _logChannel('plot', plotRaw.sort((a, b) => b.score - a.score),  plotHits, plotMeta);
 
