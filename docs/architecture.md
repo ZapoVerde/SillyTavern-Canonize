@@ -8,25 +8,28 @@ Standard long-context roleplay has three failure modes:
 2. **Attention dilution.** LLMs suffer from "Lost in the Middle" — when forced to read massive raw logs, they start ignoring system prompts, drop character card instructions, and fall into repetitive prose.
 3. **Stale or missing memories.** The AI either forgets things from 200 turns ago, or hallucinates them because it is pattern-matching on noise rather than fact.
 
-## The Four-Tier Memory Model
+## Memory & Retrieval Architecture
 
-Canonize replaces the raw chat log with four structured layers. On every turn, the AI's context window is populated from these tiers rather than from raw history.
+Canonize operates with four inputs into the model:
 
-### 1. Clockwork (The Active Window)
+### 1. Live Context
+The most recent conversation turns, sent directly to the model.
 
-The live, uncompressed last N turn-pairs sent as-is. Keeping this short (default 5 pairs) keeps token costs predictable and puts your instructions in the high-attention zone at the top of context.
+### 2. Summary Stream
+A rolling narrative that keeps the model aligned with the current story state, bridging the retrieval system with the live context.
 
-### 2. Summary (Situational Awareness)
+### 3. Retrieval System (Three Lanes)
 
-A structured rolling narrative updated periodically in the background. It tracks where characters are physically and emotionally, what they intend to do, and what plot threads are unresolved. The AI always knows *what is happening right now* without reading the raw dialogue that produced it.
+Canonize retrieves additional context using three parallel lanes:
 
-### 3. Lorebook (Durable Knowledge)
+- **Chat Lane** — relevant past conversation fragments
+- **General Lane** — world knowledge (characters, places, objects)
+- **Plot Lane** — active story arcs and unresolved narrative threads
 
-Static, referenceable facts about the world — character descriptions, locations, items, factions — stored in standard SillyTavern lorebooks and injected only when relevant. Canonize writes and maintains these entries automatically via its sync pipeline.
+Each lane runs independently and injects only its most relevant matches.
 
-### 4. RAG (Associative Recall)
-
-Older conversations are sliced into chunks, summarized, and indexed in a searchable vector database. On each turn, Canonize runs a hybrid search (semantic similarity + keyword) against this database and injects the most relevant past moments directly into context — even if they happened thousands of turns ago.
+### 4. Context Assembly
+All selected outputs are merged into a single prompt window for generation.
 
 ## The Clockwork Chain
 
