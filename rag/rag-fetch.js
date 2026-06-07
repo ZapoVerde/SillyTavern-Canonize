@@ -130,7 +130,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     };
 
     // Returns { format, styles } for a single bar line using %c segments.
-    const _barLine = (rank, score, sources, isInjected, BAR_WIDTH, maxS) => {
+    const _barLine = (rank, score, sources, laneScores, isInjected, BAR_WIDTH, maxS) => {
         const barLen   = maxS > 0 ? Math.round((score / maxS) * BAR_WIDTH) : 0;
         const trailing = BAR_WIDTH - barLen;
         const tag      = _sourceTag(sources);
@@ -149,15 +149,31 @@ export async function doRagFetch(ctx, settings, chain, signal) {
             return { format: `%c${rankStr}  ${tag}  ${bar}${scoreStr}`, styles: ['color:inherit'] };
         }
 
-        // Divide filled portion into equal segments, one color per lane.
-        const segW  = Math.floor(barLen / lanes.length);
+        // Keyword gets a fixed 1-block indicator at the end of the filled portion (no cosine score).
+        // Content and header are proportioned by their actual lane scores.
+        const hasKeyword   = lanes.includes('keyword');
+        const vectorLanes  = lanes.filter(l => l !== 'keyword');
+        const kwW          = hasKeyword ? Math.min(1, barLen) : 0;
+        const vectorW      = barLen - kwW;
+
         let format  = `${rankStr}  ${tag}  `;
         const styles = [];
-        for (let s = 0; s < lanes.length; s++) {
-            const w = (s === lanes.length - 1) ? barLen - segW * s : segW;
-            format += `%c${'█'.repeat(w)}`;
-            styles.push(`color:${LANE_COLORS[lanes[s]]}`);
+
+        if (vectorLanes.length === 1) {
+            format += `%c${'█'.repeat(vectorW)}`;
+            styles.push(`color:${LANE_COLORS[vectorLanes[0]]}`);
+        } else if (vectorLanes.length >= 2) {
+            // Proportion content vs header by their real cosine scores.
+            const cS = laneScores?.content ?? 0;
+            const hS = laneScores?.header  ?? 0;
+            const total = cS + hS;
+            const cW = total > 0 ? Math.round(vectorW * cS / total) : Math.floor(vectorW / 2);
+            const hW = vectorW - cW;
+            if (cW > 0) { format += `%c${'█'.repeat(cW)}`; styles.push(`color:${LANE_COLORS.content}`); }
+            if (hW > 0) { format += `%c${'█'.repeat(hW)}`; styles.push(`color:${LANE_COLORS.header}`); }
         }
+
+        if (kwW > 0) { format += `%c${'█'.repeat(kwW)}`; styles.push(`color:${LANE_COLORS.keyword}`); }
         if (trailing > 0) { format += `%c${'░'.repeat(trailing)}`; styles.push(EMPTY_STYLE); }
         format += `%c${scoreStr}`;
         styles.push('color:inherit');
@@ -187,7 +203,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
             for (let i = 0; i < pool.length; i++) {
                 const { format, styles } = _barLine(
-                    i + 1, pool[i].score, pool[i].sources, i < M_active, BAR_WIDTH, maxS,
+                    i + 1, pool[i].score, pool[i].sources, pool[i].laneScores, i < M_active, BAR_WIDTH, maxS,
                 );
                 console.log(format, ...styles);
 

@@ -45,19 +45,21 @@ export function rrf({ content: contentRows, header: headerRows, keyword: kwRows 
 
     for (const row of contentRows) {
         const key = row.content;
-        if (!acc.has(key)) acc.set(key, { bestScore: 0, inContent: false, inHeader: false, sources: new Set(), row });
+        if (!acc.has(key)) acc.set(key, { bestScore: 0, contentScore: 0, headerScore: 0, inContent: false, inHeader: false, sources: new Set(), row });
         const e = acc.get(key);
-        e.bestScore  = Math.max(e.bestScore, row.score);
-        e.inContent  = true;
+        e.bestScore    = Math.max(e.bestScore, row.score);
+        e.contentScore = Math.max(e.contentScore, row.score);
+        e.inContent    = true;
         e.sources.add('content');
     }
 
     for (const row of headerRows) {
         const key = row.content;
-        if (!acc.has(key)) acc.set(key, { bestScore: 0, inContent: false, inHeader: false, sources: new Set(), row });
+        if (!acc.has(key)) acc.set(key, { bestScore: 0, contentScore: 0, headerScore: 0, inContent: false, inHeader: false, sources: new Set(), row });
         const e = acc.get(key);
-        e.bestScore = Math.max(e.bestScore, row.score);
-        e.inHeader  = true;
+        e.bestScore   = Math.max(e.bestScore, row.score);
+        e.headerScore = Math.max(e.headerScore, row.score);
+        e.inHeader    = true;
         e.sources.add('header');
     }
 
@@ -65,7 +67,7 @@ export function rrf({ content: contentRows, header: headerRows, keyword: kwRows 
         const key = row.content;
         if (!acc.has(key)) {
             // Keyword-only: no cosine available, use deflated constant.
-            acc.set(key, { bestScore: KEYWORD_SCORE, inContent: false, inHeader: false, sources: new Set(['keyword']), row });
+            acc.set(key, { bestScore: KEYWORD_SCORE, contentScore: 0, headerScore: 0, inContent: false, inHeader: false, sources: new Set(['keyword']), row });
         } else {
             // Already found by vector search — just mark the lane, don't lower the score.
             acc.get(key).sources.add('keyword');
@@ -78,6 +80,12 @@ export function rrf({ content: contentRows, header: headerRows, keyword: kwRows 
             const boosted = (e.inContent && e.inHeader)
                 ? Math.min(1, e.bestScore * DUAL_BONUS)
                 : e.bestScore;
-            return { ...e.row, score: boosted, sources: [...e.sources] };
+            return {
+                ...e.row, score: boosted, sources: [...e.sources],
+                laneScores: {
+                    content: e.inContent ? e.contentScore : null,
+                    header:  e.inHeader  ? e.headerScore  : null,
+                },
+            };
         });
 }
