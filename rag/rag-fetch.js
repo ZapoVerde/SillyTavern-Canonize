@@ -141,7 +141,6 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     // ── Lane color palette (chat channel only — lb/plot have no sources field) ──
     const LANE_COLORS = { content: '#4fc3f7', header: '#ffb74d', keyword: '#81c784' };
     const EMPTY_STYLE = 'color:#3a3a3a';
-    const GRAY_STYLE  = 'color:#555';
 
     // Returns { format, styles } for a single bar line using %c segments.
     const _barLine = (score, sources, laneScores, kwContribution, isInjected, BAR_WIDTH, maxS) => {
@@ -158,11 +157,6 @@ export async function doRagFetch(ctx, settings, chain, signal) {
         const scoreInt = (laneScores && (cS > 0 || hS > 0))
             ? `  ${c}+${h}+${kw}=${total}`
             : `  ${total}`;
-
-        if (!isInjected) {
-            const bar = '█'.repeat(barLen) + '░'.repeat(trailing);
-            return { format: `%c  ${bar}${scoreInt}`, styles: [GRAY_STYLE] };
-        }
 
         const lanes = (sources ?? []).filter(s => LANE_COLORS[s]);
         if (!lanes.length) {
