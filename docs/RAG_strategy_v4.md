@@ -1,6 +1,6 @@
-# Technical Specification: v4 — Local Pool Mean Threshold
+# Technical Specification: v4 — Hybrid Micro-Pool Threshold
 
-This specification describes the RAG retrieval strategy implemented in `rag/cutoff.js` as of the `rag-v3-dynamic-threshold` branch. It supersedes v3 [docs/RAG_strategy_v3.md], which proposed a more complex skewness-driven exponential scaling factor and cliff detection. Those were abandoned in favour of a simpler, more interpretable approach that achieves the same practical goal with fewer failure modes.
+This specification describes the RAG retrieval strategy implemented on the `rag-v3-dynamic-threshold` branch. It supersedes v3 [docs/RAG_strategy_v3.md], which used a skewness-driven exponential scaling factor and cliff detection — both abandoned for simpler, more interpretable equivalents.
 
 ---
 
@@ -8,16 +8,19 @@ This specification describes the RAG retrieval strategy implemented in `rag/cuto
 
 ### Why v3 was rejected
 
-v3 computed a scaling factor $R = e^{-k \cdot Sk}$ to adjust the result window. Two problems emerged during testing:
+v3 computed a scaling factor $R = e^{-k \cdot Sk}$ to adjust the result window. Two problems emerged in testing:
 
-1. **Cliff detection fires too easily.** The mean drop-off $\mu_D$ is computed over the entire pool, including a flat noise plateau. One genuine gap in a sea of flat scores trivially exceeds $1.5 \times \mu_D$, making the cliff trigger at almost every turn.
-2. **$k$ is hard to reason about.** The exponential maps non-intuitively: small changes in $k$ at high skewness values swing the window dramatically, making tuning opaque.
+1. **Cliff detection fires too easily.** Mean drop-off $\mu_D$ is computed over the entire pool, including a flat noise plateau. One genuine gap trivially exceeds $1.5 \times \mu_D$.
+2. **$k$ is hard to reason about.** The exponential is steep and non-intuitive; small changes at high skewness values swing the window dramatically.
 
 ### What v4 does instead
 
-v4 applies v2-style thinking (a statistical threshold) to a v3-style micro-pool (a local window, not the global database). The threshold is the pool mean — or mean plus one or two standard deviations — applied directly to candidate scores. No scaling factor, no cliff detection.
+v4 combines two well-established ideas:
 
-The key insight: we are characterising the *decision surface* of the top candidates, not estimating a population parameter. A pool of 16 items drawn from the top of a 400-item database is not too small for statistics — it is exactly the right shape to describe the question "where does relevance fall off in this query?"
+1. **Local micro-pool statistics** — compute mean/σ/skewness on only the top $N_C$ candidates rather than the full database, eliminating the scale-smothering effect of a noise floor with hundreds of irrelevant documents.
+2. **Hybrid search** — fuse vector similarity (cosine) with keyword relevance (TF-IDF) before applying the threshold, using an anchored normalisation so the keyword contribution is always expressed as a fraction of the strongest vector score in this query.
+
+The result is a retrieval pipeline that adapts to both the *shape* of the query's semantic neighbourhood and the *lexical specificity* of individual terms (proper nouns, rare phrases) that embedding models sometimes smooth over.
 
 ---
 
@@ -25,89 +28,114 @@ The key insight: we are characterising the *decision surface* of the top candida
 
 | Symbol | Meaning |
 |---|---|
-| $M$ | Max results ceiling (user setting) |
-| $\text{Min}$ | Min results floor (user setting) |
-| $P$ | Pool multiple (user setting, default 2) |
+| $M$ | Max results ceiling |
+| $\text{Min}$ | Min results floor |
+| $P$ | Pool multiple (default 2) |
+| $\alpha$ | Vector/keyword blend weight (default 0.7) |
 | $V_{\text{total}}$ | Total items in raw result set |
 | $N_C$ | Candidate pool size: $\max(\lfloor P \times M \rceil, 6)$ |
-| $C$ | Sorted descending slice of length $N_C$ from raw results |
-| $\mu_C$ | Arithmetic mean of scores in $C$ |
-| $\tilde{x}_C$ | Median score of $C$ |
+| $C$ | Sorted descending slice of length $N_C$ from blended results |
+| $s^{\text{vec}}_i$ | Vector score for item $i$ (best cosine across content/header lanes, ×1.08 if both matched) |
+| $t_i$ | Raw TF-IDF score for item $i$ from keyword search (null if no match) |
+| $s_i$ | Final blended score for item $i$ |
+| $\mu_C$ | Arithmetic mean of $s_i$ in $C$ |
+| $\tilde{x}_C$ | Median of $s_i$ in $C$ |
 | $\sigma_C$ | Population standard deviation of $C$ (floor 0.01) |
-| $Sk$ | Pearson Median Skewness of $C$ — telemetry only |
-| $\theta$ | Decision threshold derived from $\mu_C$ and mode |
-| $M_{\text{active}}$ | Final returned count after threshold and clamping |
+| $Sk$ | Pearson Median Skewness — telemetry only |
+| $\theta$ | Decision threshold |
+| $M_{\text{active}}$ | Final returned count |
 
 ---
 
 ## 3. Algorithmic Pipeline
 
 ```
-[ Raw Vector Query ]
-        │
-[ V_total ≤ Min? ] ──(Yes)──> [ Cold-Start Bypass: return all ]
-        │ (No)
-[ Slice top N_C → pool C ]
-        │
-[ Compute μ, median, σ, Sk on C ]
-        │
-[ Apply cutoff mode → threshold θ ]
-        │
-[ Filter C: score > θ → above_threshold ]
-        │
-[ above_threshold.length < Min? ]
-  (Yes)──> [ Floor: return top Min from sorted ]
-  (No) ──> [ Clamp to Max: return above_threshold[:Max] ]
+[ Raw Vector Query ]            [ FTS Keyword Query ]
+        │                               │
+        └──────── RRF Fusion ───────────┘
+                      │
+               [ s_vec per item ]
+               [ t_kw  per item ]
+                      │
+         [ Temporal decay (chat only) ]
+                      │
+         [ Keyword blend → s_i ]
+                      │
+        [ V_total ≤ Min? ] ──(Yes)──> [ Cold-start bypass ]
+                      │ (No)
+        [ Slice top N_C → pool C ]
+                      │
+        [ Compute μ, median, σ, Sk on C ]
+                      │
+        [ Apply cutoff mode → threshold θ ]
+                      │
+        [ Filter C: s_i > θ → above_threshold ]
+                      │
+        [ len < Min? ]
+          (Yes)──> [ Floor: return top Min from full sorted ]
+          (No) ──> [ Clamp to Max ]
 ```
 
-### Step 1 — Cold-start bypass
+### Step 1 — RRF fusion
 
-If $V_{\text{total}} \le \text{Min}$, return all candidates immediately and emit `metadata: null`. There is no meaningful distribution to analyse.
+Three lanes are merged per item:
 
-### Step 2 — Build candidate pool
+- **Content lane:** cosine similarity between the query vector and the chunk's content embedding.
+- **Header lane:** cosine similarity against the chunk's header/summary embedding. Items matching both content and header receive a 1.08× dual-confirmation bonus.
+- **Keyword lane:** TF-IDF score from a full-text search index built over chunk content. Raw scores are preserved as $t_i$ for use in the blend step.
 
-Extract the top $N_C$ items from the sorted raw results:
+Each item's vector score $s^{\text{vec}}_i$ is the best cosine seen across content and header lanes (after dual bonus). Keyword-only items (no vector match) carry $s^{\text{vec}}_i = 0$.
+
+### Step 2 — Temporal decay (chat channel only)
+
+```
+age    = max(0, totalPairs - pairEnd)
+factor = max(0.70, 1.0 - 0.025 × ln(age + 1))
+s_vec  = s_vec × factor
+```
+
+Older chunks are gently down-weighted. The floor of 0.70 prevents ancient-but-relevant chunks from being buried entirely.
+
+### Step 3 — Keyword blend
+
+For each channel independently:
+
+$$s^{\text{kw-max}} = (1 - \alpha) \times \max_i(s^{\text{vec}}_i)$$
+
+$$s_i = s^{\text{vec}}_i + \frac{t_i}{t_{\max}} \times s^{\text{kw-max}}$$
+
+The top keyword match contributes exactly $(1-\alpha) \times$ the strongest vector score in this result set. All other keyword contributions are proportional. Items with no keyword match receive no bonus. Keyword-only items (no vector match) have $s^{\text{vec}}_i = 0$ and rank purely on their keyword contribution, capped at $s^{\text{kw-max}}$.
+
+This anchoring means the blend weight $\alpha$ is directly interpretable: at $\alpha = 0.7$, the keyword lane can contribute at most 30% of the top vector score, regardless of the absolute TF-IDF values.
+
+### Step 4 — Pool statistics
+
+Extract the top $N_C$ blended scores into pool $C$:
 
 $$N_C = \max\!\left(\left\lfloor P \times M \right\rceil,\ 6\right)$$
 
-The minimum of 6 prevents degenerate statistics when Max is set very low (e.g. Max=2, P=2 would yield N_C=4 without the floor).
+Compute:
 
-### Step 3 — Pool statistics
+$$\mu_C,\quad \tilde{x}_C,\quad \sigma_C = \max\!\left(\sqrt{\tfrac{1}{N_C}\sum(s_i - \mu_C)^2},\ 0.01\right)$$
 
-Compute over the pool $C$:
+$$Sk = \frac{3(\mu_C - \tilde{x}_C)}{\sigma_C} \quad \text{(logged, not used for cutoff)}$$
 
-$$\mu_C = \frac{1}{N_C}\sum_{i=0}^{N_C-1} c_i$$
+### Step 5 — Threshold and clamp
 
-$$\tilde{x}_C = \text{median}(C)$$
-
-$$\sigma_C = \max\!\left(\sqrt{\frac{1}{N_C}\sum_{i=0}^{N_C-1}(c_i - \mu_C)^2},\ 0.01\right)$$
-
-$$Sk = \frac{3(\mu_C - \tilde{x}_C)}{\sigma_C} \quad \text{(display only — does not affect cutoff)}$$
-
-Skewness is retained as telemetry. It is logged in the console header and written to `cnz_rag_health.csv`. It may inform a future v5 strategy but is not a decision variable here.
-
-### Step 4 — Threshold
-
-The threshold $\theta$ is selected by the user's Cutoff Mode setting:
-
-| Mode | Threshold |
+| Cutoff Mode | Threshold |
 |---|---|
 | `mean` | $\theta = \mu_C$ |
 | `mean+1sd` | $\theta = \mu_C + \sigma_C$ |
 | `mean+2sd` | $\theta = \mu_C + 2\sigma_C$ |
 
-### Step 5 — Filter and clamp
-
 ```
-above_threshold = [ c ∈ C : c.score > θ ]
+above_threshold = [ c ∈ C : s_i > θ ]
 
 if len(above_threshold) < Min:
-    M_active = top Min items from full sorted list   # floor guarantee
+    M_active = top Min from full sorted list
 else:
-    M_active = above_threshold[:Max]                 # clamp to ceiling
+    M_active = above_threshold[:Max]
 ```
-
-The floor path pulls from the full sorted list (not just the pool) so that cold/sparse queries always return something useful even when the pool mean is artificially high.
 
 ---
 
@@ -115,60 +143,70 @@ The floor path pulls from the full sorted list (not just the pool) so that cold/
 
 | Query type | Pool shape | Outcome |
 |---|---|---|
-| Hyper-specific callback | One standout, pool drops sharply | Mean threshold above all but the top item → returns Min |
-| Thematic dense scene | Multiple items cluster near the top | Items above mean may fill to Max |
-| Uniform noise | Flat pool, all items near mean | Most items are near or below mean → returns Min |
-| Cold/sparse | V_total ≤ Min | Bypass — all items returned |
-
-The key difference from v3: there is no amplification mechanism. The window never expands beyond what clears the threshold. The pool multiple $P$ is the tuning knob for how much context to give the statistics, not for inflating the result count.
+| Hyper-specific callback (proper noun) | One standout; keyword lane boosts it further | Threshold above most items → Min returned |
+| Thematic dense scene | Multiple items cluster near top | Several clear the mean → fills toward Max |
+| Uniform noise | Flat pool | Most items near or below mean → Min returned |
+| Keyword-rich query | Strong TF-IDF hits on rare terms | Keyword contribution rescores items, may change cutoff boundary |
+| Cold/sparse | $V_{\text{total}} \le \text{Min}$ | Bypass — all items returned |
 
 ---
 
 ## 5. Controls
 
-Three knobs directly affect retrieval volume; one affects only pool statistics:
-
-| Setting | ID | Effect |
+| Setting | Key | Effect |
 |---|---|---|
 | Min Results | `ragChatMin` / `ragLbMin` | Floor on returned items |
 | Max Results | `ragChatMax` / `ragLbMax` | Ceiling on returned items |
-| Pool Multiple ($P$) | `ragPoolMultiple` | Controls pool size; larger values give more context to the statistics but do not raise Max |
-| Cutoff Mode | `ragCutoffMode` | Threshold strictness: `mean` is most permissive, `mean+2sd` is most selective |
+| Pool Multiple ($P$) | `ragPoolMultiple` | Pool size = P × Max (min 6). Larger pools give the statistics more shape but don't raise Max |
+| Cutoff Mode | `ragCutoffMode` | `mean` is permissive; `mean+2sd` is selective |
+| Keyword Blend ($\alpha$) | `ragKwBlend` | 0 = keyword dominates; 1 = vector only. Default 0.7 |
 
-### Guidance for tuning
+### Tuning guidance
 
-- Start with `mean`, `P=2`, and your preferred Min/Max.
-- If too many marginally relevant results are being injected, raise to `mean+1sd` before reaching for `mean+2sd`.
-- Increase $P$ (to 3 or 4) when your Max is large (≥10) so the pool has enough shape to be meaningful.
-- `mean+2sd` is useful only in very dense chats where a clear elite tier separates from background; in short chats it will almost always hit the Min floor.
+- Start with `mean`, $P=2$, $\alpha=0.7$.
+- If too many marginal results are injected, try `mean+1sd` before lowering $\alpha$.
+- Raise $P$ to 3–4 when Max is large (≥10) so the pool has enough shape for stable statistics.
+- Lower $\alpha$ toward 0.5–0.6 if your queries are proper-noun-heavy (character names, place names) and semantic similarity alone is missing them.
+- `mean+2sd` is rarely useful outside dense chats where a clear elite tier separates from background.
 
 ---
 
 ## 6. Console Telemetry
 
-Every channel emits a collapsible group on each turn:
+Every channel emits a collapsible group each turn:
 
 ```
-[CNZ] chat | 81 raw  pool=16  μ=0.513  Sk=1.40  (mean)  → 5 injected
-  c+h    ████████████████████  0.578
-  c      ██████████████████░░  0.561
+[CNZ] chat | 96 raw  pool=20  μ=0.685  Sk=0.91  (mean)  kw≤0.213  → 9 injected
+  ████████████████████  355+313+213=881
+  ████████████████░░░░  390+319+148=857
   ...
-  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ cutoff  (threshold 0.513)
-  k      ████████████████░░░░  0.497  ← gray (below cutoff)
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ cutoff  (threshold 0.685)
+  ██████████████░░░░░░  318+274+70=662
   ...
 ```
 
-**Bar normalization:** Absolute — `barLen = round(score / poolMax × 20)`. Bars are not range-normalized because range compression exaggerates small differences. A short bar on an absolute scale is meaningful; a short bar on a compressed scale is misleading.
+**Header fields:**
+- `raw` — total candidates from vector store
+- `pool` — N_C (pool size used for statistics)
+- `μ` — pool mean (the `mean` threshold value)
+- `Sk` — Pearson Median Skewness (display only)
+- `(mode)` — active cutoff mode
+- `kw≤` — maximum keyword contribution in this result set (omitted if no keyword matches)
+- `→ N injected` — items returned above threshold
 
-**Lane colors (chat channel only):**
+**Bar format:** Each bar line shows:
+```
+  [████blue████][███amber███][██green██][░░░░░░░░]  content+header+kw=total
+```
+- **Blue** (`#4fc3f7`) — content embedding contribution (proportional to content cosine score)
+- **Amber** (`#ffb74d`) — header embedding contribution (proportional to header cosine score)
+- **Green** (`#81c784`) — keyword contribution (proportional to actual blended contribution)
+- **Dark** (`#3a3a3a`) — empty/trailing fill
+- Score suffix: three integers summing to the blended score × 1000
 
-| Lane | Color | Trigger |
-|---|---|---|
-| content | `#4fc3f7` (blue) | Chunk matched via content body embedding |
-| header | `#ffb74d` (amber) | Chunk matched via header embedding |
-| keyword | `#81c784` (green) | Chunk matched via FTS keyword hit |
+All items (above and below cutoff) are colored. The cutoff line visually separates injected from non-injected. Bar lengths use absolute normalization: `barLen = round(score / poolMax × 20)`.
 
-Each filled bar is divided into equal segments, one per source lane that contributed to the chunk's RRF score. Items below the cutoff line are rendered gray regardless of lanes. LB and plot channel items have no source field (no RRF layer) and render as a single inherit-color bar.
+**Channels:** Chat, LB, and plot all run the full pipeline (vector + FTS + blend) and display identical bar format. LB entries use a single content vector lane (the combined comment+keys+content embedding) so bars are blue/green only — no amber header lane.
 
 **Health CSV columns:** `timestamp, character, channel, provider, model, candidates, max_score, min_score, pool_size, local_mean, local_median, local_std_dev, pearson_skewness, threshold, cutoff_mode, returned`
 
@@ -178,9 +216,9 @@ Each filled bar is divided into equal segments, one per source lane that contrib
 
 | v3 feature | Reason removed |
 |---|---|
-| Sensitivity factor $k$ | Exponential mapping is non-intuitive; hard to explain to users |
-| Scaling factor $R = e^{-k \cdot Sk}$ | Skewness as a direct decision variable produces unstable windows |
-| Cliff detection | Mean drop-off $\mu_D$ computed over a flat noise plateau makes the threshold trivially easy to exceed |
-| $M_{\text{active}}$ as a computed expansion | Eliminated; the window never inflates, only filters |
-
-Skewness is retained as an observable. If a future version finds a reliable way to use pool shape as a signal (e.g. high positive skew reliably meaning "one standout, cut at Min"), that would become v5.
+| Sensitivity factor $k$ | Non-intuitive exponential; hard to explain |
+| Scaling factor $R = e^{-k \cdot Sk}$ | Skewness as decision variable produces unstable windows |
+| Cliff detection | Flat noise plateau makes $\mu_D$ trivially small; cliff triggers constantly |
+| $M_{\text{active}}$ as computed expansion | Eliminated; window only filters, never inflates |
+| Fixed `KEYWORD_SCORE = 0.3` | Replaced by anchored normalisation; keyword-only items now rank by actual TF-IDF strength |
+| Keyword as boolean tag | Keyword contribution is now proportional and scored; visible in bar breakdown |
