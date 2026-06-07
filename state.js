@@ -90,6 +90,7 @@ export const PROFILE_DEFAULTS = Object.freeze({
     ragLbMax:                 4,
     ragCutoffMode:            'mean',
     ragPoolMultiple:          2,
+    ragKwBlend:               0.7,
     ragInjectionTemplate:     DEFAULT_RAG_INJECTION_TEMPLATE,
     cnzSummaryTemplate:       DEFAULT_CNZ_SUMMARY_TEMPLATE,
     cnzPlotChunkTemplate:     DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE,

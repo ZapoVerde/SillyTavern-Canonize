@@ -135,6 +135,7 @@ export async function querySyncChunks(chatKey, validAnchorUuids, queryText, sign
             chatFile: r.chatFile ?? null, anchorUuid: r.anchorUuid,
             sources: r.sources?.length ? r.sources : ['vec'],
             laneScores: r.laneScores ?? null,
+            kwTfidf: r.kwTfidf ?? null,
         }));
 }
 

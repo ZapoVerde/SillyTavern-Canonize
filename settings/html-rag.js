@@ -185,6 +185,14 @@ export function buildRagSectionHTML(s, escapeHtml) {
                   <span id="cnz-set-rag-pool-multiple-val" style="min-width:2.5em;text-align:right;font-size:0.85rem">${escapeHtml(String(s.ragPoolMultiple ?? 2))}x</span>
                 </div>
               </div>
+              <div class="cnz-settings-inline-row">
+                <label for="cnz-set-rag-kw-blend">Keyword blend ${tip('How much the keyword (FTS) lane can contribute relative to the top vector score. At 0.7 the strongest keyword match adds at most 30% of the top cosine score to any item. Lower = keyword has more influence; higher = vector dominates. Only affects the chat channel where FTS runs.')}</label>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <input id="cnz-set-rag-kw-blend" type="range" min="0" max="1" step="0.05"
+                         value="${escapeHtml(String(s.ragKwBlend ?? 0.7))}" style="flex:1">
+                  <span id="cnz-set-rag-kw-blend-val" style="min-width:3.5em;text-align:right;font-size:0.85rem">${escapeHtml(String(Math.round((s.ragKwBlend ?? 0.7) * 100)))}% vec</span>
+                </div>
+              </div>
               <div class="cnz-settings-inline-row" style="align-items:baseline;gap:8px;">
                 <label style="flex:1">Chat context ${tip('Results from searching the narrative memory store using recent conversation turns as the query.')}</label>
                 <label style="font-size:0.8rem;color:var(--cnz-text-muted,#888)">Min</label>

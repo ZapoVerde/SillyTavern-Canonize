@@ -53,6 +53,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
     const cutoffMode     = settings.ragCutoffMode               ?? 'mean';
     const poolMultiple   = settings.ragPoolMultiple             ?? 2;
+    const kwBlend        = settings.ragKwBlend                  ?? 0.7;
     const chatMin        = settings.ragChatMin                  ?? 2;
     const chatMax        = settings.ragChatMax                  ?? 8;
     const lbMin          = settings.ragLbMin                    ?? 2;
@@ -104,6 +105,25 @@ export async function doRagFetch(ctx, settings, chain, signal) {
         }
     }
 
+    // ── Keyword blend (chat channel only — lb/plot have no FTS layer) ─────────
+    // Normalise TF-IDF scores within this result set so the top keyword match
+    // contributes exactly (1 - kwBlend) × maxVectorScore to the fused score.
+    // Keyword-only items (score=0 from RRF) are ranked purely by this contribution.
+
+    const maxVec = chatRaw.reduce((m, r) => Math.max(m, r.score), 0);
+    const maxKw  = chatRaw.reduce((m, r) => Math.max(m, r.kwTfidf ?? 0), 0);
+
+    if (maxKw > 0) {
+        const kwScale = (1 - kwBlend) * maxVec;
+        for (const r of chatRaw) {
+            const contrib   = r.kwTfidf != null ? (r.kwTfidf / maxKw) * kwScale : 0;
+            r.kwContribution = contrib;
+            r.score         += contrib;
+        }
+    } else {
+        for (const r of chatRaw) r.kwContribution = 0;
+    }
+
     // ── Distributional cutoff per channel ─────────────────────────────────────
 
     const cutoffOpts = { cutoffMode, poolMultiple };
@@ -130,7 +150,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     };
 
     // Returns { format, styles } for a single bar line using %c segments.
-    const _barLine = (rank, score, sources, laneScores, isInjected, BAR_WIDTH, maxS) => {
+    const _barLine = (rank, score, sources, laneScores, kwContribution, isInjected, BAR_WIDTH, maxS) => {
         const barLen   = maxS > 0 ? Math.round((score / maxS) * BAR_WIDTH) : 0;
         const trailing = BAR_WIDTH - barLen;
         const tag      = _sourceTag(sources);
@@ -144,31 +164,29 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
         const lanes = (sources ?? []).filter(s => LANE_COLORS[s]);
         if (!lanes.length) {
-            // No lane data (lb/plot): single-color bar.
             const bar = '█'.repeat(barLen) + '░'.repeat(trailing);
             return { format: `%c${rankStr}  ${tag}  ${bar}${scoreStr}`, styles: ['color:inherit'] };
         }
 
-        // Keyword gets a fixed 1-block indicator at the end of the filled portion (no cosine score).
-        // Content and header are proportioned by their actual lane scores.
-        const hasKeyword   = lanes.includes('keyword');
-        const vectorLanes  = lanes.filter(l => l !== 'keyword');
-        const kwW          = hasKeyword ? Math.min(1, barLen) : 0;
-        const vectorW      = barLen - kwW;
+        // Keyword portion is proportional to its actual score contribution.
+        // Vector portion (content + header) fills the remainder, proportioned by lane scores.
+        const kwW     = (score > 0 && kwContribution > 0)
+            ? Math.min(barLen, Math.round(barLen * kwContribution / score))
+            : 0;
+        const vectorW = barLen - kwW;
 
         let format  = `${rankStr}  ${tag}  `;
         const styles = [];
 
+        const vectorLanes = lanes.filter(l => l !== 'keyword');
         if (vectorLanes.length === 1) {
-            format += `%c${'█'.repeat(vectorW)}`;
-            styles.push(`color:${LANE_COLORS[vectorLanes[0]]}`);
+            if (vectorW > 0) { format += `%c${'█'.repeat(vectorW)}`; styles.push(`color:${LANE_COLORS[vectorLanes[0]]}`); }
         } else if (vectorLanes.length >= 2) {
-            // Proportion content vs header by their real cosine scores.
-            const cS = laneScores?.content ?? 0;
-            const hS = laneScores?.header  ?? 0;
+            const cS    = laneScores?.content ?? 0;
+            const hS    = laneScores?.header  ?? 0;
             const total = cS + hS;
-            const cW = total > 0 ? Math.round(vectorW * cS / total) : Math.floor(vectorW / 2);
-            const hW = vectorW - cW;
+            const cW    = total > 0 ? Math.round(vectorW * cS / total) : Math.floor(vectorW / 2);
+            const hW    = vectorW - cW;
             if (cW > 0) { format += `%c${'█'.repeat(cW)}`; styles.push(`color:${LANE_COLORS.content}`); }
             if (hW > 0) { format += `%c${'█'.repeat(hW)}`; styles.push(`color:${LANE_COLORS.header}`); }
         }
@@ -203,7 +221,8 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
             for (let i = 0; i < pool.length; i++) {
                 const { format, styles } = _barLine(
-                    i + 1, pool[i].score, pool[i].sources, pool[i].laneScores, i < M_active, BAR_WIDTH, maxS,
+                    i + 1, pool[i].score, pool[i].sources, pool[i].laneScores,
+                    pool[i].kwContribution ?? 0, i < M_active, BAR_WIDTH, maxS,
                 );
                 console.log(format, ...styles);
 

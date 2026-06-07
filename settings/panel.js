@@ -119,6 +119,8 @@ function refreshSettingsUI() {
     $('#cnz-set-rag-cutoff-mode').val(s.ragCutoffMode ?? 'mean');
     $('#cnz-set-rag-pool-multiple').val(s.ragPoolMultiple ?? 2);
     $('#cnz-set-rag-pool-multiple-val').text((s.ragPoolMultiple ?? 2) + 'x');
+    $('#cnz-set-rag-kw-blend').val(s.ragKwBlend ?? 0.7);
+    $('#cnz-set-rag-kw-blend-val').text(Math.round((s.ragKwBlend ?? 0.7) * 100) + '% vec');
     $('#cnz-set-rag-chat-min').val(s.ragChatMin ?? 2);
     $('#cnz-set-rag-chat-max').val(s.ragChatMax ?? 8);
     $('#cnz-set-rag-lb-min').val(s.ragLbMin ?? 2);
