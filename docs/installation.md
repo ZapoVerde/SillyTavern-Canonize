@@ -17,6 +17,6 @@ This setting is required because Canonize calls the embedding API directly from 
 1. Open the Canonize settings panel in the Extensions drawer.
 2. Under **Connections and Prompts**, set your **Summary Connection Profile** — the model used for summarization and lorebook generation. DeepSeek V4 Pro is a good choice here.
 3. Under **RAG Storage and Retrieval**, set your **RAG Connection Profile** — the model used to classify and summarise conversation chunks when archiving. DeepSeek V4 Pro or Gemini 3.1 Flash-Lite both work well.
-4. Under **RAG Storage and Retrieval**, set your **Embedding Source**. Perplexity is recommended — OpenAI and Qwen can slow significantly during peak periods, adding up to 30 seconds per turn.
+4. Under **RAG Storage and Retrieval**, set your **Embedding Source**. Perplexity is recommended — OpenAI and Qwen are stronger embedding models but can slow significantly during peak periods, adding up to 30 seconds per turn.
 5. If using a cloud embedding provider, confirm your API key is stored in SillyTavern's API Connections panel under the matching provider.
 6. Open a chat with a character. The sync icon in the toolbar will activate once a conversation is in progress.
