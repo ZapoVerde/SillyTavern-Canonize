@@ -10,36 +10,32 @@ Standard long-context roleplay has three failure modes:
 
 ## Memory & Retrieval Architecture
 
-Canonize operates with four inputs into the model:
+At each generation turn, three things are assembled into the prompt:
 
-### 1. Live Context
-The most recent conversation turns, sent directly to the model.
+### Live Context
+The most recent conversation turns, sent directly to the model. Not a memory system — just the active window.
 
-### 2. Summary Stream
-A rolling narrative that keeps the model aligned with the current story state, bridging the retrieval system with the live context.
+### Bridge Summary
+A rolling narrative that keeps the model aligned with the current story state. Bridges the retrieval memory into the live context.
 
-### 3. Retrieval System (Three Lanes)
+### Retrieval Memory
+The actual memory system. Three search lanes run in parallel and inject only their most relevant matches:
 
-Canonize retrieves additional context using three parallel lanes:
+- **Chat Lane** — archived conversation chunks, summarised and indexed
+- **General Lane** — world knowledge lorebook (characters, places, objects, concepts)
+- **Plot Lane** — plot lorebook (active story arcs and unresolved narrative threads)
 
-- **Chat Lane** — relevant past conversation fragments
-- **General Lane** — world knowledge (characters, places, objects)
-- **Plot Lane** — active story arcs and unresolved narrative threads
+The lorebooks are the source material for the general and plot lanes. All three lanes feed into the retrieval memory system.
 
-Each lane runs independently and injects only its most relevant matches.
+## Timeline Integrity
 
-### 4. Context Assembly
-All selected outputs are merged into a single prompt window for generation.
+Canonize writes sync markers into your chat file alongside certain messages. Each marker is a complete snapshot of your lorebook state and narrative summary at that point in the timeline. They are stored in message metadata and are never sent to the model.
 
-## The Clockwork Chain
-
-To coordinate all four tiers without manual effort, Canonize places invisible sync markers inside your chat messages. Each marker is a complete snapshot of your lorebook state and narrative summary at that exact moment in time.
-
-When you swipe, delete messages, or edit past turns, Canonize detects the divergence, identifies the last valid marker, and rolls back all four tiers to match. Your AI's memory always reflects your *current* timeline, not an abandoned branch.
+When you swipe, delete messages, or edit past turns, Canonize detects the divergence, identifies the last valid marker, and rolls back the summary, lorebook state, and retrieval index to match. Your AI's memory always reflects your *current* timeline, not an abandoned branch.
 
 ## The Sync Pipeline
 
-When enough new turns have accumulated (default: every 20 pairs), Canonize runs a background sync:
+When enough new turns have accumulated (default: every 10 pairs), Canonize runs a background sync:
 
 1. Reads the new conversation block since the last marker.
 2. Updates the rolling **Summary**.
@@ -52,12 +48,12 @@ Nothing is written permanently until you confirm.
 
 ## Hybrid RAG Retrieval
 
-The RAG retrieval pipeline (v4) runs on every generation turn:
+The RAG retrieval pipeline runs on every generation turn:
 
-1. **Vector search** — embeds the recent conversation and scores all stored chunks by cosine similarity across two lanes (content body + header summary).
-2. **Keyword search** — runs a TF-IDF full-text search over the same corpus, preserving raw scores.
-3. **RRF fusion** — merges the two lanes per item; items matching both lanes receive a confidence bonus.
-4. **Keyword blend** — normalises TF-IDF scores so the top keyword match contributes at most `(1 - α) × maxVectorScore`. Default α=0.7.
-5. **Micro-pool threshold** — computes mean/σ/skewness on only the top `P × Max` candidates (not the full database), then cuts at the mean (or mean+σ, mean+2σ). Returns everything above the threshold, clamped to [Min, Max].
+1. **Vector search** — embeds the recent conversation and scores all stored chunks by cosine similarity across two lanes (content body + chunk summary).
+2. **Temporal decay** — chat chunks are gently down-weighted by age so recent events rank slightly higher than older ones at the same similarity level. A floor prevents old-but-relevant content from being buried entirely. Applies to the chat lane only.
+3. **Keyword search** — TF-IDF: scores each chunk based on how well its specific terms match the query; common words that appear everywhere count for little, distinctive or rare words count for more.
+4. **Micro-pool threshold** — normalises results to a pool of P × Max candidates, giving the scoring a consistent reference group from which to separate signal from noise. Min, Max, and cutoff mode are the knobs that shape this: Min sets the floor on what is always returned, Max sets the ceiling, and cutoff mode controls how aggressively the threshold separates signal from noise within the pool.
+5. **Score combination** — the final score for each chunk draws from all three lanes. Chunks that matched strongly across both vector lanes (content body and chunk summary) receive a confidence bonus; keyword score is added proportionally on top.
 
 See [RAG_strategy_v4.md](RAG_strategy_v4.md) for full technical detail.

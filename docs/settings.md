@@ -26,7 +26,7 @@ Canonize supports multiple setting profiles (e.g. a "Low Cost" profile for cheap
 
 - **Live Context Buffer** — Number of recent turn-pairs left uncompressed and sent as raw dialogue. Default 5.
 - **Pairs Between Updates** — How many new pairs must accumulate before a sync cycle triggers. Also defines the sync window size. Default 20.
-- **Summary Horizon** — How many turns of history are fed to the AI when updating the rolling narrative summary. Default 40.
+- **Summary Horizon** — How many turns of history are fed to the AI when updating the bridge summary. Default 40.
 - **Lorebook Sync Start**
   - *From sync point* — Only scans the newly added block since the last save marker. Faster and cheaper.
   - *From latest turn* — Scans the entire horizon. Slower but catches missed details.
@@ -41,15 +41,15 @@ Canonize supports multiple setting profiles (e.g. a "Low Cost" profile for cheap
 
 ---
 
-## Narrative Memory (RAG)
+## RAG Storage and Retrieval
 
 RAG is always active when Canonize is enabled.
 
 ### Content and Embedding
 
 - **RAG Contents**
-  - *Summary + Full* — Retrieves the AI-generated chunk header plus raw dialogue. Recommended.
-  - *Summary Only* — Header only. Compact.
+  - *Summary + Full* — Retrieves the AI-generated chunk summary plus raw dialogue. Recommended.
+  - *Summary Only* — Chunk summary only. Compact.
   - *Full Content Only* — Raw dialogue only.
 - **RAG Connection Profile** — Model profile used for chunk classification.
 - **Chunk Size (pairs)** — Turn-pairs per RAG archive block. Default 2.

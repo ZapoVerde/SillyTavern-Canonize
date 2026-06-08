@@ -9,8 +9,8 @@ Canonize's RAG system archives older conversation blocks into a searchable vecto
 Every sync cycle, new conversation blocks are:
 
 1. Sliced into chunks (default 2 turn-pairs each, with optional overlap).
-2. Classified by an AI call — each chunk gets a short summary header describing what happened.
-3. Embedded as vectors using your configured embedding provider (content body and header summary are embedded separately for two-lane retrieval).
+2. Classified by an AI call — each chunk gets a chunk summary describing what happened.
+3. Embedded as vectors using your configured embedding provider (content body and chunk summary are embedded separately for two-lane retrieval).
 4. Written to a per-chat cache file alongside the lorebook entry vectors.
 
 ### Retrieval
@@ -39,7 +39,7 @@ Every turn emits a collapsible group to the browser console showing the full ret
 
 Each bar is color-coded by source lane:
 - **Blue** — content embedding contribution
-- **Amber** — header embedding contribution
+- **Amber** — chunk summary embedding contribution (labelled `header` in the telemetry output)
 - **Green** — keyword (FTS) contribution
 
 Score suffix shows the three-way breakdown: `content+header+keyword=total` (all × 1000).
@@ -51,10 +51,23 @@ The key knobs and what they do:
 | Knob | What to change it for |
 |---|---|
 | **Chat/LB Min** | Guaranteed floor. Set to 0 if you want the algorithm to return nothing on a low-relevance turn. |
-| **Chat/LB Max** | Hard ceiling. Raising this allows more context but risks dilution. |
-| **Cutoff Mode** | `mean` is permissive. Use `mean+1sd` if too many marginal results are leaking through. |
-| **Pool Multiple** | How many candidates the statistics are computed on. 2 is tight; 3–4 is better for large chats (300+ chunks). |
+| **Chat/LB Max** | Hard ceiling. Set this about 30% above how many results you'd typically want — the threshold trims it back on quiet turns, and the headroom lets it fill out on information-dense ones. |
+| **Cutoff Mode** | Controls how selective the threshold is. See profiles below. |
+| **Pool Multiple** | How many candidates the statistics are computed on. Raise to 3–4 for large chats (300+ chunks). |
 | **Keyword Blend** | How much the FTS lane contributes. Default 70% vector. Lower toward 0.5 if proper nouns are being missed. |
+
+### Suggested Profiles
+
+Pick one as a starting point. All of these work with the 30% Max headroom recommendation above.
+
+| Profile | Pool Multiple | Cutoff Mode | Character |
+|---|---|---|---|
+| **Adaptive — Inclusive** | 2 | `mean` | Returns strong results plus high-scoring neighbours. The threshold grades on a curve within the top candidates. Good default for most chats. |
+| **Adaptive — Selective** | 5 | `mean+1sd` | Only items that stand clearly above the background pass. More conservative on flat or noisy queries, tighter around genuine peaks. Good for large databases or multi-genre stories. |
+| **Pseudo-fixed** | 4 | `mean` | The large pool pulls the mean well below the top results, so nearly all of them pass. Returns close to Max on most queries. Use when you want predictable volume. |
+| **Strict clamp** | 4 | `mean+2sd` | Only the strongest standouts pass. Expect returns near Min on most turns, with larger batches only when relevance is very high. |
+
+The first two are the recommended defaults. See [RAG_strategy_v4.md — Appendix A](RAG_strategy_v4.md#appendix-a-understanding-the-knobs--2mean-vs-51sd) for the mathematical explanation of why they behave differently.
 
 ## Cache Files
 

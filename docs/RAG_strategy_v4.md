@@ -1,19 +1,10 @@
 # Technical Specification: v4 — Hybrid Micro-Pool Threshold
 
-This specification describes the RAG retrieval strategy implemented on the `rag-v3-dynamic-threshold` branch. It supersedes v3 [docs/RAG_strategy_v3.md], which used a skewness-driven exponential scaling factor and cliff detection — both abandoned for simpler, more interpretable equivalents.
+This specification describes the RAG retrieval strategy implemented on the `rag-v3-dynamic-threshold` branch.
 
 ---
 
 ## 1. Design Philosophy
-
-### Why v3 was rejected
-
-v3 computed a scaling factor $R = e^{-k \cdot Sk}$ to adjust the result window. Two problems emerged in testing:
-
-1. **Cliff detection fires too easily.** Mean drop-off $\mu_D$ is computed over the entire pool, including a flat noise plateau. One genuine gap trivially exceeds $1.5 \times \mu_D$.
-2. **$k$ is hard to reason about.** The exponential is steep and non-intuitive; small changes at high skewness values swing the window dramatically.
-
-### What v4 does instead
 
 v4 combines two well-established ideas:
 
@@ -212,13 +203,98 @@ All items (above and below cutoff) are colored. The cutoff line visually separat
 
 ---
 
-## 7. What was removed from v3
+## Appendix A: Understanding the Knobs — 2×-Mean vs. 5×-1sd
 
-| v3 feature | Reason removed |
-|---|---|
-| Sensitivity factor $k$ | Non-intuitive exponential; hard to explain |
-| Scaling factor $R = e^{-k \cdot Sk}$ | Skewness as decision variable produces unstable windows |
-| Cliff detection | Flat noise plateau makes $\mu_D$ trivially small; cliff triggers constantly |
-| $M_{\text{active}}$ as computed expansion | Eliminated; window only filters, never inflates |
-| Fixed `KEYWORD_SCORE = 0.3` | Replaced by anchored normalisation; keyword-only items now rank by actual TF-IDF strength |
-| Keyword as boolean tag | Keyword contribution is now proportional and scored; visible in bar breakdown |
+The reason two configurations can return a similar *number* of results on standard queries yet behave differently comes down to how **pool size ($N_C$)** and **threshold strictness** interact with score distributions.
+
+The two profiles below are specific combinations of the Pool Multiple ($P$) and Cutoff Mode controls — not named presets.
+
+| Profile | $P$ | Mode | Strategy | Target Behaviour |
+| :--- | :--- | :--- | :--- | :--- |
+| **2×-Mean** | 2 | `mean` | **Local Neighbourhood** | Inclusive. Looks at the immediate top candidates and takes the average of that tight group. |
+| **5×-1sd** | 5 | `mean+1sd` | **Elite Signal** | Discriminatory. Reaches deep into the pool to establish a background level, then demands results stand meaningfully above it. |
+
+---
+
+### The Mathematical Dissection
+
+Assume **Max Results ($M$)** = 8, **Min** = 2.
+
+#### Profile A: 2×-Mean (P=2, Mode=mean)
+
+- **Pool Size ($N_C$):** $2 \times 8 = 16$ candidates.
+- **The Math:** Compute the mean of the top 16 blended scores ($\mu_{C16}$).
+- **Threshold:** $\theta = \mu_{C16}$.
+- **Behaviour:** The pool consists mostly of your best-performing candidates. The mean is relatively high, but any result even slightly better than average for that top tier will pass.
+
+#### Profile B: 5×-1sd (P=5, Mode=mean+1sd)
+
+- **Pool Size ($N_C$):** $5 \times 8 = 40$ candidates.
+- **The Math:** By reaching 24 candidates deeper, the pool collects lower-scoring items that **drag $\mu_{C40}$ down**.
+- **Threshold:** $\theta = \mu_{C40} + \sigma_{C40}$.
+- **Behaviour:** The depressed mean is compensated by requiring items to stand one standard deviation above it. Items must clear a higher bar relative to the extended background.
+
+---
+
+### Visualising the Outcomes
+
+#### Scenario 1: The Standard Thematic Query
+
+Active, coherent scene. The database has a healthy gradient of strong to moderate matches.
+
+**Scores:** `[0.85, 0.82, 0.78, 0.75, 0.70, 0.65, 0.62, 0.58]` followed by gradual decay to `0.20` at candidate 40.
+
+**2×-Mean (pool of 16):**
+- Pool Mean ($\mu_{C16}$) $\approx 0.59$.
+- Threshold: `0.59`.
+- Kept: items 1–7 (`[0.85, …, 0.62]`).
+- **Returned: 7**
+
+**5×-1sd (pool of 40):**
+- Pool Mean ($\mu_{C40}$) $\approx 0.38$ (dragged down by the long tail of lower scores).
+- Pool Std Dev ($\sigma_{C40}$) $\approx 0.18$.
+- Threshold ($\mu + \sigma$): `0.38 + 0.18 = 0.56`.
+- Kept: items 1–8 (`[0.85, …, 0.58]`), clamped to Max.
+- **Returned: 8**
+
+> **The Lesson:** On healthy queries, both modes reach broadly the same result through different paths. 2×-Mean uses a high baseline with a low hurdle; 5×-1sd uses a lower baseline with a higher hurdle. Mean mode may pull in one or two additional high-scoring neighbours; signal mode is slightly tighter around genuine peaks.
+
+---
+
+#### Scenario 2: The Flat Noise Query
+
+Generic banter. No real matches in the database — the top scores form a flat plateau of mediocre, undifferentiated results.
+
+**Scores:** `[0.45, 0.44, 0.43, 0.42, 0.41, 0.40, 0.39, 0.38]` decaying to `0.30` at candidate 16, `0.25` at candidate 40.
+
+**2×-Mean (pool of 16):**
+- Pool Mean ($\mu_{C16}$) $\approx 0.375$ (pool includes the declining tail from 0.38 to 0.30).
+- Threshold: `0.375`.
+- Kept: all eight plateau items — each scores above the group average.
+- **Returned: 8**
+- **The problem:** Token leak. The pool was small and set its own mean against a modest group, and every flat-noise item cleared it.
+
+**5×-1sd (pool of 40):**
+- Pool Mean ($\mu_{C40}$) $\approx 0.33$ (reaching further into the tail pulls the mean below the plateau).
+- Pool Std Dev ($\sigma_{C40}$) $\approx 0.05$.
+- Threshold ($\mu + \sigma$): `0.33 + 0.05 = 0.38`.
+- Kept: items above `0.38`: `[0.45, 0.44, 0.43, 0.42, 0.41, 0.40, 0.39]` — the weakest plateau item fails.
+- **Returned: 7**
+
+The mean mode passes its whole flat plateau. The signal mode already trims the weakest item. On a truly flat pool the effect is more dramatic — see below.
+
+> **The Innate Clamp:** When scores are genuinely flat, the pool's natural standard deviation approaches zero. The implementation floors $\sigma$ at `0.01` — a guard against degenerate statistics, not a noise-detection feature. This raises the threshold to $\mu + 0.01$, sitting just above the entire flat cluster. Nothing clears it; the result collapses to `Min`. There is no special detection path — this falls directly out of the threshold arithmetic. Mean mode has no equivalent: its threshold is always $\mu$, so the top half of any pool passes regardless of how tight the spread is.
+
+---
+
+### Trade-offs: Choosing Your Profile
+
+#### 2×-Mean (Inclusive Neighbourhood)
+
+- **Best for:** Small databases, early chats, or thematic stories where high recall matters — you want surrounding context even if some of it is marginal.
+- **The risk:** Vulnerable to leaking mediocre context when overall match quality is low. The threshold is set by the pool's own mean, so a uniformly weak pool grades on a curve.
+
+#### 5×-1sd (Discriminatory Elite)
+
+- **Best for:** Large databases (thousands of turns), multi-genre stories, or when you want high precision — only standout hits.
+- **The risk:** Can be aggressive on high-contrast queries. A single strong outlier (e.g., `0.95`) inflates $\sigma$, raising the threshold high enough to choke off solid `0.68` results that would otherwise be useful.

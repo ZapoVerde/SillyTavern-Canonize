@@ -2,9 +2,9 @@
 
 **Your AI forgets. Canonize remembers.**
 
-Long roleplay chats break in three ways: costs balloon because every message sends the full history, the AI starts ignoring your character card because its attention is diluted by thousands of raw turns, and it forgets — or hallucinates — things that happened 200 messages ago.
+Long roleplay chats break in three ways: costs balloon because every message sends the full history, the AI starts ignoring your character card because its attention is diluted by thousands of raw turns, and it forgets or hallucinates things that happened 200 messages ago.
 
-Canonize fixes all three by replacing full-history prompting with a structured four-tier memory system, keeping only a short live window in context at any time.
+Canonize fixes all three by replacing full-history prompting with a retrieval memory system — archiving past turns into a searchable database and injecting only what is relevant to the current scene, while keeping a short live window in context at any time.
 
 ---
 
@@ -24,16 +24,15 @@ Nothing is lost. It simply leaves active context until it becomes relevant again
 
 ## The Memory Architecture
 
-| Layer | Purpose |
+| | |
 |---|---|
-| **Context Window** | The most recent conversation turns, sent to the model unchanged. |
-| **Summary** | A rolling narrative that keeps the model aware of the current situation, character motivations, and active plot threads. This acts like a bridge into the context window. |
-| **Lorebook** | Durable world knowledge maintained automatically, including characters, places, relationships, and concepts. |
-| **RAG** | Archived conversations retrieved on demand when they become relevant to the current scene. |
+| **Live Context** | The most recent conversation turns, sent to the model unchanged. |
+| **Bridge Summary** | A rolling narrative that keeps the model aware of the current situation, character motivations, and active plot threads. Bridges the retrieval memory into the live context. |
+| **Retrieval Memory** | Three search lanes run on every turn, injecting only what is relevant to the current scene: archived conversation (chat lane), world knowledge and characters (general lane), and active story arcs (plot lane). The lorebooks are the source for the general and plot lanes. |
 
-These layers work together to maintain long-term continuity while keeping the active prompt small and focused.
+These work together to maintain long-term continuity while keeping the active prompt small and focused.
 
-A chronology tracker continuously monitors the conversation timeline. If you swipe, edit, delete, or roll back messages, Canonize automatically restores the matching summary, lorebook state, and archived memory, preventing abandoned story branches from contaminating your current timeline.
+A timeline tracker continuously monitors the conversation. If you swipe, edit, delete, or roll back messages, Canonize automatically restores the matching summary, lorebook state, and retrieval index, preventing abandoned story branches from contaminating your current timeline.
 
 ---
 
@@ -63,7 +62,7 @@ See [docs/installation.md](docs/installation.md) for full setup detail.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — How the four tiers work together
+- [Architecture](docs/architecture.md) — System design and retrieval pipeline
 - [Installation](docs/installation.md) — Prerequisites and setup
 - [Settings Reference](docs/settings.md) — Every knob explained
 - [People Curator](docs/people-curator.md) — Character tracking and relationship management

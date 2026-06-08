@@ -1,12 +1,12 @@
 # The Review Wizard
 
-Canonize never writes permanently to your world-state without your consent. When a sync cycle completes (automatically or by clicking the book icon in the toolbar), the Review Wizard appears and walks you through four steps.
+Canonize never writes permanently to your world-state without your consent. When a sync cycle completes, click **Run Canonize** to open the Review Wizard and walk through the pending changes before anything is committed.
 
 ---
 
-## Step 1: Narrative Hooks Workshop
+## Step 1: Bridge Summary Workshop
 
-Review the updated rolling summary of your story.
+Review the updated rolling bridge summary of your story.
 
 - **Workshop tab** — Diff view. Words added by this sync are highlighted green; deleted/edited words are red. Editable directly.
 - **New tab** — Raw AI output for this cycle.
@@ -15,9 +15,9 @@ Review the updated rolling summary of your story.
 
 ---
 
-## Step 2: Lorebook Workshop
+## Step 2: General Lorebook Workshop
 
-Review and approve updates to your world knowledge database.
+Review and approve updates to your world knowledge database — places, things, concepts, and characters.
 
 - **Ingester tab** — Suggestions presented one-by-one. The dropdown lists all proposed modifications marked with:
   - `✓` Applied/Approved
@@ -35,7 +35,26 @@ Review and approve updates to your world knowledge database.
 
 ---
 
-## Step 3: Narrative Memory Workshop
+## Step 3: Plot Workshop
+
+Review and approve updates to your plot lorebook — active story arcs, unresolved threads, and narrative developments.
+
+- **Ingester tab** — Suggestions presented one-by-one. The dropdown lists all proposed modifications marked with:
+  - `✓` Applied/Approved
+  - `✗` Rejected
+  - `✖` Deleted
+- **Editor fields** — Edit Name, Search Keys, and Content directly before approving.
+- **Verdict buttons:**
+  - **Apply** — Confirms the suggestion is ready to save.
+  - **Reject** — Reverts to pre-sync state (or prevents creation if new).
+  - **Delete** — Marks the entry for deletion from the lorebook.
+  - **Latest / Prev** — Load the raw AI suggestion or previous disk copy into the editor.
+  - **Regenerate** — Runs a targeted AI query for this individual card only.
+- **Freeform tab** — All approved suggestions merged into a single scrollable block for rapid proofreading.
+
+---
+
+## Step 4: Narrative Memory Workshop
 
 Review how your older messages are being archived.
 
@@ -44,11 +63,11 @@ Review how your older messages are being archived.
 
 ---
 
-## Step 4: Finalize and Commit
+## Step 5: Finalize and Commit
 
 Summary of everything about to be written:
 
-- Preview of updated Narrative Hooks.
+- Preview of updated Bridge Summary.
 - Count of lorebook entries to be updated or created.
 - Count of memory chunks to be written to the database.
 
