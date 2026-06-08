@@ -51,7 +51,9 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const messages   = ctx.chat ?? [];
     const validUuids = chain.anchors.map(r => r.anchor.uuid);
 
-    const cutoffMode     = settings.ragCutoffMode              ?? 'mean';
+    const cutoffMode     = settings.ragCutoffMode               ?? 'mean';
+    const poolMultiple   = settings.ragPoolMultiple             ?? 2;
+    const kwBlend        = settings.ragKwBlend                  ?? 0.7;
     const chatMin        = settings.ragChatMin                  ?? 2;
     const chatMax        = settings.ragChatMax                  ?? 8;
     const lbMin          = settings.ragLbMin                    ?? 2;
@@ -70,7 +72,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const chatKey    = cnzGetActiveChatKey();
     const plotLbName = state._plotLorebookName ?? null;
 
-    log('RagFetch', `fetch anchors=${validUuids.length} cutoff=${cutoffMode} chat=[${chatMin},${chatMax}] lb=[${lbMin},${lbMax}] plot=[${plotMin},${plotMax}]`);
+    log('RagFetch', `fetch anchors=${validUuids.length} cutoff=${cutoffMode} pool=${poolMultiple}x chat=[${chatMin},${chatMax}] lb=[${lbMin},${lbMax}] plot=[${plotMin},${plotMax}]`);
 
     if (!chatKey || !chatQuery.trim() || !validUuids.length) {
         return { chunks: 0, injection: '', toActivate: [] };
@@ -103,40 +105,148 @@ export async function doRagFetch(ctx, settings, chain, signal) {
         }
     }
 
+    // ── Keyword blend — all channels that carry kwTfidf ──────────────────────
+    // Normalise TF-IDF scores so the top keyword match contributes exactly
+    // (1 - kwBlend) × maxVectorScore. Keyword-only items (score=0 from RRF)
+    // are ranked purely by this contribution.
+
+    const _applyKwBlend = (raw) => {
+        const maxVec = raw.reduce((m, r) => Math.max(m, r.score), 0);
+        const maxKw  = raw.reduce((m, r) => Math.max(m, r.kwTfidf ?? 0), 0);
+        const scale  = maxKw > 0 ? (1 - kwBlend) * maxVec : 0;
+        for (const r of raw) {
+            const contrib    = (scale > 0 && r.kwTfidf != null) ? (r.kwTfidf / maxKw) * scale : 0;
+            r.kwContribution = contrib;
+            r.score         += contrib;
+        }
+        return scale;
+    };
+
+    const kwScaleChat = _applyKwBlend(chatRaw);
+    const kwScaleLb   = _applyKwBlend(lbRaw);
+    const kwScalePlot = _applyKwBlend(plotRaw);
+
     // ── Distributional cutoff per channel ─────────────────────────────────────
 
-    const chunks   = distributionalCutoff(chatRaw, { min: chatMin, max: chatMax, cutoffMode });
-    const lbHits   = distributionalCutoff(lbRaw,   { min: lbMin,  max: lbMax,   cutoffMode });
-    const plotHits = distributionalCutoff(plotRaw,  { min: plotMin, max: plotMax, cutoffMode });
+    const cutoffOpts = { cutoffMode, poolMultiple };
+    const { results: chunks,   metadata: chatMeta  } = distributionalCutoff(chatRaw, { min: chatMin, max: chatMax, ...cutoffOpts });
+    const { results: lbHits,   metadata: lbMeta    } = distributionalCutoff(lbRaw,   { min: lbMin,   max: lbMax,   ...cutoffOpts });
+    const { results: plotHits, metadata: plotMeta  } = distributionalCutoff(plotRaw,  { min: plotMin, max: plotMax, ...cutoffOpts });
 
     // ── Logging + health telemetry ────────────────────────────────────────────
 
     const cfg = embedCfg();
     const healthRows = [];
 
-    const _logChannel = (name, raw, result, maxBound) => {
-        if (!raw.length) { log('RagFetch', `${name}: no candidates`); return; }
-        const maxS = raw[0]?.score ?? 0;
-        const minS = raw.at(-1)?.score ?? 0;
-        const mu   = raw.reduce((s, c) => s + c.score, 0) / raw.length;
-        let cutoffVal = mu, cutoffLabel = 'μ';
-        if (cutoffMode === 'mean+1sd' || cutoffMode === 'mean+2sd') {
-            const σ = Math.sqrt(raw.reduce((s, c) => s + (c.score - mu) ** 2, 0) / raw.length);
-            const k = cutoffMode === 'mean+2sd' ? 2 : 1;
-            cutoffVal   = mu + k * σ;
-            cutoffLabel = cutoffMode === 'mean+2sd' ? 'μ+2σ' : 'μ+σ';
+    // ── Lane color palette (chat channel only — lb/plot have no sources field) ──
+    const LANE_COLORS = { content: '#4fc3f7', header: '#ffb74d', keyword: '#81c784' };
+    const EMPTY_STYLE = 'color:#3a3a3a';
+
+    // Returns { format, styles } for a single bar line using %c segments.
+    const _barLine = (score, sources, laneScores, kwContribution, isInjected, BAR_WIDTH, maxS) => {
+        const barLen   = maxS > 0 ? Math.round((score / maxS) * BAR_WIDTH) : 0;
+        const trailing = BAR_WIDTH - barLen;
+        const total    = Math.round(score * 1000);
+        const kw       = Math.round(kwContribution * 1000);
+        const vecTotal = total - kw;
+        const cS       = laneScores?.content ?? 0;
+        const hS       = laneScores?.header  ?? 0;
+        const vecSum   = cS + hS;
+        const c        = vecSum > 0 ? Math.round(vecTotal * cS / vecSum) : vecTotal;
+        const h        = vecTotal - c;
+        const scoreInt = (laneScores && (cS > 0 || hS > 0))
+            ? `  ${c}+${h}+${kw}=${total}`
+            : `  ${total}`;
+
+        const lanes = (sources ?? []).filter(s => LANE_COLORS[s]);
+        if (!lanes.length) {
+            const bar = '█'.repeat(barLen) + '░'.repeat(trailing);
+            return { format: `%c  ${bar}${scoreInt}`, styles: ['color:inherit'] };
         }
-        const injectedScores = result.length ? ` (${result.map(c => c.score.toFixed(2)).join(', ')})` : '';
-        log('RagFetch', `${name}: ${raw.length} raw | max=${maxS.toFixed(3)} min=${minS.toFixed(3)} μ=${mu.toFixed(3)} cutoff=${cutoffVal.toFixed(3)}(${cutoffLabel}) → ${result.length} injected${injectedScores}`);
+
+        // Keyword portion proportional to its actual contribution; vector fills the remainder.
+        const kwW     = (score > 0 && kwContribution > 0)
+            ? Math.min(barLen, Math.round(barLen * kwContribution / score))
+            : 0;
+        const vectorW = barLen - kwW;
+
+        let format  = '  ';
+        const styles = [];
+
+        const vectorLanes = lanes.filter(l => l !== 'keyword');
+        if (vectorLanes.length === 1) {
+            if (vectorW > 0) { format += `%c${'█'.repeat(vectorW)}`; styles.push(`color:${LANE_COLORS[vectorLanes[0]]}`); }
+        } else if (vectorLanes.length >= 2) {
+            const cS    = laneScores?.content ?? 0;
+            const hS    = laneScores?.header  ?? 0;
+            const total = cS + hS;
+            const cW    = total > 0 ? Math.round(vectorW * cS / total) : Math.floor(vectorW / 2);
+            const hW    = vectorW - cW;
+            if (cW > 0) { format += `%c${'█'.repeat(cW)}`; styles.push(`color:${LANE_COLORS.content}`); }
+            if (hW > 0) { format += `%c${'█'.repeat(hW)}`; styles.push(`color:${LANE_COLORS.header}`); }
+        }
+
+        if (kwW > 0) { format += `%c${'█'.repeat(kwW)}`; styles.push(`color:${LANE_COLORS.keyword}`); }
+        if (trailing > 0) { format += `%c${'░'.repeat(trailing)}`; styles.push(EMPTY_STYLE); }
+        format += `%c${scoreInt}`;
+        styles.push('color:inherit');
+        return { format, styles };
+    };
+
+    const _logChannel = (name, raw, result, meta, kwMaxContrib = 0) => {
+        if (!raw.length) { log('RagFetch', `${name}: no candidates`); return; }
+        const maxS     = raw[0]?.score ?? 0;
+        const minS     = raw.at(-1)?.score ?? 0;
+        const M_active = result.length;
+
+        // ── Collapsible group header ──────────────────────────────────────────
+        let header = `[CNZ] ${name}`;
+        if (meta) {
+            const kwPart = kwMaxContrib > 0 ? `  kw≤${kwMaxContrib.toFixed(3)}` : '';
+            header += ` | ${raw.length} raw  pool=${meta.candidate_pool_size}  μ=${meta.local_mean.toFixed(3)}  Sk=${meta.pearson_skewness.toFixed(2)}  (${meta.cutoff_mode})${kwPart}  → ${M_active} injected`;
+        } else {
+            header += ` | ${raw.length} raw (cold-start)  → ${M_active} injected`;
+        }
+
+        console.groupCollapsed(header);
+
+        // ── Bar chart ─────────────────────────────────────────────────────────
+        if (meta) {
+            const BAR_WIDTH = 20;
+            const pool      = raw.slice(0, meta.candidate_pool_size);
+
+            for (let i = 0; i < pool.length; i++) {
+                const { format, styles } = _barLine(
+                    pool[i].score, pool[i].sources, pool[i].laneScores,
+                    pool[i].kwContribution ?? 0, i < M_active, BAR_WIDTH, maxS,
+                );
+                console.log(format, ...styles);
+
+                if (i === M_active - 1 && i < pool.length - 1) {
+                    console.log(`%c  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ cutoff  (threshold ${meta.threshold.toFixed(3)})`, 'color:#5c85d6');
+                }
+            }
+        }
+
+        console.groupEnd();
+
+        // ── Health telemetry ──────────────────────────────────────────────────
         healthRows.push({
             character: chatKey, channel: name, provider: cfg.source, model: cfg.model,
-            candidates: raw.length, maxScore: maxS, minScore: minS, meanScore: mu,
-            returned: result.length, max: maxBound,
+            candidates: raw.length, maxScore: maxS, minScore: minS,
+            returned:        result.length,
+            poolSize:        meta?.candidate_pool_size ?? null,
+            localMean:       meta?.local_mean          ?? null,
+            localMedian:     meta?.local_median        ?? null,
+            localStdDev:     meta?.local_std_dev       ?? null,
+            pearsonSkewness: meta?.pearson_skewness    ?? null,
+            threshold:       meta?.threshold           ?? null,
+            cutoffMode:      meta?.cutoff_mode         ?? null,
         });
     };
-    _logChannel('chat', chatRaw.sort((a, b) => b.score - a.score), chunks,   chatMax);
-    _logChannel('lb',   lbRaw.sort((a, b) => b.score - a.score),   lbHits,   lbMax);
-    _logChannel('plot', plotRaw.sort((a, b) => b.score - a.score),  plotHits, plotMax);
+    _logChannel('chat', chatRaw.sort((a, b) => b.score - a.score), chunks,   chatMeta, kwScaleChat);
+    _logChannel('lb',   lbRaw.sort((a, b) => b.score - a.score),   lbHits,   lbMeta,   kwScaleLb);
+    _logChannel('plot', plotRaw.sort((a, b) => b.score - a.score),  plotHits, plotMeta, kwScalePlot);
 
     appendHealthRows(healthRows).catch(() => {});
 

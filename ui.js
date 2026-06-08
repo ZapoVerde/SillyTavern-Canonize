@@ -421,13 +421,13 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
         </div>
 
         <div class="cnz-settings-inline-row">
-          <label for="cnz-set-hookseeker-horizon">Summary horizon (pairs) ${tip('How many of the most recent turn pairs are fed to the narrative hook / summary generator. Higher values give richer context at the cost of more tokens. Typically 20–60.')}</label>
+          <label for="cnz-set-hookseeker-horizon">Summary horizon (pairs) ${tip('How many of the most recent turn pairs are fed to the bridge summary generator. Higher values give richer context at the cost of more tokens. Typically 20–60.')}</label>
           <input id="cnz-set-hookseeker-horizon" type="number" min="1" step="1"
                  value="${escapeHtml(String(s.hookseekerHorizon ?? 40))}">
         </div>
 
         <div class="cnz-settings-inline-row">
-          <label for="cnz-set-lorebook-sync-start">Lorebook sync start ${tip('Which turns the background lorebook sync reads. "From sync point": only the gap turns being synced this cycle (efficient, no re-analysis of committed turns). "From latest turn": the full hookseeker window, same as the summary generator.')}</label>
+          <label for="cnz-set-lorebook-sync-start">Lorebook sync start ${tip('Which turns the background lorebook sync reads. "From sync point": only the gap turns being synced this cycle (efficient, no re-analysis of committed turns). "From latest turn": the full bridge summary window, same as the summary generator.')}</label>
           <select id="cnz-set-lorebook-sync-start">
             <option value="syncPoint"  ${(s.lorebookSyncStart ?? 'syncPoint') === 'syncPoint'  ? 'selected' : ''}>From sync point</option>
             <option value="latestTurn" ${(s.lorebookSyncStart ?? 'syncPoint') === 'latestTurn' ? 'selected' : ''}>From latest turn</option>

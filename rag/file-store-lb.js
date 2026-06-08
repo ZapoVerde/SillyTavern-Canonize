@@ -31,6 +31,8 @@ import { getStringHash }                    from '../../../../utils.js';
 import { embedCfg, reportEmbedUsage }       from './embed-client.js';
 import { embedBatch }                       from './embed-direct.js';
 import { dot, encodeVec }                   from './vec-math.js';
+import { buildFtsIndex, queryFts }          from './fts.js';
+import { rrf }                              from './rrf.js';
 import { emit, BUS_EVENTS }                 from '../bus.js';
 import { log }                              from '../log.js';
 import {
@@ -137,14 +139,37 @@ export async function queryLorebookEntries(chatKey, validAnchorUuids, queryText,
     if (!allEntries.length) return [];
     const hashMap = new Map(allEntries.map(e => [e.hash, e]));
 
-    const rows = [];
+    const contentRows = [];
     for (const [hash, vec] of vecMap) {
         const meta = hashMap.get(hash);
         if (!meta) continue;
-        rows.push({ ...meta, score: dot(queryVec, vec) });
+        contentRows.push({ ...meta, score: dot(queryVec, vec) });
     }
-    rows.sort((a, b) => b.score - a.score);
-    return rows;
+    contentRows.sort((a, b) => b.score - a.score);
+
+    // FTS over entry text — comment is used as the header-weight field.
+    const ftsEntries = allEntries.map(e => ({ ...e, header: e.comment || null }));
+    const ftsIdx     = buildFtsIndex(ftsEntries);
+    const kwRows     = queryFts(ftsIdx, ftsEntries, queryText, validAnchorUuids, 100_000);
+
+    // Re-attach LB-specific fields after RRF (queryFts strips them).
+    const entryByContent = new Map(allEntries.map(e => [e.content, e]));
+    return rrf({ content: contentRows, header: [], keyword: kwRows })
+        .map(r => {
+            const e = entryByContent.get(r.content) ?? {};
+            return {
+                hash:         e.hash         ?? r.hash,
+                anchorUuid:   e.anchorUuid   ?? r.anchorUuid,
+                lorebookName: e.lorebookName ?? '',
+                entryUid:     e.entryUid     ?? r.entryUid,
+                entryKeys:    e.entryKeys    ?? [],
+                comment:      e.comment      ?? '',
+                content:      r.content,
+                score:        Number(r.score),
+                laneScores:   r.laneScores   ?? null,
+                kwTfidf:      r.kwTfidf      ?? null,
+            };
+        });
 }
 
 // ── Plot filler ───────────────────────────────────────────────────────────────

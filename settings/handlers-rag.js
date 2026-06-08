@@ -100,6 +100,24 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
+    $('#cnz-set-rag-pool-multiple').on('input', function () {
+        const val = parseFloat($(this).val());
+        if (!isNaN(val)) {
+            getSettings().ragPoolMultiple = val;
+            $('#cnz-set-rag-pool-multiple-val').text(val + 'x');
+            saveSettingsDebounced(); updateDirtyIndicator();
+        }
+    });
+
+    $('#cnz-set-rag-kw-blend').on('input', function () {
+        const val = parseFloat($(this).val());
+        if (!isNaN(val)) {
+            getSettings().ragKwBlend = val;
+            $('#cnz-set-rag-kw-blend-val').text(Math.round(val * 100) + '% vec');
+            saveSettingsDebounced(); updateDirtyIndicator();
+        }
+    });
+
     $('#cnz-set-rag-chat-min').on('input', function () {
         const val = parseInt($(this).val(), 10);
         if (!isNaN(val) && val >= 0) { getSettings().ragChatMin = val; saveSettingsDebounced(); updateDirtyIndicator(); }
