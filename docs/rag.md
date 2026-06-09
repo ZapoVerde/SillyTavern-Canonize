@@ -78,3 +78,55 @@ The first two are the recommended defaults. See [RAG_strategy_v4.md — Appendix
 
 - **Rebuild RAG** — Re-embeds everything from existing chunk metadata. Use after changing embedding provider or model.
 - **Purge RAG** — Deletes all data. The healer will reconstruct from chat history on next load (one embedding pass required).
+
+---
+
+## Appendix: RAG Explained From Scratch
+
+This section is for readers who are new to the concept. No machine-learning background required.
+
+### The core problem RAG solves
+
+A language model can only "see" a fixed number of tokens at one time — its **context window**. For a long roleplay that has been running for weeks, the full chat history is far too large to fit. The model only ever reads the most recent portion; everything older is invisible to it.
+
+RAG is a way to give the model selective access to the past without cramming all of it into the window.
+
+### What a vector is
+
+A **vector** in this context is a list of numbers — typically hundreds or thousands of them — that represents the meaning of a piece of text.
+
+An embedding model (a specialized AI) reads a sentence and outputs a vector. The key property is that **similar meanings produce similar vectors**. The vector for "Elena entered the tavern at dusk" will be mathematically close to the vector for "She arrived at the inn in the evening," even though the words are different. The vector for "Theron's betrayal broke her trust" will be far away from both of those.
+
+This lets the system find relevant memories by meaning, not by exact keyword matching.
+
+### How similarity is measured
+
+Vectors are compared using **cosine similarity**, which measures the angle between two vectors in high-dimensional space. A score of 1.0 means the vectors point in exactly the same direction (identical meaning). A score near 0 means they are unrelated.
+
+When Canonize searches for relevant chunks, it converts the current generation context into a vector and finds the stored chunks whose vectors are closest to it. Those are the chunks that are semantically most relevant to what is happening right now in the story.
+
+### The basic RAG transaction
+
+Here is what happens on every single generation turn:
+
+1. **The current context is embedded.** Canonize takes the recent messages and turns them into a query vector.
+2. **The vector database is searched.** The query vector is compared against all stored chunk vectors. The closest matches win.
+3. **The winning chunks are retrieved.** Canonize pulls the original text (or summaries) of the top-scoring chunks.
+4. **The chunks are injected into the prompt.** Before the model generates its response, the retrieved text is inserted into the context — usually in a dedicated lorebook entry or injection slot.
+5. **The model generates normally.** From the model's point of view, this information was always there. It reads the injected memories as part of the context and can reference them in its response.
+
+The model itself has no special RAG awareness. It simply sees text that includes relevant past events, and writes accordingly.
+
+### What the embedding provider does
+
+The embedding provider is the service that converts text into vectors. Canonize supports several (local models via Ollama, cloud APIs, etc.). The embedding model has no creative role — it never writes story content. It only performs the translation between text and numbers.
+
+The quality of retrieval depends heavily on the embedding model. A model that produces rich, meaning-aware vectors will find "Elena's grief after the funeral" when the story is discussing loss, even if those exact words haven't appeared recently. A weaker model may miss the connection.
+
+### Why there are two lanes (content and summary)
+
+Canonize embeds each chunk twice: once for its **raw content** and once for an AI-generated **chunk summary**. These are two separate vectors stored side by side.
+
+The content lane is good at matching specific details — names, places, exact events. The summary lane is good at matching themes and emotional beats, because the summary abstracts away surface details and captures what the scene was *about*.
+
+Querying both lanes and merging the results (via RRF fusion) gives more robust retrieval than either lane alone.
