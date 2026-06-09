@@ -148,6 +148,7 @@ Every user-facing addition must land in the docs at the same time it lands in th
 
 The documents to maintain:
 
+- **`README.md`** — feature overview and docs index; the first thing a new user reads
 - **`rag.md`** — retrieval behaviour, tuning knobs, console diagnostics, additional lorebooks
 - **`lorebook.md`** — lorebook architecture, curator lanes, MECE tags, entry structure
 - **`settings.md`** — every user-facing setting, what it does, its default
