@@ -1,49 +1,24 @@
 # Canonize
 
-**Your AI forgets. Canonize remembers.**
+**Long chats make AI worse. Canonize makes them better.**
 
-Long roleplay chats break in three ways: costs balloon because every message sends the full history, the AI starts ignoring your character card because its attention is diluted by thousands of raw turns, and it forgets or hallucinates things that happened 200 messages ago.
+Canonize classifies your conversation as it unfolds and stores it in a searchable vault. Once archived, those turns are removed from the context sent to the AI. When something comes up 200 turns later, only the most relevant pieces are pulled back into context.
 
-Canonize fixes all three by replacing full-history prompting with a retrieval memory system — archiving past turns into a searchable database and injecting only what is relevant to the current scene, while keeping a short live window in context at any time.
+It builds and maintains a lorebook of plot, people, places, things, and concepts to keep every response grounded in the story you've actually written.
 
----
-
-## Why It's Different
-
-Most memory systems compress old conversations into summaries and throw the original detail away.
-
-Canonize doesn't.
-
-Every archived conversation remains searchable. Instead of forcing the AI to carry thousands of turns in context, Canonize stores them in a retrieval database and injects only the pieces that are relevant to the current scene.
-
-A conversation from 2,000 turns ago can still be recalled accurately if it matters right now.
-
-Nothing is lost. It simply leaves active context until it becomes relevant again.
+**Canonize follows you automatically between chats.** Whether you switch to a different story, branch a timeline, roll back a decision, or start fresh, it restores the exact state of that chat at whatever point you left it. No reconfiguration required.
 
 ---
 
-## The Memory Architecture
+## What You Get
 
-| | |
-|---|---|
-| **Live Context** | The most recent conversation turns, sent to the model unchanged. |
-| **Bridge Summary** | A rolling narrative that keeps the model aware of the current situation, character motivations, and active plot threads. Bridges the retrieval memory into the live context. |
-| **Retrieval Memory** | Three search lanes run on every turn, injecting only what is relevant to the current scene: archived conversation (chat lane), world knowledge and characters (general lane), and active story arcs (plot lane). The lorebooks are the source for the general and plot lanes. |
+**Cheaper runs.** Archived turns leave the context window. Every turn costs less because the AI isn't processing hundreds to thousands of messages it doesn't need.
 
-These work together to maintain long-term continuity while keeping the active prompt small and focused.
+**Better instruction adherence.** Less context means less dilution. Character cards and system prompts land harder when they aren't buried under raw history.
 
-A timeline tracker continuously monitors the conversation. If you swipe, edit, delete, or roll back messages, Canonize automatically restores the matching summary, lorebook state, and retrieval index, preventing abandoned story branches from contaminating your current timeline.
+**Faster generations.** Less context to process means faster output, turn after turn.
 
----
-
-## Key Features
-
-- Recall important events from thousands of turns ago without carrying the entire chat in context.
-- Track characters, world knowledge, and active plot threads with three specialist curators.
-- Keep the AI focused with a continuously updated narrative summary.
-- Retrieve relevant memories and lore on demand with hybrid semantic and keyword search.
-- Survive swipes, edits, and timeline rewinds without corrupting memory state.
-- Review and approve every summary, lorebook change, and archived memory before it is committed.
+**A lorebook that maintains itself.** Canonize automatically creates and updates entries for characters, locations, concepts, and plot threads as the story develops, so the AI always has an accurate, current picture of your world without you managing it manually.
 
 ---
 
@@ -59,6 +34,7 @@ A timeline tracker continuously monitors the conversation. If you swipe, edit, d
 See [docs/installation.md](docs/installation.md) for full setup detail.
 
 ---
+
 
 ## Documentation
 
