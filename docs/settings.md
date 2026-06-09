@@ -26,16 +26,25 @@ Canonize supports multiple settings profiles.
 
 ## Timing
 
-- **Live Context Buffer** — Number of recent turn-pairs left uncompressed and sent as raw dialogue. Default 8.
-- **Pairs Between Updates** — How many new pairs must accumulate before a sync cycle triggers. Also defines the sync window size. Default 8. Keep this a multiple of Chunk Size to avoid chunks being split across sync windows.
+Canonize works in cycles, not continuously. These settings control how much recent dialogue stays live and unprocessed, how often a sync cycle fires, and how far back the AI looks when building the running summary.
+
+```
+│←── archival ───│←── bridge horizon (default 40 pairs) ───│←── sync window (0→8 pairs) ──→│←── live context (8 pairs) ──→│
+oldest                                                                                                                       newest
+```
+
+- **Live Context Buffer** — How many turn-pairs are left untouched — counted back from the latest entry to the sync point. Everything before this buffer is archived and searched as memory. Default 8.
+- **Pairs Between Updates** — How many new pairs must accumulate before a sync cycle triggers. This defines the sync window size. Default 8. Keep this a multiple of Chunk Size to avoid chunks being split across sync windows.
 - **Summary Horizon** — How many turns of history are fed to the AI when updating the bridge summary. Default 40.
 - **Lorebook Sync Start**
   - *From sync point* — Only scans the newly added block since the last save marker. 
-  - *From latest turn* — Scans the entire horizon to the latest turn.
+  - *From latest turn* — Scans the entire horizon to the latest turn. 
 
 ---
 
 ## Connections and Prompts
+
+Canonize makes AI calls in the background, separate from your main chat. Here you set which Connection Manager profile handles that work and what instructions it follows.
 
 - **Summary Connection Profile** — Connection Manager profile used for background summarization and lorebook sync calls. Leave blank to use the current chat model.
 - **Edit Prompts** — Opens a prompt editor for Summary, Lorebook, People, and Targeted prompts.
@@ -45,9 +54,11 @@ Canonize supports multiple settings profiles.
 
 ## RAG Storage and Retrieval
 
-RAG is always active when Canonize is enabled.
+This is Canonize's memory engine. It breaks your chat history into indexed chunks and searches them on every turn, pulling in past scenes, lorebook entries, and story arcs relevant to the current moment.
 
 ### Content and Embedding
+
+Controls how the chat history is sliced into chunks, what gets stored in each one, and which model converts text into a searchable form.
 
 - **RAG Contents**
   - *Summary + Full* — Retrieves the AI-generated chunk summary plus raw dialogue. Recommended.
@@ -61,7 +72,7 @@ RAG is always active when Canonize is enabled.
 
 ### Retrieval Tuning
 
-Canonize uses a hybrid micro-pool threshold rather than a fixed result count. On each turn it fuses vector similarity with keyword relevance, computes statistics on the top candidates, and returns everything above the mean — clamped to your Min/Max bounds.
+Instead of always injecting a fixed number of results, Canonize scores a pool of candidates each turn — blending meaning-based search with keyword matching — and keeps only those that score above the pool's own average. Your Min/Max settings cap the range regardless.
 
 - **Chat Min / Max** — Floor and ceiling for narrative memory chunks injected per turn.
 - **LB Min / Max** — Floor and ceiling for lorebook entries activated via semantic search per turn.
@@ -75,6 +86,8 @@ Canonize uses a hybrid micro-pool threshold rather than a fixed result count. On
 
 ### Plot Memory
 
+Plot arcs track ongoing storylines across your chat. These settings control how many arcs surface each turn, and what happens when the current scene only touches one thread — so other storylines don't go silent.
+
 - **Plot Min / Max** — Floor and ceiling for plot arcs retrieved per turn. Plot Min also sets the filler threshold: when semantic search returns fewer arcs than this value, filler picks up the shortfall.
 - **Recent cards per arc** — For each semantically retrieved arc, the origin card is always included. This setting controls how many additional recent cards are added on top. Any card directly matched by semantic search is also always included regardless of this limit.
 - **Recent cards per filler arc** — How many cards each filler arc brings in. Filler arcs contribute recent cards only; they do not trigger a separate semantic search for that arc.
@@ -87,6 +100,8 @@ Canonize uses a hybrid micro-pool threshold rather than a fixed result count. On
 ---
 
 ## Admin and Utilities
+
+One-off maintenance tools: rebuild the memory index, wipe it entirely, or inspect its internal state.
 
 - **Verbose Logging** — Outputs detailed execution logs to the browser console.
 - **Inspect Chain** — Opens the DNA Chain Inspector to view your save-state timeline.
