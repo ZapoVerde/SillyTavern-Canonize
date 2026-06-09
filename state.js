@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/state.js
- * @stamp {"utc":"2026-04-16T00:00:00.000Z"}
- * @version 1.0.17
+ * @stamp {"utc":"2026-06-09T00:00:00.000Z"}
+ * @version 1.1.0
  * @architectural-role Stateful Owner
  * @description
  * Central mutable state container for all CNZ engine variables. Exports a
@@ -22,7 +22,7 @@
  *       _ragChunks, _lastIndexedLorebookHash,
  *       _stagedProsePairs, _stagedPairOffset, _splitPairIdx,
  *       _priorSituation, _beforeSituation, _parentNodeLorebook,
- *       _pendingOrphans, _dnaChain,
+ *       _additionalLorebooks, _pendingOrphans, _dnaChain,
  *       _currentStep, _lorebookLoading, _hooksLoading,
  *       _lbActiveIngesterIndex, _lbPendingWrite,
  *       _ragRawDetached, _modalOpenHeadUuid, _hooksRegenGen, _lbRegenGen]
@@ -153,6 +153,13 @@ export const state = {
     _parentNodeLorebook:  null,
     /** name of the plot lorebook file (append-only, hookseeker lane only) */
     _plotLorebookName:    null,
+    /**
+     * Array of { name, hash, min, max, bypass } — additional read-only lorebooks
+     * active for this chat session. Restored from the head anchor on load.
+     * hash = getStringHash of all enabled entry content at last vectorisation,
+     * used by the JIT guard to detect file changes between sessions.
+     */
+    _additionalLorebooks: [],
     /** live disk snapshot of the plot lorebook at modal open */
     _plotLorebookData:    null,
     /** working copy of the plot lorebook; committed on Finalize */

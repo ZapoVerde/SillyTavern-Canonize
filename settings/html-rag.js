@@ -228,6 +228,17 @@ export function buildRagSectionHTML(s, escapeHtml) {
                        placeholder="e.g. %%%" value="${escapeHtml(s.ragSeparator ?? '%%%')}">
               </div>
 
+              <div class="cnz-settings-section-label" style="margin-top:12px">
+                Additional Lorebooks ${tip('Read-only reference lorebooks (e.g. world encyclopaedias, spell books) queried every generation alongside the character lorebook. Each entry is vectorised and retrieved semantically. The list is saved in the chat anchor, so it restores automatically on branch rollback.')}
+              </div>
+              <div id="cnz-additional-lb-list"></div>
+              <div id="cnz-additional-lb-add-row" style="display:none;margin-top:6px;gap:6px;align-items:center" class="cnz-settings-inline-row">
+                <select id="cnz-additional-lb-select" class="cnz-select" style="flex:1"></select>
+                <button id="cnz-additional-lb-confirm" class="cnz-btn cnz-btn-primary cnz-btn-sm">Add</button>
+                <button id="cnz-additional-lb-cancel"  class="cnz-btn cnz-btn-secondary cnz-btn-sm">Cancel</button>
+              </div>
+              <button id="cnz-additional-lb-open-add" class="cnz-btn cnz-btn-secondary cnz-btn-sm" style="margin-top:6px">+ Add Lorebook</button>
+
             </div>
           </div>
 

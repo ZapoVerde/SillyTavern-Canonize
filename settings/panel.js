@@ -30,6 +30,7 @@ import { bindRagHandlers, updateRagAiControlsVisibility } from './handlers-rag.j
 import { configureFts } from '../rag/fts.js';
 import { bindPlotHandlers } from './handlers-plot.js';
 import { bindCoreHandlers } from './handlers-core.js';
+import { bindAdditionalLbHandlers, refreshAdditionalLbList } from './handlers-additional-lb.js';
 
 // ── Prompt Modal ──────────────────────────────────────────────────────────────
 
@@ -170,6 +171,8 @@ function bindSettingsHandlers() {
     bindRagHandlers({ updateDirtyIndicator, openPromptModal });
     bindPlotHandlers({ updateDirtyIndicator, openPromptModal });
     bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refreshProfileDropdown, refreshSettingsUI });
+    bindAdditionalLbHandlers({});
+    refreshAdditionalLbList();
 
     try {
         ConnectionManagerRequestService.handleDropdown(

@@ -1,8 +1,8 @@
 /**
  * @file data/default-user/extensions/canonize/rag/generation-hook.js
- * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
- * @version 2.5.1
- * @architectural-role IO Wrapper
+ * @stamp {"utc":"2026-06-09T00:00:00.000Z"}
+ * @version 2.6.0
+ * @architectural-role Orchestrator
  * @description
  * Prefetch-optimised RAG retrieval lifecycle. Owns the prefetch promise,
  * the AbortController for in-flight embed requests, and ST event wiring.
@@ -23,7 +23,7 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: [_prefetchPromise, _prefetchChatLen, _abortController]
- *     external_io: [rag-fetch.js, writeCnzRagPrompt, clearCnzRagPrompt, WORLDINFO_FORCE_ACTIVATE]
+ *     external_io: [rag-fetch.js, rag-inject.js, clearCnzRagPrompt]
  */
 
 import { state }             from '../state.js';
@@ -35,31 +35,9 @@ import { getStringHash }     from '../../../../utils.js';
 import { stripProtectedBlock } from '../lorebook/utils.js';
 import { log, error }        from '../log.js';
 import { eventSource, event_types } from '../../../../../script.js';
-import { writeCnzRagPrompt, clearCnzRagPrompt, appendCnzPlotArcs,
-         writeCnzLbPrompt, clearCnzLbPrompt } from '../core/summary-prompt.js';
+import { clearCnzRagPrompt, clearCnzLbPrompt } from '../core/summary-prompt.js';
 import { lbGetLorebook } from '../lorebook/api.js';
-import { DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE } from '../defaults.js';
-
-function _formatPlotArcs(entries, chunkTmpl) {
-    const tmpl = chunkTmpl || DEFAULT_CNZ_PLOT_CHUNK_TEMPLATE;
-    const arcMap = new Map();
-    for (const { content } of entries) {
-        const tags = content.match(/#\w+/g) ?? [];
-        const tag  = tags[tags.length - 1];
-        if (!tag) continue;
-        const text = content.replace(/#\w+/g, '').trim();
-        if (!arcMap.has(tag)) arcMap.set(tag, []);
-        arcMap.get(tag).push(text);
-    }
-    return [...arcMap.entries()]
-        .map(([tag, texts]) => {
-            const arcTag = tag.slice(1);
-            return tmpl
-                .replace(/\{\{arc_tag\}\}/g, arcTag)
-                .replace(/\{\{text\}\}/g, texts.join('\n\n'));
-        })
-        .join('\n\n');
-}
+import { injectRagResult } from './rag-inject.js';
 
 let _prefetchPromise  = null;
 let _prefetchChatLen  = -1;
@@ -138,6 +116,8 @@ eventSource.on(event_types.GENERATION_STOPPED, () => {
 });
 
 // ── Public API ────────────────────────────────────────────────────────────────
+
+export function invalidateSwipeCache() { _swipeCache = null; }
 
 export function resetRagState() {
     log('RagHook', `resetRagState — prefetchInFlight=${_prefetchPromise !== null} controller=${_abortController !== null}`);
@@ -231,6 +211,29 @@ export async function onGenerationStarted() {
         }
     }
 
+    // JIT vector check for additional lorebooks — re-index if disk content changed
+    const _chatKey  = cnzGetActiveChatKey();
+    const _lkgUuid  = state._dnaChain?.lkg?.uuid;
+    if (_chatKey && _lkgUuid && state._additionalLorebooks?.length) {
+        for (const lb of state._additionalLorebooks) {
+            try {
+                const disk    = await lbGetLorebook(lb.name);
+                const entries = Object.values(disk?.entries ?? {})
+                    .filter(e => !e.disable && e.content?.trim())
+                    .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
+                const diskHash = getStringHash(entries.map(e => e.content).join('\n'));
+                if (diskHash !== lb.hash) {
+                    log('RagHook', `JIT additional LB re-index: ${lb.name}`);
+                    _prefetchPromise = null;
+                    await insertLorebookEntries(_chatKey, _lkgUuid, lb.name, entries);
+                    lb.hash = diskHash;
+                }
+            } catch (err) {
+                error('RagHook', `JIT additional LB re-index failed (${lb.name}):`, err);
+            }
+        }
+    }
+
     const tInterceptor = performance.now();
     if (_timing) {
         _timing.tInterceptor = tInterceptor;
@@ -313,68 +316,8 @@ export async function onGenerationStarted() {
     const tRagDone = performance.now();
     if (_timing) _timing.tRagDone = tRagDone;
     log('RagHook', `${result.chunks} chunks injected | rag=${Math.round(tRagDone - tInterceptor)}ms`);
-    if (result.injection) {
-        writeCnzRagPrompt(result.injection);
-    } else {
-        clearCnzRagPrompt();
-    }
 
-    const plotLbName   = state._plotLorebookName ?? null;
-    const lbActivate   = plotLbName ? result.toActivate.filter(a => a.world !== plotLbName) : result.toActivate;
-    const plotActivate = plotLbName ? result.toActivate.filter(a => a.world === plotLbName) : [];
-
-    if (settings.lbRagOnly ?? false) {
-        // ── Direct injection path (lorebook detached from character) ──────────
-        const lbEntries = lbActivate
-            .map(a => state._draftLorebook?.entries?.[String(a.uid)])
-            .filter(Boolean);
-        if (lbEntries.length) {
-            const blocks = lbEntries.map(e => {
-                const tag   = (e.comment ?? '').replace(/\s+/g, '_');
-                const keys  = (e.key?.length ? e.key : e.extensions?.cnz_keys ?? []);
-                const alias = keys.length ? `(${keys.join(', ')})\n` : '';
-                return `<${tag}>\n${alias}${e.content ?? ''}\n</${tag}>`;
-            }).join('\n\n');
-            log('RagHook', `LB direct inject: ${lbEntries.length} entries`);
-            writeCnzLbPrompt(`The following are relevant world info entries:\n\n${blocks}`);
-        } else {
-            clearCnzLbPrompt();
-        }
-    } else {
-        // ── WI pipeline path (lorebook attached, Structurize formats entries) ─
-        clearCnzLbPrompt();
-        if (lbActivate.length) {
-            const lbEnriched = lbActivate.map(a => {
-                const entry = state._draftLorebook?.entries?.[String(a.uid)];
-                return entry ? { ...entry, world: a.world } : a;
-            });
-            log('RagHook', `Semantic LB activation: ${lbEnriched.length} entries`);
-            try {
-                window.loggeryze?.time('CNZ LB activate [blocking]');
-                await eventSource.emit(event_types.WORLDINFO_FORCE_ACTIVATE, lbEnriched);
-                window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
-            } catch (err) {
-                window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
-                error('RagHook', 'LB WI activation failed:', err);
-            }
-        }
-    }
-
-    if (plotLbName) {
-        try {
-            if (plotActivate.length) {
-                const lb      = await lbGetLorebook(plotLbName);
-                const entries = plotActivate.map(a => lb.entries?.[String(a.uid)]).filter(Boolean)
-                    .sort((a, b) => a.uid - b.uid);
-                appendCnzPlotArcs(entries.length ? _formatPlotArcs(entries, settings.cnzPlotChunkTemplate) : '');
-                if (entries.length) log('RagHook', `Plot arcs injected: ${plotActivate.length} entries`);
-            } else {
-                appendCnzPlotArcs('');
-            }
-        } catch (err) {
-            error('RagHook', 'Plot arc injection failed:', err);
-        }
-    }
+    await injectRagResult(result, settings);
 
     eventSource.once(event_types.STREAM_TOKEN_RECEIVED, () => {
         if (_timing && !_timing.tFirstToken) _timing.tFirstToken = performance.now();

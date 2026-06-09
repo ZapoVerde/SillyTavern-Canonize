@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/rag-fetch.js
- * @stamp {"utc":"2026-06-06T00:00:00.000Z"}
- * @version 1.3.0
+ * @stamp {"utc":"2026-06-09T00:00:00.000Z"}
+ * @version 1.4.0
  * @architectural-role IO Wrapper — RAG retrieval execution
  * @description
  * Executes all three RAG channels (chat chunks, LB entries, plot LB entries)
@@ -34,7 +34,9 @@ import { log, error } from '../log.js';
 import { DEFAULT_RAG_INJECTION_TEMPLATE, DEFAULT_RAG_CHUNK_TEMPLATE } from '../defaults.js';
 
 /**
- * @typedef {{ chunks:number, injection:string, toActivate:object[] }} RagResult
+ * @typedef {{ chunks:number, injection:string, toActivate:object[], bypassEntries:object[] }} RagResult
+ * toActivate   — { world, uid } pairs for WORLDINFO_FORCE_ACTIVATE (primary LB + additional non-bypass)
+ * bypassEntries — { lorebookName, uid, content, comment, key } for direct prompt injection (additional bypass LBs)
  */
 
 /**
@@ -250,6 +252,26 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
     appendHealthRows(healthRows).catch(() => {});
 
+    // ── Additional lorebooks — parallel queries, per-lorebook cutoff ─────────
+
+    const additionalLbs = state._additionalLorebooks ?? [];
+    const additionalRaw = additionalLbs.length
+        ? await Promise.all(
+            additionalLbs.map(lb =>
+                queryLorebookEntries(chatKey, [headUuid], chatQuery, signal, lb.name)
+                    .then(raw => {
+                        _applyKwBlend(raw);
+                        const { results, metadata } = distributionalCutoff(raw, {
+                            min: lb.min ?? 1, max: lb.max ?? 3, cutoffMode, poolMultiple,
+                        });
+                        _logChannel(`add-lb:${lb.name}`, raw.sort((a, b) => b.score - a.score), results, metadata, 0);
+                        return { lb, hits: results };
+                    })
+                    .catch(() => ({ lb, hits: [] }))
+            )
+        )
+        : [];
+
     // ── LB + plot activation ──────────────────────────────────────────────────
 
     const activeUids   = new Set((ctx.worldInfoActivated ?? []).map(e => e.uid));
@@ -290,6 +312,26 @@ export async function doRagFetch(ctx, settings, chain, signal) {
         injection  = tmpl.replace('{{text}}', body);
     }
 
-    log('RagFetch', `done | chunks=${chunks.length} lbActivations=${lbHits.length} toActivate=${toActivate.length}`);
-    return { chunks: chunks.length, injection, toActivate };
+    // ── Sort additional LB hits into activation vs direct-inject buckets ─────
+
+    const bypassEntries = [];
+    for (const { lb, hits } of additionalRaw) {
+        for (const h of hits) {
+            if (activeUids.has(h.entryUid)) continue;
+            if (lb.bypass) {
+                bypassEntries.push({
+                    lorebookName: h.lorebookName,
+                    uid:     h.entryUid,
+                    content: h.content ?? '',
+                    comment: h.comment ?? '',
+                    key:     h.entryKeys ?? [],
+                });
+            } else {
+                toActivate.push({ world: h.lorebookName, uid: h.entryUid });
+            }
+        }
+    }
+
+    log('RagFetch', `done | chunks=${chunks.length} lbActivations=${lbHits.length} toActivate=${toActivate.length} bypass=${bypassEntries.length}`);
+    return { chunks: chunks.length, injection, toActivate, bypassEntries };
 }

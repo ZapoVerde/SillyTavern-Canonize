@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/core/dna-chain.js
- * @stamp {"utc":"2026-06-04T04:00:00.000Z"}
- * @version 1.1.0
+ * @stamp {"utc":"2026-06-09T00:00:00.000Z"}
+ * @version 1.2.0
  * @architectural-role Pure Functions
  * @description
  * Pure derivation functions for the DNA chain: scanning chat messages to build
@@ -26,14 +26,24 @@ import { formatPairsAsTranscript } from './transcript.js';
 // ─── Types (JSDoc only — no runtime impact) ───────────────────────────────────
 
 /**
+ * @typedef {object} AdditionalLorebook
+ * @property {string}  name    - lorebook filename
+ * @property {number}  hash    - getStringHash of enabled entry content at last vectorisation
+ * @property {number}  min     - distributional cutoff lower bound
+ * @property {number}  max     - distributional cutoff upper bound
+ * @property {boolean} bypass  - true → inject directly into prompt; false → WORLDINFO_FORCE_ACTIVATE
+ */
+
+/**
  * @typedef {object} CnzAnchor
- * @property {'anchor'}        type        - discriminant
- * @property {string}          uuid        - crypto.randomUUID() at commit time
- * @property {string}          committedAt - ISO timestamp
- * @property {string}          hooks       - hookseeker text committed this cycle
- * @property {object}          lorebook    - full lorebook snapshot { name, entries }
- * @property {RagHeaderEntry[]} ragHeaders - chunk headers committed this cycle
- * @property {string|null}     parentUuid  - uuid of previous anchor, or null
+ * @property {'anchor'}           type               - discriminant
+ * @property {string}             uuid               - crypto.randomUUID() at commit time
+ * @property {string}             committedAt        - ISO timestamp
+ * @property {string}             hooks              - hookseeker text committed this cycle
+ * @property {object}             lorebook           - full lorebook snapshot { name, entries }
+ * @property {RagHeaderEntry[]}   ragHeaders         - chunk headers committed this cycle
+ * @property {string|null}        parentUuid         - uuid of previous anchor, or null
+ * @property {AdditionalLorebook[]} additionalLorebooks - read-only reference lorebooks active this session
  */
 
 /**
@@ -124,25 +134,27 @@ export function getLkgAnchor(messages) {
  * @param {object} params
  * @param {string}            params.uuid              - crypto.randomUUID() from the caller
  * @param {string}            params.committedAt       - ISO timestamp from the caller
- * @param {string}            params.scene             - SCENE prose from the hookseeker this cycle
- * @param {string}            params.hooks             - legacy alias for scene; kept for backward compat
- * @param {string|null}       params.plotLorebookName  - plot lorebook filename, or null
- * @param {object}            params.lorebook          - full lorebook snapshot { name, entries }
- * @param {RagHeaderEntry[]}  params.ragHeaders        - chunk headers committed this cycle
- * @param {string|null}       params.parentUuid        - uuid of previous anchor, or null
+ * @param {string}               params.scene                - SCENE prose from the hookseeker this cycle
+ * @param {string}               params.hooks                - legacy alias for scene; kept for backward compat
+ * @param {string|null}          params.plotLorebookName     - plot lorebook filename, or null
+ * @param {object}               params.lorebook             - full lorebook snapshot { name, entries }
+ * @param {RagHeaderEntry[]}     params.ragHeaders           - chunk headers committed this cycle
+ * @param {string|null}          params.parentUuid           - uuid of previous anchor, or null
+ * @param {AdditionalLorebook[]} params.additionalLorebooks  - active read-only lorebook references
  * @returns {CnzAnchor}
  */
-export function buildAnchorPayload({ uuid, committedAt, scene, hooks, plotLorebookName, plotEntries, lorebook, ragHeaders, parentUuid }) {
+export function buildAnchorPayload({ uuid, committedAt, scene, hooks, plotLorebookName, plotEntries, lorebook, ragHeaders, parentUuid, additionalLorebooks }) {
     return {
         type: 'anchor',
         uuid,
         committedAt,
-        scene:            scene ?? hooks ?? '',
-        plotLorebookName: plotLorebookName ?? null,
-        plotEntries:      plotEntries ?? [],
-        lorebook:         structuredClone(lorebook),
-        ragHeaders:       ragHeaders ?? [],
-        parentUuid:       parentUuid ?? null,
+        scene:               scene ?? hooks ?? '',
+        plotLorebookName:    plotLorebookName ?? null,
+        plotEntries:         plotEntries ?? [],
+        lorebook:            structuredClone(lorebook),
+        ragHeaders:          ragHeaders ?? [],
+        parentUuid:          parentUuid ?? null,
+        additionalLorebooks: structuredClone(additionalLorebooks ?? []),
     };
 }
 
@@ -157,11 +169,12 @@ export function buildAnchorPayload({ uuid, committedAt, scene, hooks, plotLorebo
 export function buildNodeFileFromAnchor(anchor) {
     return {
         state: {
-            uuid:             anchor.uuid             ?? null,
-            scene:            anchor.scene            ?? anchor.hooks ?? '',
-            plotLorebookName: anchor.plotLorebookName ?? null,
-            plotEntries:      anchor.plotEntries      ?? [],
-            lorebook:         anchor.lorebook         ?? { entries: {} },
+            uuid:                anchor.uuid                ?? null,
+            scene:               anchor.scene               ?? anchor.hooks ?? '',
+            plotLorebookName:    anchor.plotLorebookName    ?? null,
+            plotEntries:         anchor.plotEntries         ?? [],
+            lorebook:            anchor.lorebook            ?? { entries: {} },
+            additionalLorebooks: anchor.additionalLorebooks ?? [],
         },
     };
 }
