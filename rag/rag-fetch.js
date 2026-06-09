@@ -183,9 +183,11 @@ export async function doRagFetch(ctx, settings, chain, signal) {
                 plotMin, plotFillerOn, plotFillerCards, plotFillerStrat, allPairs.length,
             );
             const activatedSet  = new Set(toActivate.map(a => a.uid));
-            for (const uid of recencyUids)
-                if (!activatedSet.has(uid) && !activeUids.has(uid))
+            for (const uid of [...semanticUids, ...recencyUids])
+                if (!activatedSet.has(uid) && !activeUids.has(uid)) {
+                    activatedSet.add(uid);
                     toActivate.push({ world: plotLbName, uid });
+                }
             if (recencyUids.length) log('RagFetch', `plot recency: +${recencyUids.length} entries`);
         } catch (err) { error('RagFetch', 'Plot recency failed:', err); }
     }

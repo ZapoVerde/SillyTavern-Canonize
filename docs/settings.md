@@ -76,7 +76,7 @@ Canonize uses a hybrid micro-pool threshold rather than a fixed result count. On
 ### Plot Memory
 
 - **Plot Min / Max** — Floor and ceiling for plot arc entries retrieved per turn.
-- **Recent cards per arc** — For each retrieved arc, how many recent cards to include beyond the origin card.
+- **Recent cards per arc** — For each semantically retrieved arc, the origin card is always included. This setting controls how many additional recent cards are added on top. Any card directly matched by semantic search is also always included regardless of this limit.
 - **Recent cards per filler arc** — Same, for filler arcs surfaced by the plot filler system.
 - **Plot filler enabled** — Whether the filler system surfaces underrepresented arcs to maintain narrative breadth.
 - **Filler strategy** — How filler arcs are selected: `random`, `oldest arc`, or `oldest surfaced`.
