@@ -65,6 +65,6 @@ See [docs/installation.md](docs/installation.md) for full setup detail.
 - [Architecture](docs/architecture.md) — System design and retrieval pipeline
 - [Installation](docs/installation.md) — Prerequisites and setup
 - [Settings Reference](docs/settings.md) — Every knob explained
-- [People Curator](docs/people-curator.md) — Character tracking and relationship management
+- [Lorebook](docs/lorebook.md) — Lorebook architecture, curator lanes, and entry structure
 - [Narrative Memory (RAG)](docs/rag.md) — Retrieval pipeline, tuning, and diagnostics
 - [Review Wizard](docs/review-wizard.md) — Step-by-step guide to the approval workflow
