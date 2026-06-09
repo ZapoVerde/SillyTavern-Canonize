@@ -149,8 +149,12 @@ Every user-facing addition must land in the docs at the same time it lands in th
 The documents to maintain:
 
 - **`rag.md`** — retrieval behaviour, tuning knobs, console diagnostics, additional lorebooks
+- **`lorebook.md`** — lorebook architecture, curator lanes, MECE tags, entry structure
 - **`settings.md`** — every user-facing setting, what it does, its default
 - **`architecture.md`** — structural decisions that future code must remain consistent with
+- **`installation.md`** — prerequisites, setup steps, embedding provider configuration
+- **`review-wizard.md`** — the approval workflow for summaries, lorebook changes, and memories
+- **`RAG_strategy_v4.md`** — technical specification for the retrieval pipeline
 - **`cnz_principles.md`** — this document
 
 When you add a setting, update `settings.md`. When you add or change a retrieval channel, update `rag.md`. When you make a structural decision that will constrain future work, update `architecture.md`.
