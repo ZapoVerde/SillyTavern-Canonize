@@ -55,7 +55,7 @@ RAG is always active when Canonize is enabled.
   - *Full Content Only* — Raw dialogue only.
 - **RAG Connection Profile** — Model profile used for chunk classification.
 - **Chunk Size (pairs)** — Turn-pairs per RAG archive block. Default 2.
-- **Chunk Overlap** — Overlapping pairs between adjacent chunks. Prevents transitions from being cut mid-scene.
+- **Chunk Overlap** — Overlapping pairs between adjacent chunks. Prevents transitions from being cut mid-scene. Default 0.
 - **Simultaneous Calls** — Maximum parallel background classification calls.
 - **Embedding Source / Model** — Provider and model for generating embedding vectors. Called directly from the browser using your stored API key.
 
