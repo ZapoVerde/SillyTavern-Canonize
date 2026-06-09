@@ -25,6 +25,7 @@ import { state, escapeHtml }      from '../state.js';
 import { lbListLorebooks }        from '../lorebook/api.js';
 import { renderAdditionalLbRows } from './html-additional-lb.js';
 import { invalidateSwipeCache }   from '../rag/generation-hook.js';
+import { writeAddLbStash }        from '../core/dna-writer.js';
 import { log, error }             from '../log.js';
 
 // ── List render ───────────────────────────────────────────────────────────────
@@ -46,6 +47,7 @@ export function bindAdditionalLbHandlers() {
         const lb  = state._additionalLorebooks?.[idx];
         if (!lb) return;
         lb.min = Math.max(0, parseInt($(this).val(), 10) || 0);
+        _saveStash();
         _invalidateSwipeCache();
     });
 
@@ -54,6 +56,7 @@ export function bindAdditionalLbHandlers() {
         const lb  = state._additionalLorebooks?.[idx];
         if (!lb) return;
         lb.max = Math.max(1, parseInt($(this).val(), 10) || 1);
+        _saveStash();
         _invalidateSwipeCache();
     });
 
@@ -62,6 +65,7 @@ export function bindAdditionalLbHandlers() {
         const lb  = state._additionalLorebooks?.[idx];
         if (!lb) return;
         lb.bypass = $(this).is(':checked');
+        _saveStash();
         _invalidateSwipeCache();
     });
 
@@ -70,6 +74,7 @@ export function bindAdditionalLbHandlers() {
         if (isNaN(idx) || idx < 0) return;
         state._additionalLorebooks.splice(idx, 1);
         refreshAdditionalLbList();
+        _saveStash();
         _invalidateSwipeCache();
         log('AddLb', `Removed lorebook at index ${idx}`);
     });
@@ -107,8 +112,13 @@ export function bindAdditionalLbHandlers() {
         if (state._additionalLorebooks.some(lb => lb.name === name)) {
             _closeAddRow(); return;
         }
+        if (name === state._lorebookName || name === state._plotLorebookName) {
+            toastr.warning(`CNZ: "${name}" is already managed by Canonize and cannot be added as a reference lorebook.`);
+            return;
+        }
         state._additionalLorebooks.push({ name, hash: 0, min: 1, max: 3, bypass: false });
         refreshAdditionalLbList();
+        _saveStash();
         _invalidateSwipeCache();
         _closeAddRow();
         log('AddLb', `Added lorebook: ${name}`);
@@ -120,6 +130,11 @@ export function bindAdditionalLbHandlers() {
 function _closeAddRow() {
     $('#cnz-additional-lb-add-row').hide();
     $('#cnz-additional-lb-open-add').show();
+}
+
+function _saveStash() {
+    const messages = SillyTavern.getContext().chat ?? [];
+    writeAddLbStash(messages, state._additionalLorebooks ?? []).catch(() => {});
 }
 
 function _invalidateSwipeCache() {

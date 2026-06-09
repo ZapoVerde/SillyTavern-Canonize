@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/rag-fetch.js
- * @stamp {"utc":"2026-06-09T00:00:00.000Z"}
- * @version 1.4.0
+ * @stamp {"utc":"2026-06-09T12:00:00.000Z"}
+ * @version 1.4.2
  * @architectural-role IO Wrapper — RAG retrieval execution
  * @description
  * Executes all three RAG channels (chat chunks, LB entries, plot LB entries)
@@ -170,9 +170,9 @@ export async function doRagFetch(ctx, settings, chain, signal) {
 
     // ── LB + plot activation ──────────────────────────────────────────────────
 
-    const activeUids   = new Set((ctx.worldInfoActivated ?? []).map(e => e.uid));
+    const activeKeys   = new Set((ctx.worldInfoActivated ?? []).map(e => `${e.world ?? ''}:${e.uid}`));
     const toActivate   = lbHits
-        .filter(h => !activeUids.has(h.entryUid))
+        .filter(h => !activeKeys.has(`${h.lorebookName}:${h.entryUid}`))
         .map(h => ({ world: h.lorebookName, uid: h.entryUid }));
 
     if (plotLbName) {
@@ -182,9 +182,9 @@ export async function doRagFetch(ctx, settings, chain, signal) {
                 chatKey, plotLbName, validUuids, semanticUids, plotRecencyCount, signal,
                 plotMin, plotFillerOn, plotFillerCards, plotFillerStrat, allPairs.length,
             );
-            const activatedSet  = new Set(toActivate.map(a => a.uid));
+            const activatedSet  = new Set();
             for (const uid of [...semanticUids, ...recencyUids])
-                if (!activatedSet.has(uid) && !activeUids.has(uid)) {
+                if (!activatedSet.has(uid)) {
                     activatedSet.add(uid);
                     toActivate.push({ world: plotLbName, uid });
                 }
@@ -215,7 +215,7 @@ export async function doRagFetch(ctx, settings, chain, signal) {
     const bypassEntries = [];
     for (const { lb, hits } of additionalRaw) {
         for (const h of hits) {
-            if (activeUids.has(h.entryUid)) continue;
+            if (activeKeys.has(`${h.lorebookName}:${h.entryUid}`)) continue;
             if (lb.bypass) {
                 bypassEntries.push({
                     lorebookName: h.lorebookName,

@@ -43,7 +43,6 @@ import { formatPairsAsTranscript } from './transcript.js';
  * @property {object}             lorebook           - full lorebook snapshot { name, entries }
  * @property {RagHeaderEntry[]}   ragHeaders         - chunk headers committed this cycle
  * @property {string|null}        parentUuid         - uuid of previous anchor, or null
- * @property {AdditionalLorebook[]} additionalLorebooks - read-only reference lorebooks active this session
  */
 
 /**
@@ -136,25 +135,23 @@ export function getLkgAnchor(messages) {
  * @param {string}            params.committedAt       - ISO timestamp from the caller
  * @param {string}               params.scene                - SCENE prose from the hookseeker this cycle
  * @param {string}               params.hooks                - legacy alias for scene; kept for backward compat
- * @param {string|null}          params.plotLorebookName     - plot lorebook filename, or null
- * @param {object}               params.lorebook             - full lorebook snapshot { name, entries }
- * @param {RagHeaderEntry[]}     params.ragHeaders           - chunk headers committed this cycle
- * @param {string|null}          params.parentUuid           - uuid of previous anchor, or null
- * @param {AdditionalLorebook[]} params.additionalLorebooks  - active read-only lorebook references
+ * @param {string|null}      params.plotLorebookName - plot lorebook filename, or null
+ * @param {object}           params.lorebook         - full lorebook snapshot { name, entries }
+ * @param {RagHeaderEntry[]} params.ragHeaders       - chunk headers committed this cycle
+ * @param {string|null}      params.parentUuid       - uuid of previous anchor, or null
  * @returns {CnzAnchor}
  */
-export function buildAnchorPayload({ uuid, committedAt, scene, hooks, plotLorebookName, plotEntries, lorebook, ragHeaders, parentUuid, additionalLorebooks }) {
+export function buildAnchorPayload({ uuid, committedAt, scene, hooks, plotLorebookName, plotEntries, lorebook, ragHeaders, parentUuid }) {
     return {
         type: 'anchor',
         uuid,
         committedAt,
-        scene:               scene ?? hooks ?? '',
-        plotLorebookName:    plotLorebookName ?? null,
-        plotEntries:         plotEntries ?? [],
-        lorebook:            structuredClone(lorebook),
-        ragHeaders:          ragHeaders ?? [],
-        parentUuid:          parentUuid ?? null,
-        additionalLorebooks: structuredClone(additionalLorebooks ?? []),
+        scene:            scene ?? hooks ?? '',
+        plotLorebookName: plotLorebookName ?? null,
+        plotEntries:      plotEntries ?? [],
+        lorebook:         structuredClone(lorebook),
+        ragHeaders:       ragHeaders ?? [],
+        parentUuid:       parentUuid ?? null,
     };
 }
 

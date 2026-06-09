@@ -33,10 +33,11 @@ import { insertLorebookEntries, purgeStaleLorebookEntries } from './file-store-l
 import { cnzGetActiveChatKey } from './api.js';
 import { getStringHash }     from '../../../../utils.js';
 import { stripProtectedBlock } from '../lorebook/utils.js';
-import { log, error }        from '../log.js';
+import { log, warn, error }  from '../log.js';
 import { eventSource, event_types } from '../../../../../script.js';
 import { clearCnzRagPrompt, clearCnzLbPrompt } from '../core/summary-prompt.js';
 import { lbGetLorebook } from '../lorebook/api.js';
+import { writeAddLbStash } from '../core/dna-writer.js';
 import { injectRagResult } from './rag-inject.js';
 import { printTimingSummary } from './rag-timing.js';
 
@@ -179,12 +180,18 @@ export async function onGenerationStarted() {
     const _chatKey  = cnzGetActiveChatKey();
     const _lkgUuid  = state._dnaChain?.lkg?.uuid;
     if (_chatKey && _lkgUuid && state._additionalLorebooks?.length) {
+        const toRemove = [];
         for (const lb of state._additionalLorebooks) {
             try {
                 const disk    = await lbGetLorebook(lb.name);
                 const entries = Object.values(disk?.entries ?? {})
                     .filter(e => !e.disable && e.content?.trim())
                     .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
+                // Lorebook was deleted or emptied after having had content — auto-remove.
+                if (entries.length === 0 && lb.hash !== 0) {
+                    toRemove.push(lb);
+                    continue;
+                }
                 const diskHash = getStringHash(entries.map(e => e.content).join('\n'));
                 if (diskHash !== lb.hash) {
                     log('RagHook', `JIT additional LB re-index: ${lb.name}`);
@@ -193,8 +200,27 @@ export async function onGenerationStarted() {
                     lb.hash = diskHash;
                 }
             } catch (err) {
-                error('RagHook', `JIT additional LB re-index failed (${lb.name}):`, err);
+                // HTTP 4xx → lorebook file is gone; other errors are transient.
+                if (/HTTP 4/.test(err.message ?? '')) {
+                    toRemove.push(lb);
+                } else {
+                    error('RagHook', `JIT additional LB re-index failed (${lb.name}):`, err);
+                }
             }
+        }
+        if (toRemove.length) {
+            for (const lb of toRemove) {
+                const idx = state._additionalLorebooks.indexOf(lb);
+                if (idx >= 0) state._additionalLorebooks.splice(idx, 1);
+                warn('RagHook', `Additional LB "${lb.name}" not found — removed from session`);
+                toastr.warning(`CNZ: Additional lorebook "${lb.name}" was not found and has been removed.`);
+            }
+            _prefetchPromise = null;
+            writeAddLbStash(SillyTavern.getContext().chat ?? [], state._additionalLorebooks).catch(() => {});
+            // Refresh UI list if the settings panel is open.
+            import('../settings/handlers-additional-lb.js')
+                .then(m => m.refreshAdditionalLbList())
+                .catch(() => {});
         }
     }
 

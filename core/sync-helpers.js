@@ -32,7 +32,6 @@
  */
 
 import { log, warn } from '../log.js';
-import { getSettings } from '../settings/data.js';
 import { getStringHash } from '../../../../utils.js';
 import { insertLorebookEntries } from '../rag/file-store-lb.js';
 import { cnzGetActiveChatKey } from '../rag/api.js';
@@ -267,15 +266,14 @@ export async function commitDnaAnchor(messages, anchorUuid, plotEntries = []) {
         }));
 
     const anchor = buildAnchorPayload({
-        uuid:                anchorUuid,
-        committedAt:         new Date().toISOString(),
-        scene:               state._priorSituation,
-        plotLorebookName:    state._plotLorebookName,
+        uuid:             anchorUuid,
+        committedAt:      new Date().toISOString(),
+        scene:            state._priorSituation,
+        plotLorebookName: state._plotLorebookName,
         plotEntries,
-        lorebook:            Object.assign({ name: state._lorebookName }, structuredClone(state._draftLorebook ?? { entries: {} })),
+        lorebook:         Object.assign({ name: state._lorebookName }, structuredClone(state._draftLorebook ?? { entries: {} })),
         ragHeaders,
         parentUuid,
-        additionalLorebooks: state._additionalLorebooks ?? [],
     });
 
     await writeDnaAnchor(anchorPair, anchor);

@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/file-store-lb.js
- * @stamp {"utc":"2026-06-04T00:00:00.000Z"}
- * @version 3.2.0
+ * @stamp {"utc":"2026-06-09T12:00:00.000Z"}
+ * @version 3.2.1
  * @architectural-role IO Wrapper — lorebook entry and plot filler operations
  * @description
  * Lorebook entry and plot filler insert, query, and purge operations against the
@@ -166,6 +166,7 @@ export async function queryLorebookEntries(chatKey, validAnchorUuids, queryText,
                 comment:      e.comment      ?? '',
                 content:      r.content,
                 score:        Number(r.score),
+                sources:      r.sources      ?? [],
                 laneScores:   r.laneScores   ?? null,
                 kwTfidf:      r.kwTfidf      ?? null,
             };

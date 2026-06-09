@@ -1,7 +1,7 @@
 /**
  * @file data/default-user/extensions/canonize/rag/rag-inject.js
- * @stamp {"utc":"2026-06-09T00:00:00.000Z"}
- * @version 1.0.0
+ * @stamp {"utc":"2026-06-09T12:00:00.000Z"}
+ * @version 1.2.0
  * @architectural-role IO Wrapper — RAG result injection and WI activation
  * @description
  * Applies a completed RagResult to the ST prompt stack. Handles three injection
@@ -80,8 +80,11 @@ export async function injectRagResult(result, settings) {
     // Collect all blocks that need direct prompt injection, then write once.
     const directBlocks = [];
 
+    const primaryLbName = state._lorebookName ?? null;
     if (settings.lbRagOnly ?? false) {
+        // Primary CNZ lorebook entries — looked up directly from _draftLorebook
         const lbEntries = lbActivate
+            .filter(a => a.world === primaryLbName)
             .map(a => state._draftLorebook?.entries?.[String(a.uid)])
             .filter(Boolean);
         for (const e of lbEntries) {
@@ -91,16 +94,75 @@ export async function injectRagResult(result, settings) {
             directBlocks.push(`<${tag}>\n${alias}${e.content ?? ''}\n</${tag}>`);
         }
         if (lbEntries.length) log('RagInject', `LB direct inject: ${lbEntries.length} entries`);
+
+        // Additional non-bypass LB entries — fetch from their own lorebooks, placed at bottom
+        const addLbActivate = lbActivate.filter(a => a.world !== primaryLbName);
+        if (addLbActivate.length) {
+            const byWorld = new Map();
+            for (const a of addLbActivate) {
+                if (!byWorld.has(a.world)) byWorld.set(a.world, []);
+                byWorld.get(a.world).push(a.uid);
+            }
+            let addCount = 0;
+            for (const [world, uids] of byWorld) {
+                try {
+                    const lb = await lbGetLorebook(world);
+                    const worldEntries = [];
+                    for (const uid of uids) {
+                        const e = lb?.entries?.[String(uid)];
+                        if (!e) continue;
+                        const tag   = (e.comment ?? '').trim().replace(/\s+/g, '_') || world;
+                        const keys  = e.key ?? [];
+                        const alias = keys.length ? `(${keys.join(', ')})\n` : '';
+                        directBlocks.push(`<${tag}>\n${alias}${e.content ?? ''}\n</${tag}>`);
+                        worldEntries.push(e);
+                        addCount++;
+                    }
+                    if (worldEntries.length) {
+                        const _p = e => (e.content ?? '').split('\n').slice(0, 2).join(' ').slice(0, 80);
+                        const first = worldEntries[0], last = worldEntries.at(-1);
+                        const suffix = worldEntries.length > 1 ? `  ‖  last: ${_p(last)}` : '';
+                        log('RagInject', `AddLB [${world}] ${worldEntries.length} | first: ${_p(first)}${suffix}`);
+                    }
+                } catch (err) {
+                    error('RagInject', `Additional LB lookup failed (${world}):`, err);
+                }
+            }
+            if (addCount) log('RagInject', `Additional LB direct inject: ${addCount} entries`);
+        }
     } else {
         if (lbActivate.length) {
-            const lbEnriched = lbActivate.map(a => {
-                const entry = state._draftLorebook?.entries?.[String(a.uid)];
-                return entry ? { ...entry, world: a.world } : a;
-            });
-            log('RagInject', `Semantic LB activation: ${lbEnriched.length} entries`);
+            // Primary entries enriched from _draftLorebook; additional fetched from their lorebooks
+            const toForceActivate = lbActivate
+                .filter(a => a.world === primaryLbName)
+                .map(a => {
+                    const entry = state._draftLorebook?.entries?.[String(a.uid)];
+                    return entry ? { ...entry, world: a.world } : a;
+                });
+            const addLbActivate = lbActivate.filter(a => a.world !== primaryLbName);
+            if (addLbActivate.length) {
+                const byWorld = new Map();
+                for (const a of addLbActivate) {
+                    if (!byWorld.has(a.world)) byWorld.set(a.world, []);
+                    byWorld.get(a.world).push(a.uid);
+                }
+                for (const [world, uids] of byWorld) {
+                    try {
+                        const lb = await lbGetLorebook(world);
+                        for (const uid of uids) {
+                            const e = lb?.entries?.[String(uid)];
+                            toForceActivate.push(e ? { ...e, world } : { world, uid });
+                        }
+                    } catch (err) {
+                        error('RagInject', `Additional LB lookup failed (${world}):`, err);
+                        for (const uid of uids) toForceActivate.push({ world, uid });
+                    }
+                }
+            }
+            log('RagInject', `Semantic LB activation: ${toForceActivate.length} entries`);
             try {
                 window.loggeryze?.time('CNZ LB activate [blocking]');
-                await eventSource.emit(event_types.WORLDINFO_FORCE_ACTIVATE, lbEnriched);
+                await eventSource.emit(event_types.WORLDINFO_FORCE_ACTIVATE, toForceActivate);
                 window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
             } catch (err) {
                 window.loggeryze?.timeEnd('CNZ LB activate [blocking]');
@@ -128,8 +190,22 @@ export async function injectRagResult(result, settings) {
                 const lb      = await lbGetLorebook(plotLbName);
                 const entries = plotActivate.map(a => lb.entries?.[String(a.uid)]).filter(Boolean)
                     .sort((a, b) => a.uid - b.uid);
+                if (entries.length) {
+                    const arcGroups = new Map();
+                    for (const e of entries) {
+                        const tags = e.content.match(/#\w+/g) ?? [];
+                        const arc  = tags[tags.length - 1] ?? '(no arc)';
+                        if (!arcGroups.has(arc)) arcGroups.set(arc, []);
+                        arcGroups.get(arc).push(e);
+                    }
+                    for (const [arc, grp] of arcGroups) {
+                        const _p  = e => e.content.replace(/#\w+/g, '').trim().split('\n').slice(0, 2).join(' ').slice(0, 80);
+                        const suffix = grp.length > 1 ? `  ‖  last: ${_p(grp.at(-1))}` : '';
+                        log('RagInject', `Plot card arc=${arc} (${grp.length}) | first: ${_p(grp[0])}${suffix}`);
+                    }
+                }
                 appendCnzPlotArcs(entries.length ? _formatPlotArcs(entries, settings.cnzPlotChunkTemplate) : '');
-                if (entries.length) log('RagInject', `Plot arcs injected: ${plotActivate.length} entries`);
+                if (entries.length) log('RagInject', `Plot arcs injected: ${entries.length} entries (${plotActivate.length} in plotActivate)`);
             } else {
                 appendCnzPlotArcs('');
             }

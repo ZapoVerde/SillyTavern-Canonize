@@ -26,18 +26,16 @@ export function buildPlotSectionHTML(s, escapeHtml) {
             </div>
             <div class="inline-drawer-content">
 
-              <div class="cnz-settings-inline-row">
-                <label for="cnz-set-plot-retrieval-topk">Semantic arcs per turn ${tip('How many plot arcs to retrieve via semantic similarity each turn.')}</label>
-                <input id="cnz-set-plot-retrieval-topk" type="number" min="0" max="10" step="1" value="${escapeHtml(String(s.ragPlotRetrievalTopK ?? 3))}">
+              <div class="cnz-settings-inline-row" style="align-items:baseline;gap:8px;">
+                <label style="flex:1">Plot context ${tip('Floor and ceiling for plot arc entries retrieved per turn. Min also sets the arc coverage target — when semantic results cover fewer distinct arcs than this value, filler arcs make up the shortfall.')}</label>
+                <label style="font-size:0.8rem;color:var(--cnz-text-muted,#888)">Min</label>
+                <input id="cnz-set-plot-min-arcs" type="number" min="0" max="10" step="1" style="width:52px" value="${escapeHtml(String(s.ragPlotMinArcs ?? 2))}">
+                <label style="font-size:0.8rem;color:var(--cnz-text-muted,#888)">Max</label>
+                <input id="cnz-set-plot-retrieval-topk" type="number" min="1" max="10" step="1" style="width:52px" value="${escapeHtml(String(s.ragPlotRetrievalTopK ?? 3))}">
               </div>
               <div class="cnz-settings-inline-row">
                 <label for="cnz-set-plot-recency-count">Recent cards per arc ${tip('Additional cards pulled from the end of each semantically matched arc. The first (oldest) card is always included regardless. Set to 0 for first-card-only.')}</label>
                 <input id="cnz-set-plot-recency-count" type="number" min="0" max="10" step="1" value="${escapeHtml(String(s.ragPlotRecencyCount ?? 3))}">
-              </div>
-
-              <div class="cnz-settings-inline-row">
-                <label for="cnz-set-plot-min-arcs">Minimum arcs per turn ${tip('Total arcs to include per turn. Filler arcs pad up to this number when semantic results fall short.')}</label>
-                <input id="cnz-set-plot-min-arcs" type="number" min="0" max="10" step="1" value="${escapeHtml(String(s.ragPlotMinArcs ?? 2))}">
               </div>
 
               <div class="cnz-settings-row">

@@ -48,6 +48,7 @@ import { getAnchor, getLbVecMap, loadChatStore, flushChatStore, invalidateVecCac
 import { rebuildPlotLorebook } from '../lorebook/plot-lorebook.js';
 import { lbSetCharacterLorebook } from '../lorebook/api.js';
 import { getSettings } from './settings.js';
+import { readAddLbStash, writeAddLbStash } from './dna-writer.js';
 
 // Re-export restore ops — callers that import from healer.js keep working.
 export { restoreLorebookToNode, restoreHooksToNode } from './healer-restore.js';
@@ -199,6 +200,53 @@ async function _reconcileRagChunks(char, headAnchor, chatKey) {
             toastr.info(`CNZ: Auto-indexed ${toEmbedLb.length} lorebook entries.`);
         }
 
+        // ── 4. Additional lorebook entries — head anchor only ─────────────────
+        // state._additionalLorebooks is populated by _restoreAddLbs earlier in runHealer.
+        // The JIT path in generation-hook.js skips re-indexing when the content hash
+        // matches — so after a purge or rebuild the entries can be absent even though
+        // the hash is correct. Check here unconditionally and index anything missing.
+        const additionalLbs = state._additionalLorebooks ?? [];
+        if (additionalLbs.length) {
+            const headAnchorData = store.anchors[headAnchor.uuid] ??
+                { chunks: [], vecChunks: { content: {}, header: {} }, lbEntries: [], vecLb: { content: {} }, plotHistory: {} };
+            store.anchors[headAnchor.uuid] = headAnchorData;
+
+            const toEmbedAdd = [];
+            for (const lb of additionalLbs) {
+                try {
+                    const disk    = await lbGetLorebook(lb.name);
+                    const entries = Object.values(disk?.entries ?? {}).filter(e => !e.disable && e.content?.trim());
+                    const vecKeys = new Set(Object.keys(headAnchorData.vecLb.content ?? {}));
+                    const indexed = new Set(
+                        headAnchorData.lbEntries
+                            .filter(e => e.lorebookName === lb.name && vecKeys.has(e.hash))
+                            .map(e => e.hash),
+                    );
+                    for (const e of entries) {
+                        const hash = getStringHash(e.content);
+                        if (!indexed.has(hash))
+                            toEmbedAdd.push({ lbName: lb.name, hash, uid: e.uid, content: e.content, keys: e.key ?? [] });
+                    }
+                } catch (_) { /* lorebook unreachable — skip */ }
+            }
+
+            if (toEmbedAdd.length) {
+                const cfg  = embedCfg();
+                const vecs = await embedBatch(toEmbedAdd.map(t => t.content), cfg, false);
+                reportEmbedUsage(toEmbedAdd.reduce((s, t) => s + t.content.length, 0), cfg.model);
+                for (const [i, t] of toEmbedAdd.entries()) {
+                    headAnchorData.lbEntries.push({ hash: t.hash, anchorUuid: headAnchor.uuid, lorebookName: t.lbName, entryUid: t.uid, entryKeys: t.keys, content: t.content });
+                    headAnchorData.vecLb.content[t.hash] = encodeVec(vecs[i]);
+                    invalidateVecCache(chatKey, headAnchor.uuid);
+                }
+                flushChatStore(chatKey, store);
+                log('Healer', `RAG reconcile: indexed ${toEmbedAdd.length} additional lorebook entries`);
+                toastr.info(`CNZ: Auto-indexed ${toEmbedAdd.length} additional lorebook entries.`);
+            } else {
+                log('Healer', `RAG reconcile: additional lorebooks OK (${additionalLbs.length} LB(s), all entries present)`);
+            }
+        }
+
     } catch (err) {
         error('Healer', 'RAG reconcile failed:', err);
     }
@@ -239,6 +287,29 @@ async function reconcileWorldState(char, headAnchor, chatKey) {
 
     await _reconcileRagChunks(char, headAnchor, chatKey);
     await reconcilePlotLorebook(char, state._dnaChain, chatKey);
+}
+
+// ─── Additional-LB stash restore ─────────────────────────────────────────────
+
+/**
+ * Sets state._additionalLorebooks from messages[0].extra.cnz_addlb (the stash).
+ * If the stash is absent, falls back to the first anchor's additionalLorebooks
+ * (one-time migration for chats created before the stash was introduced) and
+ * writes it to the stash so future sessions don't need the anchor fallback.
+ */
+async function _restoreAddLbs(messages) {
+    const stash = readAddLbStash(messages);
+    if (stash.length) {
+        state._additionalLorebooks = stash;
+        return;
+    }
+    const firstAnchor = state._dnaChain.anchors[0]?.anchor;
+    const legacy      = firstAnchor?.additionalLorebooks ?? [];
+    state._additionalLorebooks = structuredClone(legacy);
+    if (legacy.length) {
+        await writeAddLbStash(messages, state._additionalLorebooks);
+        log('Healer', `Migrated ${legacy.length} additional lorebook(s) from anchor to first-turn stash`);
+    }
 }
 
 // ─── New Chat Guard ───────────────────────────────────────────────────────────
@@ -295,6 +366,7 @@ export async function runHealer(char, chatFileName) {
     _logChatSummary(messages, state._dnaChain);
 
     if (state._dnaChain.anchors.length === 0) {
+        state._additionalLorebooks = readAddLbStash(messages);
         await maybePromptLorebookCleanup(char);
         return;
     }
@@ -303,8 +375,9 @@ export async function runHealer(char, chatFileName) {
 
     const headRef = state._dnaChain.anchors[state._dnaChain.anchors.length - 1];
     if (messages[headRef.msgIdx]?.extra?.cnz?.uuid === headRef.anchor.uuid) {
-        state._lorebookName     = headRef.anchor.lorebook?.name || char?.data?.extensions?.world || char?.name || '';
-        state._plotLorebookName = headRef.anchor.plotLorebookName ?? cnzPlotLbName(char.avatar);
+        state._lorebookName        = headRef.anchor.lorebook?.name || char?.data?.extensions?.world || char?.name || '';
+        state._plotLorebookName    = headRef.anchor.plotLorebookName ?? cnzPlotLbName(char.avatar);
+        await _restoreAddLbs(messages);
 
         // Sync lorebook attachment to match bypass setting.
         if (state._lorebookName) {
@@ -359,6 +432,7 @@ export async function runHealer(char, chatFileName) {
 
         await restoreLorebookToNode(char, nodeDummy, nodeFile);
         restoreHooksToNode(char, nodeDummy, nodeFile);
+        await _restoreAddLbs(messages);
 
         state._dnaChain = readDnaChain(SillyTavern.getContext().chat ?? []);
         setDnaChain(state._dnaChain);
