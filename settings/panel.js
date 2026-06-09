@@ -171,7 +171,7 @@ function bindSettingsHandlers() {
     bindRagHandlers({ updateDirtyIndicator, openPromptModal });
     bindPlotHandlers({ updateDirtyIndicator, openPromptModal });
     bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refreshProfileDropdown, refreshSettingsUI });
-    bindAdditionalLbHandlers({});
+    bindAdditionalLbHandlers();
     refreshAdditionalLbList();
 
     try {

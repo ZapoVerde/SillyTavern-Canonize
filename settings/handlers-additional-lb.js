@@ -27,8 +27,6 @@ import { renderAdditionalLbRows } from './html-additional-lb.js';
 import { invalidateSwipeCache }   from '../rag/generation-hook.js';
 import { log, error }             from '../log.js';
 
-let _deps = null;
-
 // ── List render ───────────────────────────────────────────────────────────────
 
 export function refreshAdditionalLbList() {
@@ -39,9 +37,7 @@ export function refreshAdditionalLbList() {
 
 // ── Event binding ─────────────────────────────────────────────────────────────
 
-export function bindAdditionalLbHandlers(deps) {
-    _deps = deps;
-
+export function bindAdditionalLbHandlers() {
     // Delegated handlers on the list container — survive re-renders.
     $(document).off('.cnzAddLb');
 
@@ -88,7 +84,7 @@ export function bindAdditionalLbHandlers(deps) {
         $(this).hide();
 
         try {
-            const all    = await lbListLorebooks();
+            const all    = (await lbListLorebooks()).map(item => item.name ?? item);
             const active = new Set((state._additionalLorebooks ?? []).map(lb => lb.name));
             const opts   = all.filter(n => !active.has(n));
             if (opts.length) {
