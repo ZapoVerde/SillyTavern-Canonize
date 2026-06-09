@@ -4,8 +4,8 @@
 
 Standard long-context roleplay has three failure modes:
 
-1. **Cost blowout.** Every message sends the entire chat history. A 2,000-turn chat means paying for 2,000 turns of tokens on every single reply.
-2. **Attention dilution.** LLMs suffer from "Lost in the Middle" — when forced to read massive raw logs, they start ignoring system prompts, drop character card instructions, and fall into repetitive prose.
+1. **Cost blowout.** Every message sends the entire chat history. A 1,000-turn chat means paying for 1,000 turns of tokens on every single reply.
+2. **Attention dilution.** LLMs suffer from "Lost in the Middle" when forced to read massive raw logs, they start ignoring system prompts, drop character card instructions, and fall into repetitive prose.
 3. **Stale or missing memories.** The AI either forgets things from 200 turns ago, or hallucinates them because it is pattern-matching on noise rather than fact.
 
 ## Memory & Retrieval Architecture
@@ -13,7 +13,7 @@ Standard long-context roleplay has three failure modes:
 At each generation turn, three things are assembled into the prompt:
 
 ### Live Context
-The most recent conversation turns, sent directly to the model. Not a memory system — just the active window.
+The most recent conversation turns, sent directly to the model. Not a memory system, just the active window.
 
 ### Bridge Summary
 A rolling narrative that keeps the model aligned with the current story state. Bridges the retrieval memory into the live context.
@@ -27,24 +27,39 @@ The actual memory system. Three search lanes run in parallel and inject only the
 
 The lorebooks are the source material for the general and plot lanes. All three lanes feed into the retrieval memory system.
 
-## Timeline Integrity
+## The Conversation Windows
 
-Canonize writes sync markers into your chat file alongside certain messages. Each marker is a complete snapshot of your lorebook state and narrative summary at that point in the timeline. They are stored in message metadata and are never sent to the model.
+Canonize divides the conversation into four sequential regions:
 
-When you swipe, delete messages, or edit past turns, Canonize detects the divergence, identifies the last valid marker, and rolls back the summary, lorebook state, and retrieval index to match. Your AI's memory always reflects your *current* timeline, not an abandoned branch.
+```
+│←── archival ───│←── bridge horizon (default 40 pairs) ───│←── sync window (0→8 pairs) ──→│←── live context (8 pairs) ──→│
+oldest                                                                                                                       newest
+```
+
+**Live context** (default: 8 pairs) — The most recent turns sent to the model as raw dialogue. Maintains scene continuity and gives you room to revise before the sync window closes.
+
+**Sync window** (default: 8 pairs) — Accumulates from zero after each sync. When it reaches the target, the sync pipeline fires, a new sync point is written, and the counter resets. Keep this a multiple of Chunk Size so chunks are not split across sync boundaries.
+
+**Bridge horizon** (default: 40 pairs) — The window the AI reads when regenerating the bridge summary and updating the plot lorebook at sync time.
+
+**Archival** — Everything beyond the bridge horizon. Accessible only through the RAG retrieval system.
 
 ## The Sync Pipeline
 
-When enough new turns have accumulated (default: every 10 pairs), Canonize runs a background sync:
+When the sync window fills:
 
-1. Reads the new conversation block since the last marker.
-2. Updates the rolling **Summary**.
-3. Runs two lorebook lanes — the **General Curator** (places, things, concepts) and the **People Curator** (characters, relationships, goals).
-4. Classifies and indexes new conversation chunks into the **RAG store**.
-5. Embeds all new chunks and lorebook entries.
-6. Presents everything in the **Review Wizard** for your approval before writing.
+1. The accumulated turns are sliced into **chunks** — fixed-size blocks of turn-pairs (default: 2 pairs each) that become the searchable units in the archive.
+2. Each chunk is classified by an AI call that generates a summary of what happened in that block.
+3. The lorebook curators run — **General** (places, things, concepts) and **People** (characters, relationships, goals) — and suggest updates.
+4. The bridge summary is regenerated across the full bridge horizon.
+5. All new chunks and lorebook entries are embedded as vectors.
+6. Changes are presented in the Review Wizard. You can approve, edit, or let the sync commit in the background.
 
-Nothing is written permanently until you confirm.
+Each completed sync writes a **sync marker** into the chat file — a hidden snapshot of the lorebook state and summary at that point. Markers are never sent to the model.
+
+## Timeline Integrity
+
+If you swipe, delete messages, roll back, or branch the story, Canonize detects the divergence, identifies the last valid marker on your current branch, and restores the lorebook, summary, and retrieval index to match. Your AI's memory always reflects the timeline you are actually on.
 
 ## Hybrid RAG Retrieval
 

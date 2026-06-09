@@ -55,7 +55,7 @@ export const CNZ_LB_ID      = 'cnz_lb';
  * of extension_settings[EXT_NAME] and are never included in a profile object.
  */
 export const PROFILE_DEFAULTS = Object.freeze({
-    chunkEveryN:              6,
+    chunkEveryN:              8,
     hookseekerHorizon:        40,
     profileId:                null,
     // Summary / Lorebook

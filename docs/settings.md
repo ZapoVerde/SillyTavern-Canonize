@@ -14,7 +14,7 @@ Open the Canonize settings panel via the Extensions drawer in SillyTavern.
 
 ## Profile Management
 
-Canonize supports multiple setting profiles (e.g. a "Low Cost" profile for cheap models, a "High Fidelity" profile for demanding roleplays).
+Canonize supports multiple settings profiles.
 
 - **Profile Dropdown** — Selects the active profile.
 - **Save (floppy disk)** — Saves current changes to the active profile. An asterisk (`*`) next to the name indicates unsaved changes.
@@ -27,11 +27,11 @@ Canonize supports multiple setting profiles (e.g. a "Low Cost" profile for cheap
 ## Timing
 
 - **Live Context Buffer** — Number of recent turn-pairs left uncompressed and sent as raw dialogue. Default 8.
-- **Pairs Between Updates** — How many new pairs must accumulate before a sync cycle triggers. Also defines the sync window size. Default 6. Keep this a multiple of Chunk Size to avoid RAG chunks being split across sync windows.
+- **Pairs Between Updates** — How many new pairs must accumulate before a sync cycle triggers. Also defines the sync window size. Default 8. Keep this a multiple of Chunk Size to avoid chunks being split across sync windows.
 - **Summary Horizon** — How many turns of history are fed to the AI when updating the bridge summary. Default 40.
 - **Lorebook Sync Start**
-  - *From sync point* — Only scans the newly added block since the last save marker. Faster and cheaper.
-  - *From latest turn* — Scans the entire horizon. Slower but catches missed details.
+  - *From sync point* — Only scans the newly added block since the last save marker. 
+  - *From latest turn* — Scans the entire horizon to the latest turn.
 
 ---
 
