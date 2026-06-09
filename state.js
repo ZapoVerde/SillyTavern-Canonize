@@ -56,7 +56,7 @@ export const CNZ_LB_ID      = 'cnz_lb';
  */
 export const PROFILE_DEFAULTS = Object.freeze({
     chunkEveryN:              6,
-    hookseekerHorizon:        60,
+    hookseekerHorizon:        40,
     profileId:                null,
     // Summary / Lorebook
     enablePeopleSync:         true,
