@@ -2,6 +2,8 @@
 
 Open the Canonize settings panel via the Extensions drawer in SillyTavern.
 
+**A note on pairs:** Canonize measures conversation in turn-pairs — one user message plus all AI responses that follow it. A pair is the smallest atomic unit of story. All timing, chunking, and horizon settings use pairs as their unit, not individual messages.
+
 ---
 
 ## General
