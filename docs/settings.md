@@ -75,11 +75,14 @@ Canonize uses a hybrid micro-pool threshold rather than a fixed result count. On
 
 ### Plot Memory
 
-- **Plot Min / Max** — Floor and ceiling for plot arc entries retrieved per turn.
+- **Plot Min / Max** — Floor and ceiling for plot arcs retrieved per turn. Plot Min also sets the filler threshold: when semantic search returns fewer arcs than this value, filler picks up the shortfall.
 - **Recent cards per arc** — For each semantically retrieved arc, the origin card is always included. This setting controls how many additional recent cards are added on top. Any card directly matched by semantic search is also always included regardless of this limit.
-- **Recent cards per filler arc** — Same, for filler arcs surfaced by the plot filler system.
-- **Plot filler enabled** — Whether the filler system surfaces underrepresented arcs to maintain narrative breadth.
-- **Filler strategy** — How filler arcs are selected: `random`, `oldest arc`, or `oldest surfaced`.
+- **Recent cards per filler arc** — How many cards each filler arc brings in. Filler arcs contribute recent cards only; they do not trigger a separate semantic search for that arc.
+- **Plot filler enabled** — When the current scene triggers fewer arcs than Plot Min, filler surfaces the shortfall from arcs not referenced in recent turns. This keeps dormant storylines alive instead of letting them quietly disappear whenever the scene focuses on only one thread.
+- **Filler strategy** — How filler arcs are selected when topping up to Plot Min:
+  - `random` — picks from eligible arcs at random each turn.
+  - `oldest arc` — prioritises the arc created earliest.
+  - `oldest surfaced` — prioritises the arc that has gone the longest without appearing in context, rotating through neglected storylines over time.
 
 ---
 
@@ -87,8 +90,10 @@ Canonize uses a hybrid micro-pool threshold rather than a fixed result count. On
 
 - **Verbose Logging** — Outputs detailed execution logs to the browser console.
 - **Inspect Chain** — Opens the DNA Chain Inspector to view your save-state timeline.
-- **Rebuild RAG** — Re-embeds all stored chunks and lorebook entries for the active chat. Use after switching embedding providers or models, or if the cache is corrupt. Does not affect chat history.
-- **Purge RAG** — Deletes all RAG data for the active chat. The cache rebuilds automatically on next load.
+- **Rebuild RAG** — Re-indexes all chunks and lorebook entries for the active chat. A confirmation prompt offers an optional checkbox before it runs:
+  - *Without "Reclassify all chunks with AI":* Re-embeds existing chunk summaries as-is. Already-indexed chunks are skipped, so this is safe to re-run after a partial failure. Use after switching embedding providers or models, or to recover from a corrupt vector cache. The chat file and all chunk summaries are unchanged.
+  - *With "Reclassify all chunks with AI (slow)":* Discards existing chunk summaries and re-runs the AI classifier across the entire conversation history to generate fresh ones, then re-embeds everything. Use when your classifier prompt has changed, or when you have changed Chunk Size or Chunk Overlap and want the archive re-sliced to match. Each chunk costs one AI call. The chat file (your actual messages) is never modified, but all AI-generated chunk summaries are replaced.
+- **Purge RAG** — Deletes all RAG data for the active chat: the vector cache and the plot lorebook. The narrative lorebook (characters, places, concepts) and your chat file are not touched. Run Rebuild RAG afterwards to restore the index and plot lorebook.
 
 ---
 
