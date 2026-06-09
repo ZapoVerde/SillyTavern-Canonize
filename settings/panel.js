@@ -26,7 +26,7 @@ import { buildSettingsHTML } from './settings-html.js';
 import { escapeHtml } from '../state.js';
 import { getSettings, getMetaSettings } from './data.js';
 import { log, warn, setVerbose } from '../log.js';
-import { bindRagHandlers, updateRagAiControlsVisibility } from './handlers-rag.js';
+import { bindRagHandlers } from './handlers-rag.js';
 import { configureFts } from '../rag/fts.js';
 import { bindPlotHandlers } from './handlers-plot.js';
 import { bindCoreHandlers } from './handlers-core.js';
@@ -107,10 +107,8 @@ function refreshSettingsUI() {
     $('#cnz-set-hookseeker-horizon').val(s.hookseekerHorizon ?? 40);
     $('#cnz-set-lorebook-sync-start').val(s.lorebookSyncStart ?? 'syncPoint');
 
-    $('#cnz-set-rag-contents').val(s.ragContents ?? 'summary+full');
     $('#cnz-set-rag-max-tokens').val(s.ragMaxTokens ?? 100);
     $('#cnz-set-rag-chunk-size').val(s.ragChunkSize ?? 2);
-    $('#cnz-set-rag-chunk-overlap').val(s.ragChunkOverlap ?? 0);
     $('#cnz-set-rag-classifier-history').val(s.ragClassifierHistory ?? 0);
     $('#cnz-set-rag-max-concurrent').val(s.maxConcurrentCalls ?? 3);
     $('#cnz-set-rag-retries').val(s.ragMaxRetries ?? 1);
@@ -137,8 +135,6 @@ function refreshSettingsUI() {
     $('#cnz-set-plot-filler-cards').val(s.ragPlotFillerCards ?? 1);
     $('#cnz-set-plot-filler-strategy').val(s.ragPlotFillerStrategy ?? 'random');
     $('#cnz-plot-filler-body').toggleClass('cnz-disabled', !(s.ragPlotFillerEnabled ?? true));
-
-    updateRagAiControlsVisibility();
 
     try {
         ConnectionManagerRequestService.handleDropdown(
@@ -201,6 +197,5 @@ export function injectSettingsPanel() {
     setVerbose(meta.verboseLogging ?? false);
     bindSettingsHandlers();
     refreshProfileDropdown();
-    updateRagAiControlsVisibility();
     log('Init', 'injectSettingsPanel: Success.');
 }

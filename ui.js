@@ -363,10 +363,8 @@ export function buildPromptModalHTML() {
  */
 export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default'], currentProfile = 'Default', verboseLogging = false) {
     const s = settings;
-    const ragContents      = s.ragContents      ?? 'summary+full';
     const ragSummarySource = s.ragSummarySource ?? 'defined';
     const enableRag        = s.enableRag        ?? false;
-    const hasSummary       = ragContents !== 'full';
     const isDefinedHere    = ragSummarySource === 'defined';
 
     // Shorthand for the info icon — keeps the template readable
@@ -478,16 +476,7 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
           </div>
           <small id="cnz-rag-separator-hint" class="cnz-settings-hint">Vars: <code>{{turn_number}}</code>, <code>{{char_name}}</code>, <code>{{turn_range}}</code> &mdash; blank defaults to <code>***</code></small>
 
-          <div class="cnz-settings-inline-row" id="cnz-rag-contents-row">
-            <label for="cnz-set-rag-contents">RAG Contents ${tip('"Summary + Full Content": AI-generated header plus raw dialogue. "Summary Only": compact header list, no dialogue. "Full Content Only": raw dialogue with no headers.')}</label>
-            <select id="cnz-set-rag-contents" class="cnz-select cnz-settings-select-sm">
-              <option value="summary+full" ${ragContents === 'summary+full' ? 'selected' : ''}>Summary + Full Content</option>
-              <option value="summary"      ${ragContents === 'summary'      ? 'selected' : ''}>Summary Only</option>
-              <option value="full"         ${ragContents === 'full'         ? 'selected' : ''}>Full Content Only</option>
-            </select>
-          </div>
-
-          <div id="cnz-rag-summary-source-row" class="cnz-settings-inline-row ${hasSummary ? '' : 'cnz-hidden'}">
+          <div id="cnz-rag-summary-source-row" class="cnz-settings-inline-row">
             <label for="cnz-set-rag-summary-source">Summary Source ${tip('"Defined Here": uses the AI classifier prompt below to generate semantic headers per chunk. "Qvink": reads headers directly from qvink_memory metadata on each AI message — no extra AI calls, forces 1-pair chunks.')}</label>
             <select id="cnz-set-rag-summary-source" class="cnz-select cnz-settings-select-sm">
               <option value="defined" ${isDefinedHere ? 'selected' : ''}>Defined Here</option>
@@ -495,7 +484,7 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
             </select>
           </div>
 
-          <div id="cnz-rag-ai-controls" class="cnz-settings-subgroup ${(hasSummary && isDefinedHere) ? '' : 'cnz-disabled'}">
+          <div id="cnz-rag-ai-controls" class="cnz-settings-subgroup ${isDefinedHere ? '' : 'cnz-disabled'}">
 
             <div class="cnz-settings-row">
               <label for="cnz-set-rag-profile">RAG Connection Profile ${tip('AI connection used for chunk classification calls. Falls back to the Summary profile, then the global connection.')}</label>
@@ -512,15 +501,6 @@ export function buildSettingsHTML(settings, escapeHtml, profileNames = ['Default
               <label for="cnz-set-rag-chunk-size">Chunk Size (pairs) ${tip('Number of turn-pairs grouped into each memory chunk when using AI classification. Larger chunks give more context per header but produce fewer total chunks. Qvink mode always uses 1.')}</label>
               <input id="cnz-set-rag-chunk-size" type="number" min="1" max="10" step="1"
                      value="${escapeHtml(String(s.ragChunkSize ?? 2))}">
-            </div>
-
-            <div class="cnz-settings-inline-row">
-              <label for="cnz-set-rag-chunk-overlap">Chunk Overlap ${tip('How many turns each chunk shares with the previous one. None: non-overlapping windows (step = chunk size). 1-turn: each chunk adds 1 new turn with 1 prior turn included. 2-turn: each chunk adds 1 new turn with 2 prior turns included.')}</label>
-              <select id="cnz-set-rag-chunk-overlap" class="text_pole">
-                <option value="0" ${(s.ragChunkOverlap ?? 0) === 0 ? 'selected' : ''}>No overlap</option>
-                <option value="1" ${(s.ragChunkOverlap ?? 0) === 1 ? 'selected' : ''}>1-turn overlap</option>
-                <option value="2" ${(s.ragChunkOverlap ?? 0) === 2 ? 'selected' : ''}>2-turn overlap</option>
-              </select>
             </div>
 
             <div class="cnz-settings-inline-row">

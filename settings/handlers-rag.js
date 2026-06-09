@@ -30,12 +30,6 @@ import { log, error } from '../log.js';
 
 export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
 
-    $('#cnz-set-rag-contents').on('change', function () {
-        getSettings().ragContents = $(this).val();
-        saveSettingsDebounced(); updateDirtyIndicator();
-        _updateRagAiControlsVisibility();
-    });
-
     $('#cnz-set-rag-max-tokens').on('input', function () {
         const val = parseInt($(this).val(), 10);
         if (!isNaN(val) && val >= 1) { getSettings().ragMaxTokens = val; saveSettingsDebounced(); updateDirtyIndicator(); }
@@ -43,11 +37,6 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
 
     $('#cnz-set-rag-chunk-size').on('input', function () {
         getSettings().ragChunkSize = Math.max(1, parseInt($(this).val()) || 2);
-        saveSettingsDebounced(); updateDirtyIndicator();
-    });
-
-    $('#cnz-set-rag-chunk-overlap').on('change', function () {
-        getSettings().ragChunkOverlap = parseInt($(this).val()) || 0;
         saveSettingsDebounced(); updateDirtyIndicator();
     });
 
@@ -181,11 +170,3 @@ export function bindRagHandlers({ updateDirtyIndicator, openPromptModal }) {
     bindEmbedHandlers({ getSettings, updateDirtyIndicator });
 }
 
-export function updateRagAiControlsVisibility() {
-    _updateRagAiControlsVisibility();
-}
-
-function _updateRagAiControlsVisibility() {
-    const hasSummary = (getSettings().ragContents ?? 'summary+full') !== 'full';
-    $('#cnz-rag-ai-controls').toggleClass('cnz-disabled', !hasSummary);
-}

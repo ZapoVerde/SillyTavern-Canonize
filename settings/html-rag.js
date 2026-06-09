@@ -16,10 +16,8 @@
  */
 
 export function buildRagSectionHTML(s, escapeHtml) {
-    const tip           = (text) => `<span class="cnz-info-icon" title="${escapeHtml(text)}">&#9432;</span>`;
-    const ragContents   = s.ragContents         ?? 'summary+full';
-    const hasSummary    = ragContents !== 'full';
-    const embedSource   = s.ragEmbeddingSource  ?? 'openrouter';
+    const tip         = (text) => `<span class="cnz-info-icon" title="${escapeHtml(text)}">&#9432;</span>`;
+    const embedSource = s.ragEmbeddingSource ?? 'openrouter';
 
     // Sources that need a dedicated key not accessible from the main ST connections panel.
     const EMBED_KEY_MAP = { voyageai: 'api_key_voyageai', nomicai: 'api_key_nomicai' };
@@ -58,15 +56,7 @@ export function buildRagSectionHTML(s, escapeHtml) {
             </div>
             <div class="inline-drawer-content">
 
-              <div class="cnz-settings-inline-row" id="cnz-rag-contents-row">
-                <label for="cnz-set-rag-contents">RAG Contents ${tip('"Summary + Full Content": AI-generated header plus raw dialogue. "Summary Only": compact header list. "Full Content Only": raw dialogue.')}</label>
-                <select id="cnz-set-rag-contents" class="cnz-select cnz-settings-select-sm">
-                  <option value="summary+full" ${ragContents === 'summary+full' ? 'selected' : ''}>Summary + Full Content</option>
-                  <option value="summary"      ${ragContents === 'summary'      ? 'selected' : ''}>Summary Only</option>
-                  <option value="full"         ${ragContents === 'full'         ? 'selected' : ''}>Full Content Only</option>
-                </select>
-              </div>
-              <div id="cnz-rag-ai-controls" class="cnz-settings-subgroup ${hasSummary ? '' : 'cnz-disabled'}">
+              <div id="cnz-rag-ai-controls" class="cnz-settings-subgroup">
                 <div class="cnz-settings-row">
                   <label for="cnz-set-rag-profile">RAG Connection Profile ${tip('AI connection used for chunk classification calls.')}</label>
                   <select id="cnz-set-rag-profile" class="text_pole"></select>
@@ -78,14 +68,6 @@ export function buildRagSectionHTML(s, escapeHtml) {
                 <div class="cnz-settings-inline-row">
                   <label for="cnz-set-rag-chunk-size">Chunk Size (pairs) ${tip('Number of turn-pairs grouped into each memory chunk.')}</label>
                   <input id="cnz-set-rag-chunk-size" type="number" min="1" max="10" step="1" value="${escapeHtml(String(s.ragChunkSize ?? 2))}">
-                </div>
-                <div class="cnz-settings-inline-row">
-                  <label for="cnz-set-rag-chunk-overlap">Chunk Overlap</label>
-                  <select id="cnz-set-rag-chunk-overlap" class="text_pole">
-                    <option value="0" ${(s.ragChunkOverlap ?? 0) === 0 ? 'selected' : ''}>No overlap</option>
-                    <option value="1" ${(s.ragChunkOverlap ?? 0) === 1 ? 'selected' : ''}>1-turn overlap</option>
-                    <option value="2" ${(s.ragChunkOverlap ?? 0) === 2 ? 'selected' : ''}>2-turn overlap</option>
-                  </select>
                 </div>
                 <div class="cnz-settings-inline-row">
                   <label for="cnz-set-rag-classifier-history">Classifier History ${tip('Turn-pairs preceding each chunk included as context in the classifier prompt. 0 = disabled.')}</label>
