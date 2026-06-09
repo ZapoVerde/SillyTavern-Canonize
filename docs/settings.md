@@ -2,6 +2,8 @@
 
 Open the Canonize settings panel via the Extensions drawer in SillyTavern.
 
+**A note on pairs:** Canonize measures conversation in turn-pairs — one user message plus all AI responses that follow it. A pair is the smallest atomic unit of story. All timing, chunking, and horizon settings use pairs as their unit, not individual messages.
+
 ---
 
 ## General
@@ -12,7 +14,7 @@ Open the Canonize settings panel via the Extensions drawer in SillyTavern.
 
 ## Profile Management
 
-Canonize supports multiple setting profiles (e.g. a "Low Cost" profile for cheap models, a "High Fidelity" profile for demanding roleplays).
+Canonize supports multiple settings profiles.
 
 - **Profile Dropdown** — Selects the active profile.
 - **Save (floppy disk)** — Saves current changes to the active profile. An asterisk (`*`) next to the name indicates unsaved changes.
@@ -24,16 +26,25 @@ Canonize supports multiple setting profiles (e.g. a "Low Cost" profile for cheap
 
 ## Timing
 
-- **Live Context Buffer** — Number of recent turn-pairs left uncompressed and sent as raw dialogue. Default 5.
-- **Pairs Between Updates** — How many new pairs must accumulate before a sync cycle triggers. Also defines the sync window size. Default 20.
+Canonize works in cycles, not continuously. These settings control how much recent dialogue stays live and unprocessed, how often a sync cycle fires, and how far back the AI looks when building the running summary.
+
+```
+│←── archival ───│←── bridge horizon (default 40 pairs) ───│←── sync window (0→8 pairs) ──→│←── live context (8 pairs) ──→│
+oldest                                                                                                                       newest
+```
+
+- **Live Context Buffer** — How many turn-pairs are left untouched — counted back from the latest entry to the sync point. Everything before this buffer is archived and searched as memory. Default 8.
+- **Pairs Between Updates** — How many new pairs must accumulate before a sync cycle triggers. This defines the sync window size. Default 8. Keep this a multiple of Chunk Size to avoid chunks being split across sync windows.
 - **Summary Horizon** — How many turns of history are fed to the AI when updating the bridge summary. Default 40.
 - **Lorebook Sync Start**
-  - *From sync point* — Only scans the newly added block since the last save marker. Faster and cheaper.
-  - *From latest turn* — Scans the entire horizon. Slower but catches missed details.
+  - *From sync point* — Only scans the newly added block since the last save marker. 
+  - *From latest turn* — Scans the entire horizon to the latest turn. 
 
 ---
 
 ## Connections and Prompts
+
+Canonize makes AI calls in the background, separate from your main chat. Here you set which Connection Manager profile handles that work and what instructions it follows.
 
 - **Summary Connection Profile** — Connection Manager profile used for background summarization and lorebook sync calls. Leave blank to use the current chat model.
 - **Edit Prompts** — Opens a prompt editor for Summary, Lorebook, People, and Targeted prompts.
@@ -43,9 +54,11 @@ Canonize supports multiple setting profiles (e.g. a "Low Cost" profile for cheap
 
 ## RAG Storage and Retrieval
 
-RAG is always active when Canonize is enabled.
+This is Canonize's memory engine. It breaks your chat history into indexed chunks and searches them on every turn, pulling in past scenes, lorebook entries, and story arcs relevant to the current moment.
 
 ### Content and Embedding
+
+Controls how the chat history is sliced into chunks, what gets stored in each one, and which model converts text into a searchable form.
 
 - **RAG Contents**
   - *Summary + Full* — Retrieves the AI-generated chunk summary plus raw dialogue. Recommended.
@@ -53,13 +66,13 @@ RAG is always active when Canonize is enabled.
   - *Full Content Only* — Raw dialogue only.
 - **RAG Connection Profile** — Model profile used for chunk classification.
 - **Chunk Size (pairs)** — Turn-pairs per RAG archive block. Default 2.
-- **Chunk Overlap** — Overlapping pairs between adjacent chunks. Prevents transitions from being cut mid-scene.
+- **Chunk Overlap** — Overlapping pairs between adjacent chunks. Prevents scene transitions from being cut mid-chunk. Options: 0 (no overlap), 1, or 2. Default 0.
 - **Simultaneous Calls** — Maximum parallel background classification calls.
 - **Embedding Source / Model** — Provider and model for generating embedding vectors. Called directly from the browser using your stored API key.
 
 ### Retrieval Tuning
 
-Canonize uses a hybrid micro-pool threshold rather than a fixed result count. On each turn it fuses vector similarity with keyword relevance, computes statistics on the top candidates, and returns everything above the mean — clamped to your Min/Max bounds.
+Instead of always injecting a fixed number of results, Canonize scores a pool of candidates each turn — blending meaning-based search with keyword matching — and keeps only those that score above the pool's own average. Your Min/Max settings cap the range regardless.
 
 - **Chat Min / Max** — Floor and ceiling for narrative memory chunks injected per turn.
 - **LB Min / Max** — Floor and ceiling for lorebook entries activated via semantic search per turn.
@@ -73,20 +86,29 @@ Canonize uses a hybrid micro-pool threshold rather than a fixed result count. On
 
 ### Plot Memory
 
-- **Plot Min / Max** — Floor and ceiling for plot arc entries retrieved per turn.
-- **Recent cards per arc** — For each retrieved arc, how many recent cards to include beyond the origin card.
-- **Recent cards per filler arc** — Same, for filler arcs surfaced by the plot filler system.
-- **Plot filler enabled** — Whether the filler system surfaces underrepresented arcs to maintain narrative breadth.
-- **Filler strategy** — How filler arcs are selected: `random`, `oldest arc`, or `oldest surfaced`.
+Plot arcs track ongoing storylines across your chat. These settings control how many arcs surface each turn, and what happens when the current scene only touches one thread — so other storylines don't go silent.
+
+- **Plot Min / Max** — Floor and ceiling for plot arcs retrieved per turn. Plot Min also sets the filler threshold: when semantic search returns fewer arcs than this value, filler picks up the shortfall.
+- **Recent cards per arc** — For each semantically retrieved arc, the origin card is always included. This setting controls how many additional recent cards are added on top. Any card directly matched by semantic search is also always included regardless of this limit.
+- **Recent cards per filler arc** — How many cards each filler arc brings in. Filler arcs contribute recent cards only; they do not trigger a separate semantic search for that arc.
+- **Plot filler enabled** — When the current scene triggers fewer arcs than Plot Min, filler surfaces the shortfall from arcs not referenced in recent turns. This keeps dormant storylines alive instead of letting them quietly disappear whenever the scene focuses on only one thread.
+- **Filler strategy** — How filler arcs are selected when topping up to Plot Min:
+  - `random` — picks from eligible arcs at random each turn.
+  - `oldest arc` — prioritises the arc created earliest.
+  - `oldest surfaced` — prioritises the arc that has gone the longest without appearing in context, rotating through neglected storylines over time.
 
 ---
 
 ## Admin and Utilities
 
+One-off maintenance tools: rebuild the memory index, wipe it entirely, or inspect its internal state.
+
 - **Verbose Logging** — Outputs detailed execution logs to the browser console.
 - **Inspect Chain** — Opens the DNA Chain Inspector to view your save-state timeline.
-- **Rebuild RAG** — Re-embeds all stored chunks and lorebook entries for the active chat. Use after switching embedding providers or models, or if the cache is corrupt. Does not affect chat history.
-- **Purge RAG** — Deletes all RAG data for the active chat. The cache rebuilds automatically on next load.
+- **Rebuild RAG** — Re-indexes all chunks and lorebook entries for the active chat. A confirmation prompt offers an optional checkbox before it runs:
+  - *Without "Reclassify all chunks with AI":* Re-embeds existing chunk summaries as-is. Already-indexed chunks are skipped, so this is safe to re-run after a partial failure. Use after switching embedding providers or models, or to recover from a corrupt vector cache. The chat file and all chunk summaries are unchanged.
+  - *With "Reclassify all chunks with AI (slow)":* Discards existing chunk summaries and re-runs the AI classifier across the entire conversation history to generate fresh ones, then re-embeds everything. Use when your classifier prompt has changed, or when you have changed Chunk Size or Chunk Overlap and want the archive re-sliced to match. Each chunk costs one AI call. The chat file (your actual messages) is never modified, but all AI-generated chunk summaries are replaced.
+- **Purge RAG** — Deletes all RAG data for the active chat: the vector cache and the plot lorebook. The narrative lorebook (characters, places, concepts) and your chat file are not touched. Run Rebuild RAG afterwards to restore the index and plot lorebook.
 
 ---
 

@@ -55,7 +55,7 @@ export function restoreHooksToNode(char, _node, nodeFile = null) {
     const sceneText  = nodeFile?.state?.scene ?? nodeFile?.state?.hooks ?? '';
     const anchorUuid = nodeFile?.state?.uuid  ?? null;
     writeCnzSummaryPrompt(char.avatar, sceneText, anchorUuid);
-    state._priorSituation  = sceneText;
+    state._priorSituation   = sceneText;
     state._plotLorebookName = nodeFile?.state?.plotLorebookName ?? null;
 }
 

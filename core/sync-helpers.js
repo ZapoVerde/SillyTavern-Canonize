@@ -32,7 +32,6 @@
  */
 
 import { log, warn } from '../log.js';
-import { getSettings } from '../settings/data.js';
 import { getStringHash } from '../../../../utils.js';
 import { insertLorebookEntries } from '../rag/file-store-lb.js';
 import { cnzGetActiveChatKey } from '../rag/api.js';

@@ -114,27 +114,48 @@ Example form:
 ```javascript
 /**
  * @file {path}
-  * @stamp {utc timestamp}
-   * @architectural-role {Pure | Stateful | IO} — {one line describing what this module owns or does}
-    * @description
-     * {Two to four sentences. What problem does this module solve? What is it not responsible for?}
-      *
-       * @api-declaration
-        * functionName(args) — what it does and what it returns
-         *
-          * @contract
-           *   assertions:
-            *     purity:        {classification}
-             *     state_ownership: [{domains owned, or none}]
-              *     external_io:   [{services touched, or none}]
-               */
-               ```
+ * @stamp {utc timestamp}
+ * @architectural-role {Pure | Stateful | IO} — {one line describing what this module owns or does}
+ * @description
+ * {Two to four sentences. What problem does this module solve? What is it not responsible for?}
+ *
+ * @api-declaration
+ * functionName(args) — what it does and what it returns
+ *
+ * @contract
+ *   assertions:
+ *     purity:        {classification}
+ *     state_ownership: [{domains owned, or none}]
+ *     external_io:   [{services touched, or none}]
+ */
+```
 
-               ---
+---
 
-               ## 11. Every File Has One Purpose and a Size Budget
+## 11. Every File Has One Purpose and a Size Budget
 
-               Every source file does exactly one thing. If a file is doing two things, it should be two files.
+Every source file does exactly one thing. If a file is doing two things, it should be two files.
 
-               When you reach 300 lines, split the file along the nearest fault line and continue. This should take minutes — the preamble already tells you what the file owns, and the fault lines follow from that. Do not count lines to avoid the split. That is more work than the split itself, and it makes the code worse.
-               
+When you reach 300 lines, split the file along the nearest fault line and continue. This should take minutes — the preamble already tells you what the file owns, and the fault lines follow from that. Do not count lines to avoid the split. That is more work than the split itself, and it makes the code worse.
+
+---
+
+## 12. Documentation is Part of the Feature
+
+A feature that exists but is not documented is half-shipped. The `docs/` folder is the contract between Canonize and the people using it — it determines what users can configure correctly and what they can diagnose when something goes wrong.
+
+Every user-facing addition must land in the docs at the same time it lands in the code. This is not a post-merge cleanup step. If you cannot describe the feature clearly in the documentation, the design is not yet clear enough to be finished.
+
+The documents to maintain:
+
+- **`README.md`** — feature overview and docs index; the first thing a new user reads
+- **`rag.md`** — retrieval behaviour, tuning knobs, console diagnostics, additional lorebooks
+- **`lorebook.md`** — lorebook architecture, curator lanes, MECE tags, entry structure
+- **`settings.md`** — every user-facing setting, what it does, its default
+- **`architecture.md`** — structural decisions that future code must remain consistent with
+- **`installation.md`** — prerequisites, setup steps, embedding provider configuration
+- **`review-wizard.md`** — the approval workflow for summaries, lorebook changes, and memories
+- **`RAG_strategy_v4.md`** — technical specification for the retrieval pipeline
+- **`cnz_principles.md`** — this document
+
+When you add a setting, update `settings.md`. When you add or change a retrieval channel, update `rag.md`. When you make a structural decision that will constrain future work, update `architecture.md`.

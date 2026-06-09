@@ -30,10 +30,11 @@ import { cnzChatKey, cnzDefaultLbName, cnzGetActiveChatKey } from '../rag/api.js
 import { insertSyncChunks, anchorChunkCount } from '../rag/file-store.js';
 import { insertLorebookEntries } from '../rag/file-store-lb.js';
 import { reconcilePlotLorebook } from './healer.js';
-import { lbEnsureLorebook } from '../lorebook/api.js';
+import { lbEnsureLorebook, lbGetLorebook } from '../lorebook/api.js';
 import { getSettings } from './settings.js';
 import { dispatchContract, setCurrentSettings } from '../cycleStore.js';
-import { error, log } from '../log.js';
+import { getStringHash } from '../../../../utils.js';
+import { error, warn, log } from '../log.js';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -202,6 +203,31 @@ export async function rebuildRag() {
 
         // ── 5. Rebuild plot lorebook vectors (shared with healer) ─────────────
         await reconcilePlotLorebook(char, chain, chatKey);
+
+        // ── 6. Rebuild additional lorebook vectors ────────────────────────────
+        const additionalLbs = state._additionalLorebooks ?? [];
+        if (additionalLbs.length) {
+            let addCount = 0;
+            for (const lb of additionalLbs) {
+                try {
+                    const disk    = await lbGetLorebook(lb.name);
+                    const entries = Object.values(disk?.entries ?? {})
+                        .filter(e => !e.disable && e.content?.trim())
+                        .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
+                    if (entries.length) {
+                        await insertLorebookEntries(chatKey, chain.lkg.uuid, lb.name, entries);
+                        lb.hash = getStringHash(entries.map(e => e.content).join('\n'));
+                        addCount += entries.length;
+                    } else {
+                        lb.hash = 0;
+                    }
+                } catch (err) {
+                    warn('Maintenance', `rebuildRag: additional LB "${lb.name}" skipped:`, err);
+                    lb.hash = 0;
+                }
+            }
+            if (addCount) log('Maintenance', `rebuildRag: indexed ${addCount} additional lorebook entries`);
+        }
 
     } catch (err) {
         error('Maintenance', 'rebuildRag:', err);

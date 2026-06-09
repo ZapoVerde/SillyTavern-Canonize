@@ -91,6 +91,10 @@ export async function purgeCnzFiles() {
         const plotLbName = state._plotLorebookName ?? cnzPlotLbName(char.avatar);
         await lbSaveLorebook(plotLbName, { entries: {} }, { silent: true });
 
+        // Reset additional LB hashes so the JIT path forces a full re-index on the
+        // next generation rather than skipping because the hash appears current.
+        for (const lb of state._additionalLorebooks ?? []) lb.hash = 0;
+
         toastr.success('CNZ: RAG store and plot lorebook cleared.');
     } catch (err) {
         error('Maintenance', 'purgeCnzFiles:', err);

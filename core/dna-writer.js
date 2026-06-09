@@ -22,6 +22,27 @@
 import { warn, error } from '../log.js';
 import { findLastAiMessageInPair } from './dna-chain.js';
 
+// ── Additional-lorebook stash ─────────────────────────────────────────────────
+// Persists the additional-LB list on the very first chat message (messages[0]).
+// That position is stable across all timeline operations — branches, restores,
+// and anchor commits never touch messages[0].extra.cnz_addlb.
+
+export function readAddLbStash(messages) {
+    return structuredClone(messages?.[0]?.extra?.cnz_addlb ?? []);
+}
+
+export async function writeAddLbStash(messages, list) {
+    const msg = messages?.[0];
+    if (!msg) return;
+    msg.extra ??= {};
+    msg.extra.cnz_addlb = structuredClone(list);
+    try {
+        await SillyTavern.getContext().saveChat();
+    } catch (err) {
+        error('DnaChain', 'writeAddLbStash: saveChat failed:', err);
+    }
+}
+
 /**
  * Writes a CnzAnchor payload into the last AI message of the given pair,
  * then saves the chat.
