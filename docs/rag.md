@@ -23,6 +23,19 @@ On every generation turn, Canonize runs a hybrid search across three channels:
 
 Each channel runs the full pipeline: vector cosine scoring, TF-IDF keyword scoring, RRF fusion, keyword blend, and micro-pool mean threshold. See [RAG_strategy_v4.md](RAG_strategy_v4.md) for the complete technical specification.
 
+### Additional Lorebooks
+
+Beyond the three built-in channels, you can attach extra lorebooks to a chat for semantic retrieval. These appear in the **Additional Lorebooks** section of the RAG Storage & Retrieval panel.
+
+Each additional lorebook has its own Min/Max budget and a **Bypass WI** toggle that controls how its results are injected:
+
+- **Bypass WI off** (default) — matched entries are activated via `WORLDINFO_FORCE_ACTIVATE`, the same mechanism as the main LB channel. ST's normal lorebook pipeline handles them.
+- **Bypass WI on** — matched entries are injected directly into the CNZ lorebook prompt slot, bypassing ST's world info system entirely. Use this for lorebooks whose entries contain structured data or narrative context you want injected verbatim without ST filtering.
+
+Additional lorebook configuration is stored in the DNA anchor — it is per-chat, not a global setting, and travels with the chat file.
+
+At each generation turn, Canonize checks whether the content of each additional lorebook has changed since it was last indexed. If it has, the lorebook is re-embedded before the query runs. This happens automatically; no manual rebuild is needed.
+
 ## Console Diagnostics
 
 Every turn emits a collapsible group to the browser console showing the full retrieval graph for each channel:

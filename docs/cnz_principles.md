@@ -138,3 +138,19 @@ Example form:
 
                When you reach 300 lines, split the file along the nearest fault line and continue. This should take minutes — the preamble already tells you what the file owns, and the fault lines follow from that. Do not count lines to avoid the split. That is more work than the split itself, and it makes the code worse.
                
+---
+
+## 12. Documentation is Part of the Feature
+
+A feature that exists but is not documented is half-shipped. The `docs/` folder is the contract between Canonize and the people using it — it determines what users can configure correctly and what they can diagnose when something goes wrong.
+
+Every user-facing addition must land in the docs at the same time it lands in the code. This is not a post-merge cleanup step. If you cannot describe the feature clearly in the documentation, the design is not yet clear enough to be finished.
+
+The documents to maintain:
+
+- **`rag.md`** — retrieval behaviour, tuning knobs, console diagnostics, additional lorebooks
+- **`settings.md`** — every user-facing setting, what it does, its default
+- **`architecture.md`** — structural decisions that future code must remain consistent with
+- **`cnz_principles.md`** — this document
+
+When you add a setting, update `settings.md`. When you add or change a retrieval channel, update `rag.md`. When you make a structural decision that will constrain future work, update `architecture.md`.

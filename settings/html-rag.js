@@ -112,6 +112,7 @@ export function buildRagSectionHTML(s, escapeHtml) {
           <div class="inline-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
               <b>RAG Storage &amp; Retrieval</b>
+              <a href="https://github.com/ZapoVerde/SillyTavern-Canonize/blob/main/docs/rag.md" target="_blank" rel="noopener" class="cnz-docs-link" title="RAG documentation" onclick="event.stopPropagation()">docs</a>
               <div class="inline-drawer-icon fa-solid fa-circle-chevron-down"></div>
             </div>
             <div class="inline-drawer-content">
