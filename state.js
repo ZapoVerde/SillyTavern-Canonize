@@ -55,13 +55,13 @@ export const CNZ_LB_ID      = 'cnz_lb';
  * of extension_settings[EXT_NAME] and are never included in a profile object.
  */
 export const PROFILE_DEFAULTS = Object.freeze({
-    chunkEveryN:              20,
-    hookseekerHorizon:        40,
+    chunkEveryN:              6,
+    hookseekerHorizon:        60,
     profileId:                null,
     // Summary / Lorebook
     enablePeopleSync:         true,
-    liveContextBuffer:        5,
-    lorebookSyncStart:        'syncPoint',   // 'syncPoint' | 'latestTurn'
+    liveContextBuffer:        8,
+    lorebookSyncStart:        'syncTurn',    // 'syncPoint' | 'syncTurn' | 'latestTurn'
     lorebookSyncPrompt:       DEFAULT_LOREBOOK_SYNC_PROMPT,
     peopleSyncPrompt:         DEFAULT_PEOPLE_SYNC_PROMPT,
     hookseekerPrompt:         DEFAULT_HOOKSEEKER_PROMPT,
@@ -70,18 +70,18 @@ export const PROFILE_DEFAULTS = Object.freeze({
     ragChunkTemplate:         DEFAULT_RAG_CHUNK_TEMPLATE,
     ragContents:              'summary+full',
     ragProfileId:             null,
-    ragMaxTokens:             100,
+    ragMaxTokens:             140,
     ragChunkSize:             2,
     ragChunkOverlap:          0,
-    ragClassifierHistory:     0,
+    ragClassifierHistory:     3,
     ragMaxRetries:            1,
     ragRetrievalTopK:         5,
     ragLbRetrievalTopK:       3,
     ragPlotRetrievalTopK:     3,
-    ragPlotRecencyCount:      3,
+    ragPlotRecencyCount:      99,
     ragPlotMinArcs:           2,
     ragPlotFillerEnabled:     true,
-    ragPlotFillerCards:       1,
+    ragPlotFillerCards:       2,
     ragPlotFillerStrategy:    'random',
     maxConcurrentCalls:       3,
     ragChatMin:               2,
