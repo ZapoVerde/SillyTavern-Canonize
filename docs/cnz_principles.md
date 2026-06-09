@@ -114,30 +114,30 @@ Example form:
 ```javascript
 /**
  * @file {path}
-  * @stamp {utc timestamp}
-   * @architectural-role {Pure | Stateful | IO} — {one line describing what this module owns or does}
-    * @description
-     * {Two to four sentences. What problem does this module solve? What is it not responsible for?}
-      *
-       * @api-declaration
-        * functionName(args) — what it does and what it returns
-         *
-          * @contract
-           *   assertions:
-            *     purity:        {classification}
-             *     state_ownership: [{domains owned, or none}]
-              *     external_io:   [{services touched, or none}]
-               */
-               ```
+ * @stamp {utc timestamp}
+ * @architectural-role {Pure | Stateful | IO} — {one line describing what this module owns or does}
+ * @description
+ * {Two to four sentences. What problem does this module solve? What is it not responsible for?}
+ *
+ * @api-declaration
+ * functionName(args) — what it does and what it returns
+ *
+ * @contract
+ *   assertions:
+ *     purity:        {classification}
+ *     state_ownership: [{domains owned, or none}]
+ *     external_io:   [{services touched, or none}]
+ */
+```
 
-               ---
+---
 
-               ## 11. Every File Has One Purpose and a Size Budget
+## 11. Every File Has One Purpose and a Size Budget
 
-               Every source file does exactly one thing. If a file is doing two things, it should be two files.
+Every source file does exactly one thing. If a file is doing two things, it should be two files.
 
-               When you reach 300 lines, split the file along the nearest fault line and continue. This should take minutes — the preamble already tells you what the file owns, and the fault lines follow from that. Do not count lines to avoid the split. That is more work than the split itself, and it makes the code worse.
-               
+When you reach 300 lines, split the file along the nearest fault line and continue. This should take minutes — the preamble already tells you what the file owns, and the fault lines follow from that. Do not count lines to avoid the split. That is more work than the split itself, and it makes the code worse.
+
 ---
 
 ## 12. Documentation is Part of the Feature
