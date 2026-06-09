@@ -30,6 +30,7 @@ import { clearChunkChatLabels, renderChunkLabelsFromChat } from '../rag/chat-lab
 import { resetRagState } from '../rag/generation-hook.js';
 import { checkOrphans } from './orphans.js';
 import { state } from '../state.js';
+import { refreshAdditionalLbList } from '../settings/handlers-additional-lb.js';
 
 export function resetStagedState() {
     state._stagedProsePairs = [];
@@ -81,9 +82,9 @@ export function onChatChanged() {
         state._dnaChain = readDnaChain(chatMessages);
         setDnaChain(state._dnaChain);
         syncCnzSummaryOnCharacterSwitch(char, state._dnaChain);
-        runHealer(char, chatFileName).catch(err =>
-            error('Sync', 'onChatChanged: healer failed:', err),
-        );
+        runHealer(char, chatFileName)
+            .catch(err => error('Sync', 'onChatChanged: healer failed:', err))
+            .then(() => refreshAdditionalLbList());
         checkOrphans().catch(err =>
             error('Sync', 'checkOrphans failed:', err),
         );
@@ -92,9 +93,9 @@ export function onChatChanged() {
     }
 
     if (chatFileName) {
-        runHealer(char, chatFileName).catch(err =>
-            error('Sync', 'runHealer uncaught error:', err),
-        );
+        runHealer(char, chatFileName)
+            .catch(err => error('Sync', 'runHealer uncaught error:', err))
+            .then(() => refreshAdditionalLbList());
     }
     renderChunkLabelsFromChat();
 }

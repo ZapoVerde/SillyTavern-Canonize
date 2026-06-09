@@ -24,7 +24,7 @@ Canonize supports multiple settings profiles.
 
 ---
 
-## Timing
+## CNZ Timing
 
 Canonize works in cycles, not continuously. These settings control how much recent dialogue stays live and unprocessed, how often a sync cycle fires, and how far back the AI looks when building the running summary.
 
@@ -42,7 +42,7 @@ oldest                                                                          
 
 ---
 
-## Connections and Prompts
+## Connections & Prompts
 
 Canonize makes AI calls in the background, separate from your main chat. Here you set which Connection Manager profile handles that work and what instructions it follows.
 
@@ -52,32 +52,43 @@ Canonize makes AI calls in the background, separate from your main chat. Here yo
 
 ---
 
-## RAG Storage and Retrieval
+## RAG Storage & Retrieval
 
 This is Canonize's memory engine. It breaks your chat history into indexed chunks and searches them on every turn, pulling in past scenes, lorebook entries, and story arcs relevant to the current moment.
 
-### Content and Embedding
+### RAG Summarization
 
-Controls how the chat history is sliced into chunks, what gets stored in each one, and which model converts text into a searchable form.
+On each sync, Canonize runs the classifier prompt against each new chunk to generate a summary header. These settings control which model handles that work and how.
 
-- **RAG Connection Profile** — Model profile used for chunk classification.
+- **RAG Connection Profile** — Connection Manager profile used for chunk classification.
+- **Max Tokens** — Maximum tokens the classifier may produce per chunk. Keep low (50–150) to avoid runaway outputs.
 - **Chunk Size (pairs)** — Turn-pairs per archive block. Default 2.
+- **Classifier History** — Turn-pairs before each chunk included as context in the classifier prompt. 0 = disabled.
 - **Simultaneous Calls** — Maximum parallel background classification calls.
-- **Embedding Source / Model** — Provider and model for generating embedding vectors. Called directly from the browser using your stored API key.
+- **Retries on Failure** — How many times a failed classification call is retried per chunk.
+- **Classifier Prompt** — Opens the prompt editor for the classifier. Sent to the AI once per chunk to produce the summary header.
 
-### Retrieval Tuning
+### RAG Storage & Retrieval
 
-Instead of always injecting a fixed number of results, Canonize scores a pool of candidates each turn — blending meaning-based search with keyword matching — and keeps only those that score above the pool's own average. Your Min/Max settings cap the range regardless.
+Embedding converts your text into a searchable form; retrieval pulls the most relevant chunks from the archive on each turn. Rather than inserting a fixed count, Canonize only adds those that score meaningfully above the rest of the shortlist. Min/Max bounds cap the range regardless.
 
-- **Chat Min / Max** — Floor and ceiling for narrative memory chunks injected per turn.
-- **LB Min / Max** — Floor and ceiling for lorebook entries activated via semantic search per turn.
-- **Cutoff Mode** — Threshold strictness applied to the local candidate pool.
-  - `Mean` — Everything above the pool average. Most permissive.
-  - `Mean + 1 std dev` — Stricter. Useful for noisy databases.
-  - `Mean + 2 std dev` — Very strict. Only clearly elite results pass.
-- **Pool Multiple** — Candidate pool size = Pool Multiple × Max Results (minimum 6). Stats are computed on this pool only, not the full database. 2 is a tight set; 3–4 gives more stable statistics for larger chats.
-- **Keyword Blend** — How much the keyword (FTS) lane contributes relative to the top vector score. At 70% vec, the strongest keyword match can add at most 30% of the top cosine score. Lower = keyword has more influence; higher = vector dominates.
-- **Unicode FTS** — Enable for non-Latin languages (French, German, Russian, etc.) to preserve diacritics and non-ASCII characters in the keyword index. The vector lane is unaffected.
+- **Embedding Source / Model** — Provider and model used to convert text into a searchable form. Called directly from the browser using your stored API key. See [installation.md](installation.md) for provider recommendations.
+- **API Key** — Appears for providers that require a dedicated key not covered by ST's connection settings (Voyage AI, Nomic AI). Click to set.
+- **Embedding Test** — Sends a short probe through your configured provider and model, returning the vector dimension and round-trip latency. Use to confirm your setup before indexing.
+- **Chat Min / Max** — The minimum and maximum number of memory chunks inserted per turn.
+- **LB Min / Max** — The minimum and maximum number of lorebook entries inserted per turn.
+- **Cutoff Mode** — How selectively results are drawn from the shortlist.
+  - `Mean` — Everything above the shortlist average. Most permissive.
+  - `Mean + 1 std dev` — Stricter. Useful for noisy archives.
+  - `Mean + 2 std dev` — Very strict. Only results that stand significantly above average pass.
+- **Pool Multiple** — Controls how many results are shortlisted from the archive before the cutoff runs: Pool Multiple × Max (minimum 6). A smaller shortlist draws only from the top of the archive; a larger one casts a wider net. Works in tandem with Cutoff Mode — see [rag.md](rag.md) for guidance on tuning the two together.
+- **Keyword Blend** — Controls the proportional contribution of keyword matching against meaning-based similarity scoring. At 70%, keyword results can contribute at most 30% of the top similarity score. Lower = keywords have more influence; higher = meaning-based similarity dominates.
+- **Unicode Keyword Search** — Enable for non-Latin languages (French, German, Russian, etc.) to preserve diacritics and special characters in the keyword index. The meaning-based search lane is unaffected.
+- **Bypass WI keyword activation** — Detaches the lorebook from SillyTavern's keyword scanner. When enabled, lorebook entries are activated only by Canonize's semantic search, not ST's keyword matching. Disable to re-attach and use the standard WI pipeline.
+- **Injection Template** — Wraps all retrieved chunks as a block before insertion. Use `{{text}}` where the chunks should appear.
+- **Chunk Template** — Wraps each individual retrieved chunk. Supports `{{text}}`, `{{turn_range}}`, `{{header}}`, and `{{char_name}}`.
+- **Sync Separator** — Text placed between chunks in the classifier document during sync. Changing this clears stored chunk headers and triggers reclassification.
+- **Additional Lorebooks** — Read-only reference lorebooks (world encyclopaedias, spell books, etc.) queried every turn alongside the character lorebook. Entries are indexed and retrieved semantically. Each added lorebook has its own Min/Max and Bypass WI controls. The list is saved in the chat anchor and restores automatically on branch rollback.
 
 ### Plot Memory
 
