@@ -38,6 +38,7 @@ import { eventSource, event_types } from '../../../../../script.js';
 import { clearCnzRagPrompt, clearCnzLbPrompt } from '../core/summary-prompt.js';
 import { lbGetLorebook } from '../lorebook/api.js';
 import { injectRagResult } from './rag-inject.js';
+import { printTimingSummary } from './rag-timing.js';
 
 let _prefetchPromise  = null;
 let _prefetchChatLen  = -1;
@@ -50,44 +51,7 @@ function _swipeCacheKey(messages, horizonPairs) {
     return `${messages.length}:${getStringHash(recent.map(m => m.mes ?? '').join('\n'))}`;
 }
 
-// ── Timing ────────────────────────────────────────────────────────────────────
-
 let _timing = null;
-
-function _ms(t) { return t != null ? `${Math.round(t)}ms` : '?'; }
-
-function _printTimingSummary(tEnd) {
-    if (!_timing) return;
-    const t = _timing;
-    _timing  = null;
-
-    const prefetchWindow = t.tSend != null && t.tInterceptor != null
-        ? t.tInterceptor - t.tSend : null;
-    const ragCost = t.tInterceptor != null && t.tRagDone != null
-        ? t.tRagDone - t.tInterceptor : null;
-    const ttft = t.tRagDone != null && t.tFirstToken != null
-        ? t.tFirstToken - t.tRagDone : null;
-    const streaming = t.tFirstToken != null
-        ? tEnd - t.tFirstToken : null;
-    const total = t.tSend != null ? tEnd - t.tSend : null;
-
-    const prefetchLabel = t.tSend == null
-        ? 'no prefetch (swipe/regen)'
-        : t.prefetchHit
-            ? 'HIT — embed pre-settled, ~0ms blocking'
-            : 'MISS — embed ran in interceptor';
-
-    const lines = [
-        '── CNZ Generation Timing ──────────────────────────────',
-        `  prefetch window  send→interceptor: ${prefetchWindow != null ? _ms(prefetchWindow) : 'n/a (swipe/regen)'}  [concurrent with ST pipeline]`,
-        `  RAG interceptor  (blocking):       ${_ms(ragCost)}  [prefetch: ${prefetchLabel}]`,
-        `  prompt build + TTFT:               ${ttft != null ? _ms(ttft) : 'n/a (non-streaming)'}`,
-        `  streaming        1st→last token:   ${streaming != null ? _ms(streaming) : 'n/a'}`,
-        '  ────────────────────────────────────────────────────',
-        `  total            send→last token:  ${total != null ? _ms(total) : _ms(ragCost != null ? tEnd - t.tInterceptor : null) + ' (interceptor→end)'}`,
-    ];
-    log('Perf', lines.join('\n'));
-}
 
 // ── Abort helpers ─────────────────────────────────────────────────────────────
 
@@ -322,5 +286,5 @@ export async function onGenerationStarted() {
     eventSource.once(event_types.STREAM_TOKEN_RECEIVED, () => {
         if (_timing && !_timing.tFirstToken) _timing.tFirstToken = performance.now();
     });
-    eventSource.once(event_types.GENERATION_ENDED, () => _printTimingSummary(performance.now()));
+    eventSource.once(event_types.GENERATION_ENDED, () => { printTimingSummary(_timing, performance.now()); _timing = null; });
 }
