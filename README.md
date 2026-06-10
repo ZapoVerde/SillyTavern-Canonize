@@ -1,4 +1,5 @@
 # Canonize
+**[Released]**
 
 **Long chats make AI worse. Canonize makes them better.**
 
