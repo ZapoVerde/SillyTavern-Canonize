@@ -16,7 +16,7 @@
  *   assertions: { purity: pure, state_ownership: [], external_io: [console] }
  */
 
-import { log } from '../log.js';
+import { log, isVerbose } from '../log.js';
 
 const LANE_COLORS = { content: '#4fc3f7', header: '#ffb74d', keyword: '#81c784' };
 const EMPTY_STYLE = 'color:#3a3a3a';
@@ -95,26 +95,28 @@ export function logChannel(name, raw, result, meta, kwMaxContrib = 0, { chatKey,
         header += ` | ${raw.length} raw (cold-start)  → ${M_active} injected`;
     }
 
-    console.groupCollapsed(header);
+    if (isVerbose()) {
+        console.groupCollapsed(header);
 
-    if (meta) {
-        const BAR_WIDTH = 20;
-        const pool      = raw.slice(0, meta.candidate_pool_size);
+        if (meta) {
+            const BAR_WIDTH = 20;
+            const pool      = raw.slice(0, meta.candidate_pool_size);
 
-        for (let i = 0; i < pool.length; i++) {
-            const { format, styles } = _barLine(
-                pool[i].score, pool[i].sources, pool[i].laneScores,
-                pool[i].kwContribution ?? 0, i < M_active, BAR_WIDTH, maxS,
-            );
-            console.log(format, ...styles);
+            for (let i = 0; i < pool.length; i++) {
+                const { format, styles } = _barLine(
+                    pool[i].score, pool[i].sources, pool[i].laneScores,
+                    pool[i].kwContribution ?? 0, i < M_active, BAR_WIDTH, maxS,
+                );
+                console.log(format, ...styles);
 
-            if (i === M_active - 1 && i < pool.length - 1) {
-                console.log(`%c  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ cutoff  (threshold ${meta.threshold.toFixed(3)})`, 'color:#5c85d6');
+                if (i === M_active - 1 && i < pool.length - 1) {
+                    console.log(`%c  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌ cutoff  (threshold ${meta.threshold.toFixed(3)})`, 'color:#5c85d6');
+                }
             }
         }
-    }
 
-    console.groupEnd();
+        console.groupEnd();
+    }
 
     healthRows.push({
         character: chatKey, channel: name, provider: cfg.source, model: cfg.model,

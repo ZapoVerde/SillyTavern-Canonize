@@ -57,8 +57,10 @@ export function resetSessionState() {
 
 export function onChatChanged() {
     const context = SillyTavern.getContext();
+    log('Session', `onChatChanged fired — characterId=${context?.characterId} chatId=${context?.chatId}`);
     resetRagState(); // discard stale prefetch + clear RAG prompt before healer runs
     if (!context || context.characterId == null) {
+        log('Session', 'onChatChanged: no context or characterId — aborting');
         state._lastKnownAvatar = null;
         return;
     }
@@ -69,13 +71,16 @@ export function onChatChanged() {
     }
 
     if (!char) {
+        log('Session', 'onChatChanged: character not found — aborting');
         state._lastKnownAvatar = null;
         return;
     }
 
     const chatFileName = context.chatId ?? getCurrentChatId() ?? char.chat ?? null;
+    log('Session', `onChatChanged: char="${char.name}" avatar="${char.avatar}" chatFileName="${chatFileName}" lastKnownAvatar="${state._lastKnownAvatar}"`);
 
     if (char.avatar !== state._lastKnownAvatar) {
+        log('Session', `onChatChanged: character switch detected — resetting session state`);
         state._lastKnownAvatar = char.avatar;
         resetSessionState();
         const chatMessages = SillyTavern.getContext().chat ?? [];

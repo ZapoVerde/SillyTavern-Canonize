@@ -189,9 +189,11 @@ export function mountCnz() {
     startScheduler();
 
     eventSource.on(event_types.CHAT_CHANGED,     onChatChanged);
+    eventSource.on(event_types.MESSAGE_DELETED,  onChatChanged);
+    eventSource.on(event_types.MESSAGE_SWIPED,   onChatChanged);
     eventSource.on(event_types.MESSAGE_SENT,      _onMessageSent);
     eventSource.on(event_types.WORLDINFO_UPDATED, _onWorldInfoUpdated);
-    log('Lifecycle', 'Bound ST: CHAT_CHANGED, MESSAGE_SENT, WORLDINFO_UPDATED.');
+    log('Lifecycle', 'Bound ST: CHAT_CHANGED, MESSAGE_DELETED, MESSAGE_SWIPED, MESSAGE_SENT, WORLDINFO_UPDATED.');
 
     $(document).on('click', '.cnz-review-link',   (e) => { e.preventDefault(); openReviewModal(); });
     $(document).on('click', '.cnz-orphan-review',  (e) => { e.preventDefault(); toastr.clear(); openOrphanModal(state._pendingOrphans); });
@@ -244,9 +246,11 @@ export function unmountCnz() {
     stopScheduler();
 
     eventSource.off(event_types.CHAT_CHANGED,     onChatChanged);
+    eventSource.off(event_types.MESSAGE_DELETED,  onChatChanged);
+    eventSource.off(event_types.MESSAGE_SWIPED,   onChatChanged);
     eventSource.off(event_types.MESSAGE_SENT,      _onMessageSent);
     eventSource.off(event_types.WORLDINFO_UPDATED, _onWorldInfoUpdated);
-    log('Lifecycle', 'Unbound ST: CHAT_CHANGED, MESSAGE_SENT, WORLDINFO_UPDATED.');
+    log('Lifecycle', 'Unbound ST: CHAT_CHANGED, MESSAGE_DELETED, MESSAGE_SWIPED, MESSAGE_SENT, WORLDINFO_UPDATED.');
 
     $(document).off('click', '.cnz-review-link');
     $(document).off('click', '.cnz-orphan-review');

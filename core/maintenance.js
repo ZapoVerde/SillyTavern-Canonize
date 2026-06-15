@@ -149,8 +149,8 @@ export async function rebuildRag() {
                 for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
                     _upd(`CNZ: Rebuilding — ${inserted} / ${total} chunks${round > 0 ? ` (round ${round + 1}/${MAX_ROUNDS})` : ''}`);
                     try {
-                        await insertSyncChunks(chatKey, uuid, chatFile, chunks, 0);
-                        inserted += chunks.length;
+                        const { inserted: n } = await insertSyncChunks(chatKey, uuid, chatFile, chunks, 0);
+                        inserted += n;
                         succeeded = true;
                         break;
                     } catch {
@@ -180,14 +180,8 @@ export async function rebuildRag() {
         };
         await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, _worker));
 
-        toastr.clear($toast);
-        if (gaveUp.length === 0) {
-            toastr.success(`CNZ: Rebuild complete — ${inserted} / ${total} chunks indexed.`);
-        } else {
-            toastr.warning(`CNZ: Rebuild done — ${inserted} / ${total} chunks. ${gaveUp.length} anchor(s) failed after ${MAX_ROUNDS} rounds.`);
-        }
-
         // ── 4. Rebuild lorebook vectors ───────────────────────────────────────
+        _upd('CNZ: Rebuilding — indexing general LB…');
         if (!state._draftLorebook) {
             const lbName = state._lorebookName || cnzDefaultLbName(char.avatar);
             state._lorebookName  = lbName;
@@ -196,18 +190,25 @@ export async function rebuildRag() {
             state._draftLorebook = structuredClone(freshLorebook);
             log('Maintenance', `rebuildRag: lorebook lazy-loaded: "${lbName}" (${Object.keys(freshLorebook.entries ?? {}).length} entries)`);
         }
-        const lbEntries = Object.values(state._draftLorebook.entries);
-        if (lbEntries.length > 0) {
-            await insertLorebookEntries(chatKey, chain.lkg.uuid, state._lorebookName, lbEntries);
+        const lbEntries      = Object.values(state._draftLorebook.entries);
+        const generalTotal   = lbEntries.length;
+        let   generalIndexed = 0;
+        if (generalTotal > 0) {
+            const res      = await insertLorebookEntries(chatKey, chain.lkg.uuid, state._lorebookName, lbEntries);
+            generalIndexed = res?.inserted ?? 0;
         }
 
-        // ── 5. Rebuild plot lorebook vectors (shared with healer) ─────────────
-        await reconcilePlotLorebook(char, chain, chatKey);
+        // ── 5. Rebuild plot lorebook vectors ──────────────────────────────────
+        _upd('CNZ: Rebuilding — indexing plot LB…');
+        const plotResult  = await reconcilePlotLorebook(char, chain, chatKey);
+        const plotTotal   = plotResult?.entries ?? 0;
+        const plotIndexed = plotResult?.indexed ?? 0;
 
         // ── 6. Rebuild additional lorebook vectors ────────────────────────────
         const additionalLbs = state._additionalLorebooks ?? [];
+        const addLbRows     = []; // { name, total, indexed }
         if (additionalLbs.length) {
-            let addCount = 0;
+            _upd(`CNZ: Rebuilding — indexing ${additionalLbs.length} additional LB(s)…`);
             for (const lb of additionalLbs) {
                 try {
                     const disk    = await lbGetLorebook(lb.name);
@@ -215,9 +216,9 @@ export async function rebuildRag() {
                         .filter(e => !e.disable && e.content?.trim())
                         .map(e => ({ uid: e.uid, content: e.content, keys: e.key ?? [], comment: e.comment ?? '' }));
                     if (entries.length) {
-                        await insertLorebookEntries(chatKey, chain.lkg.uuid, lb.name, entries);
-                        lb.hash = getStringHash(entries.map(e => e.content).join('\n'));
-                        addCount += entries.length;
+                        const res = await insertLorebookEntries(chatKey, chain.lkg.uuid, lb.name, entries);
+                        lb.hash   = getStringHash(entries.map(e => e.content).join('\n'));
+                        addLbRows.push({ name: lb.name, total: entries.length, indexed: res?.inserted ?? 0 });
                     } else {
                         lb.hash = 0;
                     }
@@ -226,7 +227,38 @@ export async function rebuildRag() {
                     lb.hash = 0;
                 }
             }
-            if (addCount) log('Maintenance', `rebuildRag: indexed ${addCount} additional lorebook entries`);
+            const addTotal = addLbRows.reduce((s, r) => s + r.indexed, 0);
+            if (addTotal) log('Maintenance', `rebuildRag: indexed ${addTotal} additional lorebook entries`);
+        }
+
+        // ── Final per-artifact summary ────────────────────────────────────────
+        toastr.clear($toast);
+        const { escapeHtml } = await import('../state.js');
+
+        // "8 chat chunks · 3 vectored, 5 already in store"
+        const _row = (n, indexed, label) => {
+            if (n === 0) return null;
+            const skipped = n - indexed;
+            const detail  = [];
+            if (indexed > 0) detail.push(`${indexed} vectored`);
+            if (skipped > 0) detail.push(`${skipped} already in store`);
+            return `${n} ${label} · ${detail.join(', ')}`;
+        };
+
+        const rows = [
+            _row(total, inserted, `chat chunk${total === 1 ? '' : 's'}`) +
+                (gaveUp.length > 0 ? ` (${gaveUp.length} anchor(s) failed)` : ''),
+        ];
+        if (generalTotal > 0) rows.push(_row(generalTotal, generalIndexed, `general LB entr${generalTotal === 1 ? 'y' : 'ies'}`));
+        if (plotTotal > 0)    rows.push(_row(plotTotal,    plotIndexed,    `plot LB entr${plotTotal   === 1 ? 'y' : 'ies'}`));
+        for (const { name, total: t, indexed: x } of addLbRows) {
+            rows.push(_row(t, x, `add. entr${t === 1 ? 'y' : 'ies'} · ${escapeHtml(name)}`));
+        }
+        const body = rows.map(r => `<div style="font-size:0.9em;margin-top:2px;opacity:0.9">${r}</div>`).join('');
+        if (gaveUp.length === 0) {
+            toastr.success(`CNZ: Rebuild complete${body}`);
+        } else {
+            toastr.warning(`CNZ: Rebuild done${body}`);
         }
 
     } catch (err) {

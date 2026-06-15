@@ -36,7 +36,7 @@ import { getRequestHeaders } from '../../../../script.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-let _verbose     = false;
+let _verbose     = true;
 let _flushTimer  = null;
 const _buffer    = [];
 const BUFFER_MAX = 1000;

@@ -23,6 +23,7 @@
 import { state } from '../state.js';
 import { lbSaveLorebook } from '../lorebook/api.js';
 import { writeCnzSummaryPrompt } from './summary-prompt.js';
+import { log } from '../log.js';
 
 /**
  * Restores the lorebook to the full snapshot stored in `nodeFile.state.lorebook`.
@@ -36,6 +37,8 @@ export async function restoreLorebookToNode(_char, node, nodeFile = null) {
     const lbData = structuredClone(nodeFile.state.lorebook);
     const lbName = lbData.name || state._lorebookName;
     lbData.extensions = { ...(lbData.extensions ?? {}), cnz_anchor_uuid: nodeFile.state?.uuid ?? null };
+    const entryCount = Object.keys(lbData.entries ?? {}).length;
+    log('HealerRestore', `restoreLorebookToNode: writing "${lbName}" with ${entryCount} entries, anchor=${nodeFile.state?.uuid?.slice(0, 8)}`);
     await lbSaveLorebook(lbName, lbData, { silent: true });
     state._lorebookName  = lbName;
     state._lorebookData  = structuredClone(lbData);

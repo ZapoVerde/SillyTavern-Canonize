@@ -66,20 +66,21 @@ export async function reconcilePlotLorebook(char, chain, chatKey) {
     const anchorChunks = anchors
         .map(ref => ({ uuid: ref.anchor.uuid, entries: ref.anchor.plotEntries ?? [] }))
         .filter(c => c.entries.length > 0);
-    if (!anchorChunks.length) return;
+    if (!anchorChunks.length) return { entries: 0 };
 
-    const plotLbName = chain.lkg?.plotLorebookName ?? cnzPlotLbName(char.avatar);
+    const plotLbName  = chain.lkg?.plotLorebookName ?? cnzPlotLbName(char.avatar);
+    const totalEntries = anchorChunks.reduce((n, c) => n + c.entries.length, 0);
     state._plotLorebookName = plotLbName;
 
     try {
         await rebuildPlotLorebook(plotLbName, anchorChunks);
-        log('Healer', `Plot lorebook rebuilt: "${plotLbName}" (${anchorChunks.reduce((n, c) => n + c.entries.length, 0)} entries)`);
+        log('Healer', `Plot lorebook rebuilt: "${plotLbName}" (${totalEntries} entries)`);
     } catch (err) {
         error('Healer', 'Plot lorebook rebuild failed:', err);
-        return;
+        return { entries: 0 };
     }
 
-    if (!chatKey || chatKey === 'null' || chatKey === 'undefined') return;
+    if (!chatKey || chatKey === 'null' || chatKey === 'undefined') return { entries: totalEntries, indexed: 0 };
 
     // ── Batch: collect all entries needing vectors across all anchors ──────────
     const store    = await loadChatStore(chatKey);
@@ -112,6 +113,7 @@ export async function reconcilePlotLorebook(char, chain, chatKey) {
         await flushChatStore(chatKey, store);
     }
     log('Healer', `Plot entry vectorization complete: ${toEmbed.length} entries`);
+    return { entries: totalEntries, indexed: toEmbed.length };
 }
 
 // ─── RAG Auto-Reconciliation ──────────────────────────────────────────────────
@@ -121,8 +123,12 @@ export async function reconcilePlotLorebook(char, chain, chatKey) {
  * to chat messages, when RAG is enabled but the DB is empty for this character.
  * No-ops if no stamps are found.
  */
+/**
+ * @returns {{ chunks: number, lbEntries: number, addLbEntries: number }}
+ */
 async function _reconcileRagChunks(char, headAnchor, chatKey) {
-    if (!chatKey || chatKey === 'null' || chatKey === 'undefined') return;
+    const counts = { chunks: 0, lbEntries: 0, addLbEntries: 0 };
+    if (!chatKey || chatKey === 'null' || chatKey === 'undefined') return counts;
     try {
         const ctx        = SillyTavern.getContext();
         const allPairs   = buildProsePairs(ctx.chat ?? []);
@@ -139,10 +145,8 @@ async function _reconcileRagChunks(char, headAnchor, chatKey) {
         }
 
         // ── 2. Rebuild any anchor where expected chunk hashes are missing or unvectored
-        // Full hash comparison: derive content from stamps → hash → check vs store+vecs.
         const byAnchor = buildAnchorChunkMap(state._dnaChain, allPairs, headAnchor.uuid);
 
-        let rebuilt = 0;
         for (const [uuid, chunks] of byAnchor) {
             if (!validUuids.has(uuid)) continue;
             const anchor         = await getAnchor(chatKey, uuid);
@@ -151,17 +155,13 @@ async function _reconcileRagChunks(char, headAnchor, chatKey) {
             const expectedHashes = chunks.map(c => String(getStringHash(c.content)));
             if (expectedHashes.length > 0 && expectedHashes.every(h => storedWithVec.has(h))) continue;
             const { inserted } = await insertSyncChunks(chatKey, uuid, chatFile, chunks, 0);
-            rebuilt += inserted;
+            counts.chunks += inserted;
         }
-        if (rebuilt > 0) {
-            log('Healer', `RAG reconcile: rebuilt ${rebuilt} chunks`);
-            toastr.info(`CNZ: Auto-indexed ${rebuilt} chunks from chat history.`);
-        }
+        if (counts.chunks > 0) log('Healer', `RAG reconcile: rebuilt ${counts.chunks} chunks`);
 
         // ── 3. Lorebook entries — full check across all anchors ───────────────
-        // Collect every lb entry missing a vector, then embed in one batch.
-        const store      = await loadChatStore(chatKey);
-        const toEmbedLb  = [];
+        const store     = await loadChatStore(chatKey);
+        const toEmbedLb = [];
 
         for (const { anchor } of state._dnaChain.anchors) {
             if (!validUuids.has(anchor.uuid)) continue;
@@ -196,8 +196,8 @@ async function _reconcileRagChunks(char, headAnchor, chatKey) {
                 invalidateVecCache(chatKey, t.uuid);
             }
             flushChatStore(chatKey, store);
-            log('Healer', `RAG reconcile: indexed ${toEmbedLb.length} lorebook entries across all anchors`);
-            toastr.info(`CNZ: Auto-indexed ${toEmbedLb.length} lorebook entries.`);
+            counts.lbEntries = toEmbedLb.length;
+            log('Healer', `RAG reconcile: indexed ${counts.lbEntries} lorebook entries across all anchors`);
         }
 
         // ── 4. Additional lorebook entries — head anchor only ─────────────────
@@ -240,8 +240,8 @@ async function _reconcileRagChunks(char, headAnchor, chatKey) {
                     invalidateVecCache(chatKey, headAnchor.uuid);
                 }
                 flushChatStore(chatKey, store);
-                log('Healer', `RAG reconcile: indexed ${toEmbedAdd.length} additional lorebook entries`);
-                toastr.info(`CNZ: Auto-indexed ${toEmbedAdd.length} additional lorebook entries.`);
+                counts.addLbEntries = toEmbedAdd.length;
+                log('Healer', `RAG reconcile: indexed ${counts.addLbEntries} additional lorebook entries`);
             } else {
                 log('Healer', `RAG reconcile: additional lorebooks OK (${additionalLbs.length} LB(s), all entries present)`);
             }
@@ -250,6 +250,7 @@ async function _reconcileRagChunks(char, headAnchor, chatKey) {
     } catch (err) {
         error('Healer', 'RAG reconcile failed:', err);
     }
+    return counts;
 }
 
 // ─── Silent Reconciliation ────────────────────────────────────────────────────
@@ -262,31 +263,55 @@ async function _reconcileRagChunks(char, headAnchor, chatKey) {
  * @param {object} headAnchor  The head CnzAnchor from the DNA chain.
  */
 async function reconcileWorldState(char, headAnchor, chatKey) {
+    // ── Lorebook staleness check ──────────────────────────────────────────────
+    // Anchor snapshot is authoritative; char.data.extensions.world is unreliable when
+    // lbRagOnly detaches the LB, or when the character's world field hasn't been updated yet.
     let lorebookStale = false;
-    const lorebookName = char?.data?.extensions?.world || char?.name;
+    const lorebookName = headAnchor.lorebook?.name || state._lorebookName
+                         || char?.data?.extensions?.world || char?.name;
+    log('Healer', `reconcileWorldState: lorebookName="${lorebookName}" headAnchor.uuid=${headAnchor.uuid?.slice(0, 8)}`);
     if (lorebookName) {
         try {
-            const lbData  = await lbGetLorebook(lorebookName);
-            lorebookStale = lbData?.extensions?.cnz_anchor_uuid !== headAnchor.uuid;
-        } catch (_) { /* unreachable lorebook — skip */ }
+            const lbData   = await lbGetLorebook(lorebookName);
+            const diskUuid = lbData?.extensions?.cnz_anchor_uuid;
+            lorebookStale  = diskUuid !== headAnchor.uuid;
+            log('Healer', `reconcileWorldState: disk cnz_anchor_uuid=${diskUuid?.slice(0, 8) ?? 'none'} stale=${lorebookStale}`);
+        } catch (_) { log('Healer', `reconcileWorldState: lbGetLorebook("${lorebookName}") threw — skipping LB stale check`); }
+    } else {
+        log('Healer', 'reconcileWorldState: no lorebookName — skipping LB stale check');
     }
 
+    // ── Restore if stale ──────────────────────────────────────────────────────
+    let lorebookRestored = false;
     if (lorebookStale) {
         try {
             const nodeFile  = buildNodeFileFromAnchor(headAnchor);
             const nodeDummy = { nodeId: headAnchor.uuid };
-
             await restoreLorebookToNode(char, nodeDummy, nodeFile);
             restoreHooksToNode(char, nodeDummy, nodeFile);
-            toastr.info('CNZ: World state corrected to match current chat.');
+            lorebookRestored = true;
         } catch (err) {
-            error('Healer', 'reconcileWorldState failed:', err);
+            error('Healer', 'reconcileWorldState restore failed:', err);
             toastr.warning('CNZ: World state may not match current chat — use Purge & Rebuild if needed.');
         }
     }
 
-    await _reconcileRagChunks(char, headAnchor, chatKey);
+    // ── RAG reconcile ─────────────────────────────────────────────────────────
+    const rag = await _reconcileRagChunks(char, headAnchor, chatKey);
     await reconcilePlotLorebook(char, state._dnaChain, chatKey);
+
+    // ── Single unified notification ───────────────────────────────────────────
+    const parts = [];
+    if (lorebookRestored) parts.push('lorebook and scene rolled back');
+    if ((rag.chunks ?? 0) > 0)       parts.push(`${rag.chunks} chat chunk${rag.chunks === 1 ? '' : 's'}`);
+    if ((rag.lbEntries ?? 0) > 0)    parts.push(`${rag.lbEntries} general LB`);
+    if ((rag.addLbEntries ?? 0) > 0) parts.push(`${rag.addLbEntries} add. LB`);
+
+    if (parts.length > 0) {
+        const msg = `CNZ: Healed — ${parts.join(' · ')}`;
+        lorebookRestored ? toastr.success(msg) : toastr.info(msg);
+        log('Healer', msg);
+    }
 }
 
 // ─── Additional-LB stash restore ─────────────────────────────────────────────
@@ -320,12 +345,18 @@ async function _restoreAddLbs(messages) {
  * @param {object} char  Current character object from context.
  */
 async function maybePromptLorebookCleanup(char) {
-    const lorebookName = char?.data?.extensions?.world || char?.name;
+    // state._lorebookName retains the previous chat's value on same-character switches
+    // (resetSessionState only fires on character switch, not chat switch), making it
+    // more reliable than char.data.extensions.world when the LB is detached.
+    const lorebookName = state._lorebookName || char?.data?.extensions?.world || char?.name;
+    log('Healer', `maybePromptLorebookCleanup: lorebookName="${lorebookName}"`);
     if (!lorebookName) return;
     let lbData;
     try { lbData = await lbGetLorebook(lorebookName); }
-    catch (_) { return; }
-    if (!lbData?.extensions?.cnz_anchor_uuid) return;
+    catch (_) { log('Healer', 'maybePromptLorebookCleanup: lbGetLorebook threw — skipping'); return; }
+    const diskUuid = lbData?.extensions?.cnz_anchor_uuid;
+    log('Healer', `maybePromptLorebookCleanup: disk cnz_anchor_uuid=${diskUuid ?? 'none'} — ${diskUuid ? 'will prompt cleanup' : 'clean, no action'}`);
+    if (!diskUuid) return;
     state._lorebookName = lorebookName;
     const { runNewChatCleanup } = await import('./maintenance-cleanup.js');
     await runNewChatCleanup(char);
@@ -366,6 +397,7 @@ export async function runHealer(char, chatFileName) {
     _logChatSummary(messages, state._dnaChain);
 
     if (state._dnaChain.anchors.length === 0) {
+        log('Healer', 'runHealer: no anchors — new/pre-CNZ chat path');
         state._additionalLorebooks = readAddLbStash(messages);
         await maybePromptLorebookCleanup(char);
         return;
@@ -374,19 +406,22 @@ export async function runHealer(char, chatFileName) {
     if (!messages.length) return;
 
     const headRef = state._dnaChain.anchors[state._dnaChain.anchors.length - 1];
-    if (messages[headRef.msgIdx]?.extra?.cnz?.uuid === headRef.anchor.uuid) {
+    const headMsgUuid = messages[headRef.msgIdx]?.extra?.cnz?.uuid;
+    log('Healer', `runHealer: head anchor uuid=${headRef.anchor.uuid?.slice(0, 8)} msgIdx=${headRef.msgIdx} msgUuid=${headMsgUuid?.slice(0, 8)} match=${headMsgUuid === headRef.anchor.uuid}`);
+    if (headMsgUuid === headRef.anchor.uuid) {
         state._lorebookName        = headRef.anchor.lorebook?.name || char?.data?.extensions?.world || char?.name || '';
         state._plotLorebookName    = headRef.anchor.plotLorebookName ?? cnzPlotLbName(char.avatar);
         await _restoreAddLbs(messages);
 
         // Sync lorebook attachment to match bypass setting.
+        // Awaited so char.data.extensions.world is current before reconcileWorldState reads it.
         if (state._lorebookName) {
             const bypass = getSettings().lbRagOnly ?? false;
             const current = char?.data?.extensions?.world ?? '';
             const want    = bypass ? '' : state._lorebookName;
             if (current !== want) {
-                lbSetCharacterLorebook(want).catch(err =>
-                    warn('Healer', 'Could not sync lorebook attachment:', err));
+                try { await lbSetCharacterLorebook(want); }
+                catch (err) { warn('Healer', 'Could not sync lorebook attachment:', err); }
             }
         }
         const activeChatKey     = cnzChatKey(chatFileName) ?? cnzGetActiveChatKey();
