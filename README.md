@@ -27,6 +27,8 @@ It builds and maintains a lorebook of plot, people, places, things, and concepts
 
 **Prerequisite (cloud embedding providers only):** Set `allowKeysExposure: true` in `config.yaml` and restart SillyTavern. Not required for local embedding providers (Ollama, llama.cpp, vllm).
 
+**Voyage AI does not currently work on stock SillyTavern.** It requires core SillyTavern support (the `api_key_voyageai` secret and vector routing) that is not yet in the upstream codebase — see [#5740](https://github.com/SillyTavern/SillyTavern/pull/5740), open and awaiting review. Until that merges, use a different embedding source (OpenAI, OpenRouter, Cohere, etc.).
+
 1. Open the Extensions menu (puzzle piece icon) and install from URL.
 2. Paste this repository's URL (https://github.com/ZapoVerde/SillyTavern-Canonize) and click Install.
 3. Reload the page.
