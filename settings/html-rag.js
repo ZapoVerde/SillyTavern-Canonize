@@ -13,7 +13,17 @@
  *
  * @contract
  *   assertions: { purity: pure, state_ownership: [], external_io: [] }
+ *   note: imports SECRET_KEYS (a static constant) from ST core to feature-detect
+ *   Voyage AI support; no runtime IO, so purity holds.
  */
+
+import { SECRET_KEYS } from '../../../../../scripts/secrets.js';
+
+// True only on SillyTavern builds that carry the (currently unmerged) Voyage AI
+// secret/vector patch — see https://github.com/SillyTavern/SillyTavern/pull/5740.
+// Stock ST has no `api_key_voyageai` entry in SECRET_KEYS, so the option must
+// stay hidden there or the "Click to set" button silently no-ops.
+const VOYAGE_SUPPORTED = Object.values(SECRET_KEYS).includes('api_key_voyageai');
 
 export function buildRagSectionHTML(s, escapeHtml) {
     const tip         = (text) => `<span class="cnz-info-icon" title="${escapeHtml(text)}">&#9432;</span>`;
@@ -21,7 +31,7 @@ export function buildRagSectionHTML(s, escapeHtml) {
 
     // Sources that need a dedicated key not accessible from the main ST connections panel.
     const EMBED_KEY_MAP = { voyageai: 'api_key_voyageai', nomicai: 'api_key_nomicai' };
-    const embedApiKey   = EMBED_KEY_MAP[embedSource] ?? null;
+    const embedApiKey   = (embedSource === 'voyageai' && !VOYAGE_SUPPORTED) ? null : (EMBED_KEY_MAP[embedSource] ?? null);
 
     const embedOptions = [
         ['openrouter',   'OpenRouter'],
@@ -39,7 +49,7 @@ export function buildRagSectionHTML(s, escapeHtml) {
         ['palm',         'Google AI Studio (legacy)'],
         ['vertexai',     'Google Vertex AI'],
         ['ollama',       'Ollama (local URL)'],
-        ['voyageai',     'Voyage AI'],
+        ...(VOYAGE_SUPPORTED ? [['voyageai', 'Voyage AI']] : []),
         ['vllm',         'vLLM (local URL)'],
         ['llamacpp',     'llama.cpp (local URL)'],
         ['transformers', 'Transformers (local)'],
