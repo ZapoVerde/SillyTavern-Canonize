@@ -150,6 +150,7 @@ function refreshSettingsUI() {
     } catch (e) { /* silent */ }
 
     $('#cnz-set-verbose-logging').prop('checked', getMetaSettings().verboseLogging ?? false);
+    $('#cnz-set-gap-catchup-default').val(getMetaSettings().gapCatchupDefault ?? 'onestep');
     updateDirtyIndicator();
 }
 
@@ -192,7 +193,7 @@ export function injectSettingsPanel() {
     if ($parent.length === 0) { warn('Init', 'injectSettingsPanel: #extensions_settings not found in DOM!'); return; }
     const meta         = getMetaSettings();
     $parent.append(
-        buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName, meta.verboseLogging ?? false, meta.enableCnz ?? true),
+        buildSettingsHTML(getSettings(), escapeHtml, Object.keys(meta.profiles), meta.currentProfileName, meta.verboseLogging ?? false, meta.enableCnz ?? true, meta.gapCatchupDefault ?? 'onestep'),
     );
     setVerbose(meta.verboseLogging ?? false);
     bindSettingsHandlers();

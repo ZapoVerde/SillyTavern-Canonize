@@ -24,7 +24,9 @@
  * Recipes.targeted_update  — targeted update for a single lorebook entry.
  * Recipes.targeted_new     — targeted new entry for a single lorebook concept.
  *
- * Triggers.auto_sync       — fires on MESSAGE_RECEIVED; condition checks gap / snooze.
+ * Triggers.auto_sync         — fires on MESSAGE_RECEIVED; condition checks gap / snooze.
+ * Triggers.modal_sync        — fires on MODAL_OPENED; same gap check, snooze ignored.
+ * Triggers.chat_loaded_sync  — fires on CHAT_HEALED (chat load/switch); same gap check, snooze ignored.
  *
  * @contract
  *   assertions:
@@ -235,6 +237,39 @@ export const Triggers = {
         id:         'modal_sync',
         source:     'bus',
         watchEvent: BUS_EVENTS.MODAL_OPENED,
+        condition:  (state, settings) => {
+            const { context, messages, pairCount, dnaChain, syncInProgress } = state;
+            if (!context || context.groupId || context.characterId == null) return null;
+            if (syncInProgress) return null;
+            const every = settings.chunkEveryN ?? 20;
+            if (every <= 0 || pairCount <= 0) return null;
+
+            const lkgIdx     = dnaChain?.lkgMsgIdx ?? -1;
+            const priorPairs = lkgIdx >= 0
+                ? messages.slice(0, lkgIdx + 1).filter(m => !m.is_system && m.is_user).length
+                : 0;
+            const lcb              = settings.liveContextBuffer ?? 5;
+            const trailingBoundary = Math.max(0, pairCount - lcb);
+            const gap              = trailingBoundary - priorPairs;
+            if (gap < every) return null;
+
+            const char = context.characters[context.characterId];
+            return { char, messages, gap, every, trailingBoundary, largeGap: gap >= every * 2 };
+        },
+        emits: BUS_EVENTS.SYNC_TRIGGERED,
+    },
+
+    /**
+     * Fires SYNC_TRIGGERED once the healer settles on chat load/switch (new
+     * chat, resumed chat, character switch), if the uncommitted gap is >= the
+     * sync window. Surfaces a large gap the moment the chat opens instead of
+     * waiting for the next turn. Skipped if a sync is already in progress.
+     * Snooze is intentionally ignored — same rationale as modal_sync.
+     */
+    chat_loaded_sync: {
+        id:         'chat_loaded_sync',
+        source:     'bus',
+        watchEvent: BUS_EVENTS.CHAT_HEALED,
         condition:  (state, settings) => {
             const { context, messages, pairCount, dnaChain, syncInProgress } = state;
             if (!context || context.groupId || context.characterId == null) return null;

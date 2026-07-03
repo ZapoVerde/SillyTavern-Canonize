@@ -76,7 +76,9 @@ export const BUS_EVENTS = Object.freeze({
     SYNC_TRIGGERED:         'SYNC_TRIGGERED',          // { char, messages, gap, every, trailingBoundary, largeGap }
     SYNC_COMPLETED:         'SYNC_COMPLETED',          // { cycleId, outcomes }
     MODAL_OPENED:           'MODAL_OPENED',            // { }
+    CHAT_HEALED:            'CHAT_HEALED',             // { } — fires after the healer settles on chat load/switch
     CORRECTION_SUBMITTED:   'CORRECTION_SUBMITTED',    // { cycleId, corrections }
     DNA_WRITE_REQUESTED:    'DNA_WRITE_REQUESTED',     // { cycleId, payload }
     EMBED_PROGRESS:         'EMBED_PROGRESS',          // { total: number, done: number }
+    SYNC_CATCHUP_PROGRESS:  'SYNC_CATCHUP_PROGRESS',   // { step: number, totalSteps: number, done: boolean }
 });

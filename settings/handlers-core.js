@@ -152,6 +152,10 @@ export function bindCoreHandlers({ updateDirtyIndicator, openPromptModal, refres
         getMetaSettings().verboseLogging = enabled;
         setVerbose(enabled); saveSettingsDebounced();
     });
+    $('#cnz-set-gap-catchup-default').on('change', function () {
+        getMetaSettings().gapCatchupDefault = $(this).val();
+        saveSettingsDebounced();
+    });
     $('#cnz-inspect-chain').on('click', () => openDnaChainInspector());
     $('#cnz-rebuild-rag').on('click', () => rebuildRag());
     $('#cnz-purge-files').on('click', () => purgeCnzFiles());

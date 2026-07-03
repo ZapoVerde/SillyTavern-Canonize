@@ -29,6 +29,7 @@ import { getSettings, getMetaSettings, initSettings } from './core/settings.js';
 import { initSceneTracker } from './core/scene-tracker.js';
 import { readDnaChain } from './core/dna-chain.js';
 import { runCnzSync } from './core/sync.js';
+import { buildGapModeRadiosHtml } from './core/gap-mode.js';
 import { writeChunkHeaderToChat, renderChunkChatLabel } from './rag/chat-labels.js';
 import { onGenerationStarted } from './rag/generation-hook.js';
 import { injectModal } from './modal/modal-setup.js';
@@ -110,10 +111,28 @@ async function init() {
                 const remaining = trailingBoundary - newPrior;
                 if (remaining < every) return;
 
+                const defaultMode = getMetaSettings().gapCatchupDefault ?? 'onestep';
+                const autoSteps   = Math.max(1, Math.ceil(remaining / every));
                 toastr.warning(
-                    `CNZ: ${remaining} uncaptured pair(s). ` +
-                    `<a href="#" class="cnz-gap-sync-all">Sync all</a> &nbsp; ` +
-                    `<a href="#" class="cnz-gap-snooze">Skip this turn</a>`,
+                    `CNZ: ${remaining} uncaptured pair(s) remain since the last sync.` +
+                    buildGapModeRadiosHtml([
+                        {
+                            value: 'single', checked: defaultMode === 'single',
+                            label: 'Full gap, one shot',
+                            desc: 'Process the whole remaining gap in one pass, right now.',
+                        },
+                        {
+                            value: 'onestep', checked: defaultMode === 'onestep',
+                            label: 'Individual step and stop',
+                            desc: 'One window was already processed just now (spends tokens as each step gets processed by an LLM). Do nothing further — you\'ll be asked again next message if the gap is still large.',
+                        },
+                        {
+                            value: 'auto', checked: defaultMode === 'auto',
+                            label: 'Auto step and continue',
+                            desc: `Keep syncing window-by-window automatically, without stopping, until the gap is fully closed (~${autoSteps} more sync ${autoSteps === 1 ? 'step' : 'steps'}). Takes time and spends tokens as each step gets processed by an LLM.`,
+                        },
+                    ]) +
+                    `<a href="#" class="cnz-gap-continue">Continue</a>`,
                     '',
                     { timeOut: 0, extendedTimeOut: 0, closeButton: true, escapeHtml: false },
                 );

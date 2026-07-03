@@ -40,6 +40,21 @@ oldest                                                                          
   - *From sync point* — Only scans the newly added block since the last save marker. 
   - *From latest turn* — Scans the entire horizon to the latest turn. 
 
+### Large Gap Catch-Up
+
+If a gap of two or more sync windows has accumulated, Canonize offers a choice of how to close it. This appears in two places:
+
+- **On chat load** — The moment you open a chat with a large uncommitted gap (a new chat, or one resumed after time away), right after the healer settles.
+- **Mid-conversation** — After a new message pushes the gap past the threshold; Canonize processes one window automatically first, then offers the choice for whatever remains.
+
+The choice itself, as a radio pick with an explanation next to each option:
+
+- **Full gap, one shot** — Covers the entire remaining gap in one pass, right now.
+- **Individual step and stop** — Does nothing further now; the rest trickles in one window per new message (or the next chat load), offering this same choice again each time the gap stays large. On the wand's manual dialog, this instead runs just the next window now, then stops, so you can review what's committed before running another.
+- **Auto step and continue** — Loops standard-window syncs back-to-back until the gap is closed — the same per-window analysis as running sync manually several times, without you re-triggering it after each step. The offer states how many sync steps this will take; since it processes the whole remaining gap, expect it to take real time and spend a proportional amount of tokens. A persistent status toast tracks progress ("Auto stepthrough — sync 2/5...") and updates in place until it reports completion.
+
+Which option starts pre-selected is set by the *Large gap catch-up default* setting below. The wand button's manual sync dialog offers the same three-way choice when you trigger a sync yourself on a large gap.
+
 ---
 
 ## Connections & Prompts
@@ -109,6 +124,7 @@ Plot arcs track ongoing storylines across your chat. These settings control how 
 
 One-off maintenance tools: rebuild the memory index, wipe it entirely, or inspect its internal state.
 
+- **Large Gap Catch-Up Default** — Which of the three options (see [Large Gap Catch-Up](#large-gap-catch-up)) starts pre-selected on the large-gap offer: *Full gap, one shot*, *Individual step and stop*, or *Auto step and continue*.
 - **Verbose Logging** — Outputs detailed execution logs to the browser console.
 - **Inspect Chain** — Opens the DNA Chain Inspector to view your save-state timeline.
 - **Rebuild RAG** — Re-indexes all chunks and lorebook entries for the active chat. A confirmation prompt offers an optional checkbox before it runs:

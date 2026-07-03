@@ -10,7 +10,7 @@
  *
  * @api-declaration
  * buildSettingsHTML(settings, escapeHtml, profileNames, currentProfile,
- *                  verboseLogging, enableCnz) → string
+ *                  verboseLogging, enableCnz, gapCatchupDefault) → string
  *
  * @contract
  *   assertions: { purity: pure, state_ownership: [], external_io: [] }
@@ -24,10 +24,11 @@ import { buildAdminSectionHTML } from './html-admin.js';
 export function buildSettingsHTML(
     settings,
     escapeHtml,
-    profileNames   = ['Default'],
-    currentProfile = 'Default',
-    verboseLogging = false,
-    enableCnz      = true,
+    profileNames      = ['Default'],
+    currentProfile    = 'Default',
+    verboseLogging    = false,
+    enableCnz         = true,
+    gapCatchupDefault = 'onestep',
 ) {
     const profileOptions = profileNames
         .map(n => `<option value="${escapeHtml(n)}"${n === currentProfile ? ' selected' : ''}>${escapeHtml(n)}</option>`)
@@ -54,7 +55,7 @@ export function buildSettingsHTML(
         ${buildSyncSectionHTML(settings, escapeHtml, profileOptions)}
         ${buildRagSectionHTML(settings, escapeHtml)}
         ${buildPlotSectionHTML(settings, escapeHtml)}
-        ${buildAdminSectionHTML(escapeHtml, verboseLogging)}
+        ${buildAdminSectionHTML(escapeHtml, verboseLogging, gapCatchupDefault)}
       </div>
 
     </div>

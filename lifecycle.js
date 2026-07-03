@@ -17,13 +17,13 @@
  * @contract
  *   assertions:
  *     purity: mutates
- *     state_ownership: [_lorebookEditTimer, _plotEditTimer, _embedToast]
+ *     state_ownership: [_lorebookEditTimer, _plotEditTimer, _embedToast, _catchupToast]
  *     external_io: [ST eventSource, DOM, bus, scheduler, promptManager]
  */
 
 import { eventSource, event_types } from '../../../../script.js';
 import { setBusEnabled, on, off, BUS_EVENTS } from './bus.js';
-import { startScheduler, stopScheduler, snooze } from './scheduler.js';
+import { startScheduler, stopScheduler, snooze, isSyncInProgress } from './scheduler.js';
 import { state, CNZ_SUMMARY_ID, CNZ_RAG_ID } from './state.js';
 import { getSettings, getMetaSettings } from './core/settings.js';
 import { onChatChanged } from './core/session.js';
@@ -37,6 +37,7 @@ import { injectWandButton } from './wand.js';
 import { openReviewModal } from './modal/orchestrator.js';
 import { openOrphanModal } from './modal/orphan-modal.js';
 import { runCnzSync } from './core/sync.js';
+import { runCnzSyncCatchUp } from './core/sync-catchup.js';
 import { invalidateAllJobs } from './cycleStore.js';
 import { log, error } from './log.js';
 import { getStringHash } from '../../../utils.js';
@@ -180,6 +181,24 @@ function _onEmbedProgress({ total, done }) {
     }
 }
 
+// ─── Sync catch-up progress monitor ────────────────────────────────────────────
+
+let _catchupToast = null;
+
+function _onSyncCatchupProgress({ step, totalSteps, done }) {
+    if (!done) {
+        const msg = `CNZ: Auto stepthrough — sync ${step}/${totalSteps}...`;
+        if (_catchupToast?.is(':visible')) {
+            _catchupToast.find('.toast-message').text(msg);
+        } else {
+            _catchupToast = toastr.info(msg, '', { timeOut: 0, extendedTimeOut: 0 });
+        }
+    } else {
+        if (_catchupToast) { toastr.clear(_catchupToast); _catchupToast = null; }
+        toastr.success(`CNZ: Auto stepthrough complete (${step}/${totalSteps}).`);
+    }
+}
+
 // ─── Mount / Unmount ───────────────────────────────────────────────────────────
 
 export function mountCnz() {
@@ -198,22 +217,33 @@ export function mountCnz() {
     $(document).on('click', '.cnz-review-link',   (e) => { e.preventDefault(); openReviewModal(); });
     $(document).on('click', '.cnz-orphan-review',  (e) => { e.preventDefault(); toastr.clear(); openOrphanModal(state._pendingOrphans); });
     $(document).on('click', '.cnz-orphan-dismiss', (e) => { e.preventDefault(); toastr.clear(); });
-    $(document).on('click', '.cnz-gap-sync-all',   (e) => {
-        e.preventDefault(); toastr.clear();
+    $(document).on('click', '.cnz-gap-continue',   (e) => {
+        e.preventDefault();
+        const mode = $('input[name="cnz-gap-mode"]:checked').val() ?? 'onestep';
+        toastr.clear();
+        if (isSyncInProgress()) {
+            toastr.warning('CNZ: Sync already in progress — please wait.');
+            return;
+        }
         const ctx = SillyTavern.getContext();
         if (!ctx || ctx.characterId == null) return;
-        runCnzSync(ctx.characters[ctx.characterId], ctx.chat ?? [], { coverAll: true })
-            .catch(err => error('Sync', 'Gap sync-all failed:', err));
+        const char      = ctx.characters[ctx.characterId];
+        const messages  = ctx.chat ?? [];
+        if (mode === 'single') {
+            runCnzSync(char, messages, { coverAll: true })
+                .catch(err => error('Sync', 'Gap single-sync catchup failed:', err));
+        } else if (mode === 'auto') {
+            runCnzSyncCatchUp(char, messages)
+                .catch(err => error('Sync', 'Gap auto-stepthrough catchup failed:', err));
+        } else {
+            // 'onestep' — one window was already processed before this offer appeared;
+            // do nothing further, the rest trickles in one window per new message.
+            invalidateAllJobs();
+            const pairCount = messages.filter(m => !m.is_system && m.is_user).length;
+            snooze(1, pairCount);
+        }
     });
-    $(document).on('click', '.cnz-gap-snooze', (e) => {
-        e.preventDefault(); toastr.clear();
-        invalidateAllJobs();
-        const ctx       = SillyTavern.getContext();
-        const messages  = ctx?.chat ?? [];
-        const pairCount = messages.filter(m => !m.is_system && m.is_user).length;
-        snooze(1, pairCount);
-    });
-    log('Lifecycle', 'Bound DOM: .cnz-review-link, .cnz-orphan-review, .cnz-orphan-dismiss, .cnz-gap-sync-all, .cnz-gap-snooze.');
+    log('Lifecycle', 'Bound DOM: .cnz-review-link, .cnz-orphan-review, .cnz-orphan-dismiss, .cnz-gap-continue.');
 
     injectWandButton();
     log('Lifecycle', 'Wand button injected.');
@@ -232,6 +262,9 @@ export function mountCnz() {
 
     on(BUS_EVENTS.EMBED_PROGRESS, _onEmbedProgress);
     log('Lifecycle', 'Embed monitor started.');
+
+    on(BUS_EVENTS.SYNC_CATCHUP_PROGRESS, _onSyncCatchupProgress);
+    log('Lifecycle', 'Sync catch-up monitor started.');
 
     // Run onChatChanged immediately to catch up if a chat is already loaded on boot
     onChatChanged();
@@ -255,9 +288,8 @@ export function unmountCnz() {
     $(document).off('click', '.cnz-review-link');
     $(document).off('click', '.cnz-orphan-review');
     $(document).off('click', '.cnz-orphan-dismiss');
-    $(document).off('click', '.cnz-gap-sync-all');
-    $(document).off('click', '.cnz-gap-snooze');
-    log('Lifecycle', 'Unbound DOM: .cnz-review-link, .cnz-orphan-review, .cnz-orphan-dismiss, .cnz-gap-sync-all, .cnz-gap-snooze.');
+    $(document).off('click', '.cnz-gap-continue');
+    log('Lifecycle', 'Unbound DOM: .cnz-review-link, .cnz-orphan-review, .cnz-orphan-dismiss, .cnz-gap-continue.');
 
     $('#cnz-wand-btn').remove();
     log('Lifecycle', 'Wand button removed.');
@@ -271,6 +303,10 @@ export function unmountCnz() {
     off(BUS_EVENTS.EMBED_PROGRESS, _onEmbedProgress);
     if (_embedToast) { toastr.clear(_embedToast); _embedToast = null; }
     log('Lifecycle', 'Embed monitor detached.');
+
+    off(BUS_EVENTS.SYNC_CATCHUP_PROGRESS, _onSyncCatchupProgress);
+    if (_catchupToast) { toastr.clear(_catchupToast); _catchupToast = null; }
+    log('Lifecycle', 'Sync catch-up monitor detached.');
 
     const pm = getCnzPromptManager();
     if (pm) {

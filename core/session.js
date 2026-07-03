@@ -5,7 +5,9 @@
  * @architectural-role Orchestrator
  * @description
  * Session lifecycle management. Owns state reset on character switch and the
- * CHAT_CHANGED handler that drives healer invocation.
+ * CHAT_CHANGED handler that drives healer invocation. Emits CHAT_HEALED once
+ * the healer settles, so a large uncommitted gap is offered right on chat
+ * load instead of waiting for the next turn.
  *
  * @api-declaration
  * resetStagedState() — clears pair/chunk staging without touching lorebook or DNA chain
@@ -16,11 +18,12 @@
  *   assertions:
  *     purity: mutates
  *     state_ownership: [none]
- *     external_io: [ST context, healer, scheduler, DNA chain]
+ *     external_io: [ST context, healer, scheduler, DNA chain, bus]
  */
 
 import { getCurrentChatId } from '../../../../../script.js';
 import { log, error } from '../log.js';
+import { emit, BUS_EVENTS } from '../bus.js';
 import { invalidateAllJobs } from '../cycleStore.js';
 import { resetScheduler, setDnaChain } from '../scheduler.js';
 import { readDnaChain } from './dna-chain.js';
@@ -89,7 +92,7 @@ export function onChatChanged() {
         syncCnzSummaryOnCharacterSwitch(char, state._dnaChain);
         runHealer(char, chatFileName)
             .catch(err => error('Sync', 'onChatChanged: healer failed:', err))
-            .then(() => refreshAdditionalLbList());
+            .then(() => { refreshAdditionalLbList(); emit(BUS_EVENTS.CHAT_HEALED, {}); });
         checkOrphans().catch(err =>
             error('Sync', 'checkOrphans failed:', err),
         );
@@ -100,7 +103,7 @@ export function onChatChanged() {
     if (chatFileName) {
         runHealer(char, chatFileName)
             .catch(err => error('Sync', 'runHealer uncaught error:', err))
-            .then(() => refreshAdditionalLbList());
+            .then(() => { refreshAdditionalLbList(); emit(BUS_EVENTS.CHAT_HEALED, {}); });
     }
     renderChunkLabelsFromChat();
 }

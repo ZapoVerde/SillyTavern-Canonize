@@ -925,12 +925,21 @@
 
 .cnz-choice-overlay {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
     background: rgba(0, 0, 0, 0.6);
     z-index: 10000;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
+    overflow-y: auto;
+    padding: 40px 20px;
+    box-sizing: border-box;
 }
 
 .cnz-choice-dialog {
@@ -977,6 +986,45 @@
 .cnz-choice-cancel {
     flex: 0 0 auto !important;
     opacity: 0.7;
+}
+
+/* ─── Large Gap Catch-Up Mode Picker ─────────────────────────────────────── */
+
+.cnz-gap-mode-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 10px 0;
+    text-align: left;
+}
+
+.cnz-gap-mode-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-weight: normal;
+    cursor: pointer;
+}
+
+.cnz-gap-mode-option input[type="radio"] {
+    margin-top: 3px;
+    flex-shrink: 0;
+}
+
+.cnz-gap-mode-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.cnz-gap-mode-label {
+    font-weight: 600;
+}
+
+.cnz-gap-mode-desc {
+    font-size: 0.85em;
+    opacity: 0.8;
+    line-height: 1.35;
 }
 
 /* ─── Chat Message Chunk Labels ──────────────────────────────────────────── */
