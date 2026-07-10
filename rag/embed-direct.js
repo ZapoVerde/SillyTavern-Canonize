@@ -67,6 +67,15 @@ const UNSUPPORTED = new Set(['aistudio', 'palm', 'vertexai', 'transformers', 'ex
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+/**
+ * Strips a trailing slash and/or trailing /v1 so a base URL can be safely
+ * re-joined with '/v1/embeddings'. Mirrors ST core's trimV1() (src/util.js)
+ * so local-provider URLs behave the same whether or not the user typed /v1.
+ */
+function _trimV1(url) {
+    return url.replace(/\/+$/, '').replace(/\/v1$/, '');
+}
+
 async function _key(secretKey) {
     const val = await findSecret(secretKey);
     if (!val) throw new Error(
@@ -176,8 +185,9 @@ export async function embedBatch(texts, cfg, isQuery = false, signal) {
     let vecs;
 
     if (prov.local) {
-        const url = cfg.apiUrl?.replace(/\/+$/, '');
-        if (!url) throw new Error(`CNZ embed-direct: no apiUrl configured for local source "${source}".`);
+        const raw = cfg.apiUrl?.replace(/\/+$/, '');
+        if (!raw) throw new Error(`CNZ embed-direct: no apiUrl configured for local source "${source}".`);
+        const url = `${_trimV1(raw)}/v1`;
         vecs = await _openAI(texts, '', url, model, null, false, isQuery, signal);
     } else if (prov.chutes) {
         const key = await _key(prov.secretKey);
